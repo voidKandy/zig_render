@@ -253,8 +253,21 @@ pub fn init(a: std.mem.Allocator) Self {
 
 fn initInstance(self: *Self) void {
     var sdl_required_extension_count: u32 = undefined;
+    // const additional_extensions = &[_][*:0]const u8{
+    //     // this one may not be required
+    //     c.vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+    // };
+    // const info = c.vk.InstanceCreateInfo{
+    //     .flags = c.vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+    //     .enabledLayerCount = additional_extensions.len,
+    //     .ppEnabledExtensionNames = additional_extensions,
+    // };
     const sdl_extensions = c.sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
     const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
+    log.info(
+        \\ Instance Extensions Slice: {s}
+        \\
+    , .{sdl_extensions.*});
 
     // Instance creation and optional debug utilities
     const instance = vki.createInstance(std.heap.page_allocator, .{
@@ -1428,7 +1441,7 @@ pub fn cleanup(self: *Self) void {
     c.vk.DestroySurfaceKHR(self.instance, self.surface, vk_alloc_cbs);
 
     if (self.debug_messenger != VK_NULL_HANDLE) {
-        const destroy_fn = vki.get_destroy_debug_utils_messenger_fn(self.instance).?;
+        const destroy_fn = vki.getDestroyDebugUtilsMessengerFn(self.instance).?;
         destroy_fn(self.instance, self.debug_messenger, vk_alloc_cbs);
     }
 

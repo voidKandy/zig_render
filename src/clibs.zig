@@ -2,6 +2,7 @@ const c = @cImport({
     @cInclude("SDL3/SDL.h");
     @cInclude("SDL3/SDL_vulkan.h");
     @cInclude("vulkan/vulkan.h");
+    @cInclude("vulkan/vulkan_beta.h");
     @cInclude("vk_mem_alloc.h");
     @cInclude("stb_image.h");
     @cInclude("cimgui.h");
@@ -395,6 +396,11 @@ pub const vk = struct {
     pub const DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT = c.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT;
     pub const DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT = c.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
     pub const DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT = c.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+
+    pub const INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR = c.VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    pub const KHR_PORTABILITY_SUBSET_EXTENSION_NAME = c.VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
+    pub const KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME = c.VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+    pub const KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME = c.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
 
     pub const CreateCommandPool = c.vkCreateCommandPool;
     pub const DestroyCommandPool = c.vkDestroyCommandPool;

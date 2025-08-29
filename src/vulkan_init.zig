@@ -93,6 +93,13 @@ pub fn createInstance(alloc: std.mem.Allocator, opts: VkiInstanceOpts) !Instance
         }
     }
 
+    // Add extensions required to run on Mac with MoltenVK
+    // https://stackoverflow.com/questions/58732459/vk-error-incompatible-driver-with-mac-os-and-vulkan-moltenvk
+    // https://docs.vulkan.org/guide/latest/enabling_extensions.html
+    try extensions.append(arena, c.vk.KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    try extensions.append(arena, c.vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    try extensions.append(arena, c.vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+
     // If we need validation, also add the debug utils extension
     if (enable_validation and ExtensionFinder.find("VK_EXT_debug_utils", extension_props)) {
         try extensions.append(arena, "VK_EXT_debug_utils");
@@ -108,6 +115,7 @@ pub fn createInstance(alloc: std.mem.Allocator, opts: VkiInstanceOpts) !Instance
     });
 
     const instance_info = std.mem.zeroInit(c.vk.InstanceCreateInfo, .{
+        .flags = c.vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
         .sType = c.vk.STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
         .enabledLayerCount = @as(u32, @intCast(layers.items.len)),
@@ -122,7 +130,7 @@ pub fn createInstance(alloc: std.mem.Allocator, opts: VkiInstanceOpts) !Instance
 
     // Create the debug messenger if needed
     const debug_messenger = if (enable_validation)
-        try create_debug_callback(instance, opts)
+        try createDebugCallback(instance, opts)
     else
         null;
 
@@ -186,8 +194,8 @@ pub fn selectPhysicalDevice(a: std.mem.Allocator, instance: c.vk.Instance, opts:
     var suitable_pd: ?PhysicalDevice = null;
 
     for (physical_devices) |device| {
-        const pd = make_physical_device(a, device, opts.surface) catch continue;
-        _ = is_physical_device_suitable(a, pd, opts) catch continue;
+        const pd = makePhysicalDevice(a, device, opts.surface) catch continue;
+        _ = isPhysicalDeviceSuitable(a, pd, opts) catch continue;
 
         if (opts.criteria == PhysicalDeviceSelectionCriteria.First) {
             suitable_pd = pd;
@@ -332,9 +340,9 @@ pub fn createSwapchain(a: std.mem.Allocator, opts: SwapchainCreateOpts) !Swapcha
     const support_info = try SwapchainSupportInfo.init(a, opts.physical_device, opts.surface);
     defer support_info.deinit(a);
 
-    const format = pick_swapchain_format(support_info.formats, opts);
-    const present_mode = pick_swapchain_present_mode(support_info.present_modes, opts);
-    const extent = make_swapchain_extent(support_info.capabilities, opts);
+    const format = pickSwapchainFormat(support_info.formats, opts);
+    const present_mode = pickSwapchainPresentMode(support_info.present_modes, opts);
+    const extent = makeSwapchainExtent(support_info.capabilities, opts);
 
     const image_count = blk: {
         const desired_count = support_info.capabilities.minImageCount + 1;
@@ -389,7 +397,7 @@ pub fn createSwapchain(a: std.mem.Allocator, opts: SwapchainCreateOpts) !Swapcha
     errdefer a.free(swapchain_image_views);
 
     for (swapchain_images, swapchain_image_views) |image, *view| {
-        view.* = try create_image_view(opts.device, image, format, c.vk.IMAGE_ASPECT_COLOR_BIT, opts.alloc_cb);
+        view.* = try createImageView(opts.device, image, format, c.vk.IMAGE_ASPECT_COLOR_BIT, opts.alloc_cb);
     }
 
     return .{
@@ -401,7 +409,7 @@ pub fn createSwapchain(a: std.mem.Allocator, opts: SwapchainCreateOpts) !Swapcha
     };
 }
 
-fn pick_swapchain_format(formats: []const c.vk.SurfaceFormatKHR, opts: SwapchainCreateOpts) c.vk.Format {
+fn pickSwapchainFormat(formats: []const c.vk.SurfaceFormatKHR, opts: SwapchainCreateOpts) c.vk.Format {
     // TODO: Add support for specifying desired format.
     _ = opts;
     for (formats) |format| {
@@ -415,7 +423,7 @@ fn pick_swapchain_format(formats: []const c.vk.SurfaceFormatKHR, opts: Swapchain
     return formats[0].format;
 }
 
-fn pick_swapchain_present_mode(modes: []const c.vk.PresentModeKHR, opts: SwapchainCreateOpts) c.vk.PresentModeKHR {
+fn pickSwapchainPresentMode(modes: []const c.vk.PresentModeKHR, opts: SwapchainCreateOpts) c.vk.PresentModeKHR {
     if (opts.vsync == false) {
         // Prefer immediate mode if present.
         for (modes) |mode| {
@@ -437,7 +445,7 @@ fn pick_swapchain_present_mode(modes: []const c.vk.PresentModeKHR, opts: Swapcha
     return c.vk.PRESENT_MODE_FIFO_KHR;
 }
 
-fn make_swapchain_extent(capabilities: c.vk.SurfaceCapabilitiesKHR, opts: SwapchainCreateOpts) c.vk.Extent2D {
+fn makeSwapchainExtent(capabilities: c.vk.SurfaceCapabilitiesKHR, opts: SwapchainCreateOpts) c.vk.Extent2D {
     if (capabilities.currentExtent.width != std.math.maxInt(u32)) {
         return capabilities.currentExtent;
     }
@@ -453,7 +461,7 @@ fn make_swapchain_extent(capabilities: c.vk.SurfaceCapabilitiesKHR, opts: Swapch
     return extent;
 }
 
-fn make_physical_device(a: std.mem.Allocator, device: c.vk.PhysicalDevice, surface: c.vk.SurfaceKHR) !PhysicalDevice {
+fn makePhysicalDevice(a: std.mem.Allocator, device: c.vk.PhysicalDevice, surface: c.vk.SurfaceKHR) !PhysicalDevice {
     var props = std.mem.zeroInit(c.vk.PhysicalDeviceProperties, .{});
     c.vk.GetPhysicalDeviceProperties(device, &props);
 
@@ -516,7 +524,7 @@ fn make_physical_device(a: std.mem.Allocator, device: c.vk.PhysicalDevice, surfa
     };
 }
 
-fn is_physical_device_suitable(a: std.mem.Allocator, device: PhysicalDevice, opts: PhysicalDeviceSelectOpts) !bool {
+fn isPhysicalDeviceSuitable(a: std.mem.Allocator, device: PhysicalDevice, opts: PhysicalDeviceSelectOpts) !bool {
     if (device.properties.apiVersion < opts.min_api_version) {
         return false;
     }
@@ -590,7 +598,7 @@ const SwapchainSupportInfo = struct {
     }
 };
 
-fn create_image_view(device: c.vk.Device, image: c.vk.Image, format: c.vk.Format, aspect_flags: c.vk.ImageAspectFlags, alloc_cb: ?*c.vk.AllocationCallbacks) !c.vk.ImageView {
+fn createImageView(device: c.vk.Device, image: c.vk.Image, format: c.vk.Format, aspect_flags: c.vk.ImageAspectFlags, alloc_cb: ?*c.vk.AllocationCallbacks) !c.vk.ImageView {
     const view_info = std.mem.zeroInit(c.vk.ImageViewCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = image,
@@ -611,7 +619,7 @@ fn create_image_view(device: c.vk.Device, image: c.vk.Image, format: c.vk.Format
     return image_view;
 }
 
-fn get_vulkan_instance_funct(comptime Fn: type, instance: c.vk.Instance, name: [*c]const u8) Fn {
+fn getVulkanInstanceFunct(comptime Fn: type, instance: c.vk.Instance, name: [*c]const u8) Fn {
     const get_proc_addr: c.vk.PFN_GetInstanceProcAddr = @ptrCast(c.sdl.Vulkan_GetVkGetInstanceProcAddr());
     if (get_proc_addr) |get_proc_addr_fn| {
         return @ptrCast(get_proc_addr_fn(instance, name));
@@ -620,8 +628,8 @@ fn get_vulkan_instance_funct(comptime Fn: type, instance: c.vk.Instance, name: [
     @panic("SDL_Vulkan_GetVkGetInstanceProcAddr returned null");
 }
 
-fn create_debug_callback(instance: c.vk.Instance, opts: VkiInstanceOpts) !c.vk.DebugUtilsMessengerEXT {
-    const create_fn_opt = get_vulkan_instance_funct(c.vk.PFN_CreateDebugUtilsMessengerEXT, instance, "vkCreateDebugUtilsMessengerEXT");
+fn createDebugCallback(instance: c.vk.Instance, opts: VkiInstanceOpts) !c.vk.DebugUtilsMessengerEXT {
+    const create_fn_opt = getVulkanInstanceFunct(c.vk.PFN_CreateDebugUtilsMessengerEXT, instance, "vkCreateDebugUtilsMessengerEXT");
     if (create_fn_opt) |create_fn| {
         const create_info = std.mem.zeroInit(c.vk.DebugUtilsMessengerCreateInfoEXT, .{
             .sType = c.vk.STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -631,7 +639,7 @@ fn create_debug_callback(instance: c.vk.Instance, opts: VkiInstanceOpts) !c.vk.D
             .messageType = c.vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                 c.vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                 c.vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-            .pfnUserCallback = opts.debug_callback orelse default_debug_callback,
+            .pfnUserCallback = opts.debug_callback orelse defaultDebugCallback,
             .pUserData = null,
         });
         var debug_messenger: c.vk.DebugUtilsMessengerEXT = undefined;
@@ -642,11 +650,11 @@ fn create_debug_callback(instance: c.vk.Instance, opts: VkiInstanceOpts) !c.vk.D
     return null;
 }
 
-pub fn get_destroy_debug_utils_messenger_fn(instance: c.vk.Instance) c.vk.PFN_DestroyDebugUtilsMessengerEXT {
-    return get_vulkan_instance_funct(c.vk.PFN_DestroyDebugUtilsMessengerEXT, instance, "vkDestroyDebugUtilsMessengerEXT");
+pub fn getDestroyDebugUtilsMessengerFn(instance: c.vk.Instance) c.vk.PFN_DestroyDebugUtilsMessengerEXT {
+    return getVulkanInstanceFunct(c.vk.PFN_DestroyDebugUtilsMessengerEXT, instance, "vkDestroyDebugUtilsMessengerEXT");
 }
 
-fn default_debug_callback(severity: c.vk.DebugUtilsMessageSeverityFlagBitsEXT, msg_type: c.vk.DebugUtilsMessageTypeFlagsEXT, callback_data: ?*const c.vk.DebugUtilsMessengerCallbackDataEXT, user_data: ?*anyopaque) callconv(.c) c.vk.Bool32 {
+fn defaultDebugCallback(severity: c.vk.DebugUtilsMessageSeverityFlagBitsEXT, msg_type: c.vk.DebugUtilsMessageTypeFlagsEXT, callback_data: ?*const c.vk.DebugUtilsMessengerCallbackDataEXT, user_data: ?*anyopaque) callconv(.c) c.vk.Bool32 {
     _ = user_data;
     const severity_str = switch (severity) {
         c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT => "verbose",
