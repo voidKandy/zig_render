@@ -15,7 +15,7 @@ pub fn loadImageFromFile(engine: *Engine, filepath: []const u8) !Engine.Allocate
     var height: c_int = undefined;
     var channels: c_int = undefined;
 
-    // This is just to make the API more zig friendly. Conver to C 0-term string
+    // This is just to make the API more zig friendly. Convert to C 0-term string
     // on the stack.
     var buffer: [512]u8 = undefined;
     const filepathz = try std.fmt.bufPrintZ(buffer[0..], "{s}", .{filepath});

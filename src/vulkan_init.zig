@@ -96,9 +96,10 @@ pub fn createInstance(alloc: std.mem.Allocator, opts: VkiInstanceOpts) !Instance
     // Add extensions required to run on Mac with MoltenVK
     // https://stackoverflow.com/questions/58732459/vk-error-incompatible-driver-with-mac-os-and-vulkan-moltenvk
     // https://docs.vulkan.org/guide/latest/enabling_extensions.html
-    try extensions.append(arena, c.vk.KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
     try extensions.append(arena, c.vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-    try extensions.append(arena, c.vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+    try extensions.append(arena, c.vk.KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    // FOR DEVICE!
+    // try extensions.append(arena, c.vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 
     // If we need validation, also add the debug utils extension
     if (enable_validation and ExtensionFinder.find("VK_EXT_debug_utils", extension_props)) {
@@ -113,6 +114,15 @@ pub fn createInstance(alloc: std.mem.Allocator, opts: VkiInstanceOpts) !Instance
         .pApplicationName = opts.application_name,
         .pEngineName = opts.engine_name orelse opts.application_name,
     });
+
+    log.info(
+        \\ Creating Instance with extensions:
+    , .{});
+    for (extensions.items) |i| {
+        log.info(
+            \\ {s}
+        , .{i});
+    }
 
     const instance_info = std.mem.zeroInit(c.vk.InstanceCreateInfo, .{
         .flags = c.vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
@@ -276,6 +286,8 @@ pub fn createLogicalDevice(a: std.mem.Allocator, opts: DeviceCreateOpts) !Device
 
     const device_extensions: []const [*c]const u8 = &.{
         "VK_KHR_swapchain",
+        // for Mac
+        c.vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
     };
 
     const device_info = std.mem.zeroInit(c.vk.DeviceCreateInfo, .{

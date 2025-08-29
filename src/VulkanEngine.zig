@@ -701,8 +701,8 @@ fn initPipelines(self: *Self) void {
     // NOTE: we are currently destroying the shader modules as soon as we are done
     // creating the pipeline. This is not great if we needed the modules for multiple pipelines.
     // Howver, for the sake of simplicity, we are doing it this way for now.
-    const red_vert_code align(4) = @embedFile("shaders/triangle.vert.glsl").*;
-    const red_frag_code align(4) = @embedFile("shaders/triangle.frag.glsl").*;
+    const red_vert_code align(4) = @embedFile("triangle.vert").*;
+    const red_frag_code align(4) = @embedFile("triangle.frag").*;
     const red_vert_module = createShaderModule(self, &red_vert_code) orelse VK_NULL_HANDLE;
     defer c.vk.DestroyShaderModule(self.device, red_vert_module, vk_alloc_cbs);
     const red_frag_module = createShaderModule(self, &red_frag_code) orelse VK_NULL_HANDLE;
@@ -814,8 +814,8 @@ fn initPipelines(self: *Self) void {
 
     _ = self.createMaterial(red_triangle_pipeline, triangle_pipeline_layout, "red_triangle_mat");
 
-    const rgb_vert_code align(4) = @embedFile("shaders/colored_triangle.vert.glsl").*;
-    const rgb_frag_code align(4) = @embedFile("shaders/colored_triangle.frag.glsl").*;
+    const rgb_vert_code align(4) = @embedFile("colored_triangle.vert").*;
+    const rgb_frag_code align(4) = @embedFile("colored_triangle.frag").*;
     const rgb_vert_module = createShaderModule(self, &rgb_vert_code) orelse VK_NULL_HANDLE;
     defer c.vk.DestroyShaderModule(self.device, rgb_vert_module, vk_alloc_cbs);
     const rgb_frag_module = createShaderModule(self, &rgb_frag_code) orelse VK_NULL_HANDLE;
@@ -848,14 +848,14 @@ fn initPipelines(self: *Self) void {
     pipeline_builder.vertex_input_state.pVertexBindingDescriptions = vertex_descritpion.bindings.ptr;
     pipeline_builder.vertex_input_state.vertexBindingDescriptionCount = @as(u32, @intCast(vertex_descritpion.bindings.len));
 
-    const tri_mesh_vert_code align(4) = @embedFile("shaders/tri_mesh.vert.glsl").*;
+    const tri_mesh_vert_code align(4) = @embedFile("tri_mesh.vert").*;
     const tri_mesh_vert_module = createShaderModule(self, &tri_mesh_vert_code) orelse VK_NULL_HANDLE;
     defer c.vk.DestroyShaderModule(self.device, tri_mesh_vert_module, vk_alloc_cbs);
 
     if (tri_mesh_vert_module != VK_NULL_HANDLE) log.info("Tri-mesh vert module loaded successfully", .{});
 
     // Default lit shader
-    const default_lit_frag_code align(4) = @embedFile("shaders/default_lit.frag.glsl").*;
+    const default_lit_frag_code align(4) = @embedFile("default_lit.frag").*;
     const default_lit_frag_module = createShaderModule(self, &default_lit_frag_code) orelse VK_NULL_HANDLE;
     defer c.vk.DestroyShaderModule(self.device, default_lit_frag_module, vk_alloc_cbs);
 
@@ -923,7 +923,7 @@ fn initPipelines(self: *Self) void {
         VulkanDeleter.make(textured_pipe_layout, c.vk.DestroyPipelineLayout),
     ) catch @panic("Out of memory");
 
-    const textured_lit_frag_code align(4) = @embedFile("shaders/textured_lit.frag.glsl").*;
+    const textured_lit_frag_code align(4) = @embedFile("textured_lit.frag").*;
     const textured_lit_frag = createShaderModule(self, &textured_lit_frag_code) orelse VK_NULL_HANDLE;
     defer c.vk.DestroyShaderModule(self.device, textured_lit_frag, vk_alloc_cbs);
 
