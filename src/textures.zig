@@ -20,6 +20,8 @@ pub fn loadImageFromFile(engine: *Engine, filepath: []const u8) !Engine.Allocate
     var buffer: [512]u8 = undefined;
     const filepathz = try std.fmt.bufPrintZ(buffer[0..], "{s}", .{filepath});
 
+    log.info("Attempting to load image from: {s}", .{filepathz});
+
     const image_data = c.stbi.load(filepathz.ptr, &width, &height, &channels, c.stbi.rgb_alpha);
     if (image_data == null) {
         return error.failed_to_load_image;
