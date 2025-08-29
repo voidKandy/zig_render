@@ -1,0 +1,4 @@
+vkguide-zig-main
+.zig-cache
+zig-out
+.DS_Store
