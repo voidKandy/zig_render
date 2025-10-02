@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("clibs.zig");
 const vki = @import("vulkan_init.zig");
 const checkVk = vki.checkVk;
+const VkError = vki.VkError;
 const mesh_mod = @import("mesh.zig");
 const Mesh = mesh_mod.Mesh;
 
@@ -48,7 +49,9 @@ const RenderObject = struct {
 };
 
 const FrameData = struct {
+    // dont need
     present_semaphore: c.vk.Semaphore = VK_NULL_HANDLE,
+    // dont need
     render_semaphore: c.vk.Semaphore = VK_NULL_HANDLE,
     render_fence: c.vk.Fence = VK_NULL_HANDLE,
     command_pool: c.vk.CommandPool = VK_NULL_HANDLE,
@@ -149,6 +152,9 @@ deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
 buffer_deletion_queue: std.ArrayList(VmaBufferDeleter) = undefined,
 image_deletion_queue: std.ArrayList(VmaImageDeleter) = undefined,
 
+submit_semaphores: []c.vk.Semaphore = undefined,
+// acquire_semaphores: [FRAME_OVERLAP]c.vk.Semaphore = undefined,
+
 pub const MeshPushConstants = struct {
     data: Vec4,
     render_matrix: Mat4,
@@ -222,12 +228,10 @@ pub fn init(a: std.mem.Allocator) Self {
     };
 
     engine.initInstance();
-
     // Create the window surface
     checkSdlBool(c.sdl.Vulkan_CreateSurface(window, engine.instance, vk_alloc_cbs, &engine.surface));
 
-    engine.initDevice();
-
+    engine.initDevices();
     // Create a VMA allocator
     const allocator_ci = std.mem.zeroInit(c.vma.AllocatorCreateInfo, .{
         .physicalDevice = engine.physical_device,
@@ -287,11 +291,9 @@ fn initInstance(self: *Self) void {
     self.debug_messenger = instance.debug_messenger;
 }
 
-fn initDevice(self: *Self) void {
-    // Physical device selection
-    const required_device_extensions: []const [*c]const u8 = &.{
-        "VK_KHR_swapchain",
-    };
+/// Create both the **physical** and **logical** devices
+fn initDevices(self: *Self) void {
+    const required_device_extensions: []const [*c]const u8 = &.{c.vk.KHR_SWAPCHAIN_EXTENSION_NAME};
 
     const physical_device = vki.selectPhysicalDevice(std.heap.page_allocator, self.instance, .{
         .min_api_version = c.vk.MAKE_VERSION(1, 1, 0),
@@ -316,19 +318,19 @@ fn initDevice(self: *Self) void {
         .shaderDrawParameters = c.vk.TRUE,
     });
 
-    // Create a logical device
-    const device = vki.createLogicalDevice(self.allocator, .{
+    const logical_device = vki.createLogicalDevice(self.allocator, .{
         .physical_device = physical_device,
         .features = std.mem.zeroInit(c.vk.PhysicalDeviceFeatures, .{}),
         .alloc_cb = vk_alloc_cbs,
         .pnext = &shader_draw_parameters_features,
     }) catch @panic("Failed to create logical device");
 
-    self.device = device.handle;
-    self.graphics_queue = device.graphics_queue;
-    self.present_queue = device.present_queue;
+    self.device = logical_device.handle;
+    self.graphics_queue = logical_device.graphics_queue;
+    self.present_queue = logical_device.present_queue;
 }
 
+/// Initializes swapchain and creates image views
 fn initSwapchain(self: *Self) void {
     var win_width: c_int = undefined;
     var win_height: c_int = undefined;
@@ -613,6 +615,7 @@ fn initSyncStructures(self: *Self) void {
             self.allocator,
             VulkanDeleter.make(frame.present_semaphore, c.vk.DestroySemaphore),
         ) catch @panic("Out of memory");
+
         checkVk(c.vk.CreateSemaphore(self.device, &semaphore_ci, vk_alloc_cbs, &frame.render_semaphore)) catch @panic("Failed to create render semaphore");
         self.deletion_queue.append(
             self.allocator,
@@ -623,6 +626,16 @@ fn initSyncStructures(self: *Self) void {
         self.deletion_queue.append(
             self.allocator,
             VulkanDeleter.make(frame.render_fence, c.vk.DestroyFence),
+        ) catch @panic("Out of memory");
+    }
+
+    // Allocate per-swapchain-image semaphores for submission -> presentation
+    self.submit_semaphores = self.allocator.alloc(c.vk.Semaphore, self.swapchain_images.len) catch @panic("Failed to initialize semaphore array");
+    for (0..self.swapchain_images.len) |i| {
+        checkVk(c.vk.CreateSemaphore(self.device, &semaphore_ci, vk_alloc_cbs, &self.submit_semaphores[i])) catch @panic("Failed to create submit semaphore");
+        self.deletion_queue.append(
+            self.allocator,
+            VulkanDeleter.make(self.submit_semaphores[i], c.vk.DestroySemaphore),
         ) catch @panic("Out of memory");
     }
 
@@ -841,12 +854,12 @@ fn initPipelines(self: *Self) void {
     _ = self.createMaterial(rgb_triangle_pipeline, triangle_pipeline_layout, "rgb_triangle_mat");
 
     // Create pipeline for meshes
-    const vertex_descritpion = mesh_mod.Vertex.vertex_input_description;
+    const vertex_description = mesh_mod.Vertex.vertex_input_description;
 
-    pipeline_builder.vertex_input_state.pVertexAttributeDescriptions = vertex_descritpion.attributes.ptr;
-    pipeline_builder.vertex_input_state.vertexAttributeDescriptionCount = @as(u32, @intCast(vertex_descritpion.attributes.len));
-    pipeline_builder.vertex_input_state.pVertexBindingDescriptions = vertex_descritpion.bindings.ptr;
-    pipeline_builder.vertex_input_state.vertexBindingDescriptionCount = @as(u32, @intCast(vertex_descritpion.bindings.len));
+    pipeline_builder.vertex_input_state.pVertexAttributeDescriptions = vertex_description.attributes.ptr;
+    pipeline_builder.vertex_input_state.vertexAttributeDescriptionCount = @as(u32, @intCast(vertex_description.attributes.len));
+    pipeline_builder.vertex_input_state.pVertexBindingDescriptions = vertex_description.bindings.ptr;
+    pipeline_builder.vertex_input_state.vertexBindingDescriptionCount = @as(u32, @intCast(vertex_description.bindings.len));
 
     const tri_mesh_vert_code align(4) = @embedFile("tri_mesh.vert").*;
     const tri_mesh_vert_module = createShaderModule(self, &tri_mesh_vert_code) orelse VK_NULL_HANDLE;
@@ -1210,38 +1223,12 @@ fn createShaderModule(self: *Self, code: []const u8) ?c.vk.ShaderModule {
 }
 
 fn initScene(self: *Self) void {
-    const monkey = RenderObject{
-        .mesh = self.meshes.getPtr("monkey") orelse @panic("Failed to get monkey mesh"),
-        .material = self.materials.getPtr("default_mesh") orelse @panic("Failed to get default mesh material"),
-        .transform = Mat4.IDENTITY,
-    };
-    self.renderables.append(self.allocator, monkey) catch @panic("Out of memory");
-
-    // const diorama = RenderObject {
-    //     .mesh = self.meshes.getPtr("diorama") orelse @panic("Failed to get diorama mesh"),
+    // const monkey = RenderObject{
+    //     .mesh = self.meshes.getPtr("monkey") orelse @panic("Failed to get monkey mesh"),
     //     .material = self.materials.getPtr("default_mesh") orelse @panic("Failed to get default mesh material"),
-    //     .transform = Mat4.mul(
-    //         Mat4.mul(
-    //             m3d.translation(m3d.vec3(3.0, 1, 0)),
-    //             m3d.rotation(m3d.vec3(0, 1, 0), std.math.degreesToRadians(f32, -60)),
-    //         ),
-    //         m3d.scale(m3d.vec3(2.0, 2.0, 2.0))
-    //     ),
+    //     .transform = Mat4.IDENTITY,
     // };
-    // self.renderables.append(diorama) catch @panic("Out of memory");
-    //
-    // const body = RenderObject {
-    //     .mesh = self.meshes.getPtr("body") orelse @panic("Failed to get body mesh"),
-    //     .material = self.materials.getPtr("default_mesh") orelse @panic("Failed to get default mesh material"),
-    //     .transform = Mat4.mul(
-    //         Mat4.mul(
-    //             m3d.translation(m3d.vec3(-3.0, -0.5, 0)),
-    //             m3d.rotation(m3d.vec3(0, 1, 0), std.math.degreesToRadians(f32, 45)),
-    //         ),
-    //         m3d.scale(m3d.vec3(2.0, 2.0, 2.0))
-    //     ),
-    // };
-    // self.renderables.append(body) catch @panic("Out of memory");
+    // self.renderables.append(self.allocator, monkey) catch @panic("Out of memory");
 
     var material = self.materials.getPtr("textured_mesh") orelse @panic("Failed to get default mesh material");
 
@@ -1272,31 +1259,31 @@ fn initScene(self: *Self) void {
         VulkanDeleter.make(sampler, c.vk.DestroySampler),
     ) catch @panic("Out of memory");
 
-    const lost_empire_tex = (self.textures.get("empire_diffuse") orelse @panic("Failed to get empire texture"));
+    // const lost_empire_tex = (self.textures.get("empire_diffuse") orelse @panic("Failed to get empire texture"));
 
-    const descriptor_image_info = std.mem.zeroInit(c.vk.DescriptorImageInfo, .{
-        .sampler = sampler,
-        .imageView = lost_empire_tex.image_view,
-        .imageLayout = c.vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    });
+    // const descriptor_image_info = std.mem.zeroInit(c.vk.DescriptorImageInfo, .{
+    //     .sampler = sampler,
+    //     .imageView = lost_empire_tex.image_view,
+    //     .imageLayout = c.vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    // });
 
-    const write_descriptor_set = std.mem.zeroInit(c.vk.WriteDescriptorSet, .{
-        .sType = c.vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = material.texture_set,
-        .dstBinding = 0,
-        .descriptorCount = 1,
-        .descriptorType = c.vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .pImageInfo = &descriptor_image_info,
-    });
+    // const write_descriptor_set = std.mem.zeroInit(c.vk.WriteDescriptorSet, .{
+    //     .sType = c.vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+    //     .dstSet = material.texture_set,
+    //     .dstBinding = 0,
+    //     .descriptorCount = 1,
+    //     .descriptorType = c.vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+    //     .pImageInfo = &descriptor_image_info,
+    // });
 
-    c.vk.UpdateDescriptorSets(self.device, 1, &write_descriptor_set, 0, null);
+    // c.vk.UpdateDescriptorSets(self.device, 1, &write_descriptor_set, 0, null);
 
-    const lost_empire = RenderObject{
-        .mesh = self.meshes.getPtr("lost_empire") orelse @panic("Failed to get triangle mesh"),
-        .transform = Mat4.translation(Vec3.make(5.0, -10.0, 0.0)),
-        .material = material,
-    };
-    self.renderables.append(self.allocator, lost_empire) catch @panic("Out of memory");
+    // const lost_empire = RenderObject{
+    //     .mesh = self.meshes.getPtr("lost_empire") orelse @panic("Failed to get triangle mesh"),
+    //     .transform = Mat4.translation(Vec3.make(5.0, -10.0, 0.0)),
+    //     .material = material,
+    // };
+    // self.renderables.append(self.allocator, lost_empire) catch @panic("Out of memory");
 
     var x: i32 = -20;
     while (x <= 20) : (x += 1) {
@@ -1413,6 +1400,8 @@ pub fn cleanup(self: *Self) void {
     self.meshes.deinit();
     self.materials.deinit();
     self.renderables.deinit(self.allocator);
+
+    self.allocator.free(self.submit_semaphores);
 
     c.cimgui.impl_vulkan.Shutdown();
 
@@ -1706,15 +1695,34 @@ fn getCurrentFrame(self: *Self) FrameData {
 }
 
 fn draw(self: *Self) void {
-    // Wait until the GPU has finished rendering the last frame
     const timeout: u64 = 1_000_000_000; // 1 second in nanonesconds
     const frame = self.getCurrentFrame();
 
+    // Wait until the GPU has finished rendering the last frame
     checkVk(c.vk.WaitForFences(self.device, 1, &frame.render_fence, c.vk.TRUE, timeout)) catch @panic("Failed to wait for render fence");
     checkVk(c.vk.ResetFences(self.device, 1, &frame.render_fence)) catch @panic("Failed to reset render fence");
 
     var swapchain_image_index: u32 = undefined;
-    checkVk(c.vk.AcquireNextImageKHR(self.device, self.swapchain, timeout, frame.present_semaphore, VK_NULL_HANDLE, &swapchain_image_index)) catch @panic("Failed to acquire swapchain image");
+
+    checkVk(c.vk.AcquireNextImageKHR(self.device, self.swapchain, timeout, frame.render_semaphore, VK_NULL_HANDLE, &swapchain_image_index)) catch
+        @panic("Failed to acquire next image");
+
+    // switch (checkVk(aq_img_res)) {
+    //     VkError.SuboptimalKHR => {
+    //         // recreate swapchian
+    //     },
+    //     void => {},
+    //     _ => {
+    //         @panic("encountered unexpected error acquiring swapchain image");
+    //     },
+    // }
+    // catch |e|
+    //    {
+    //        std.log.err(
+    //            \\ Acquire Image Error: {any}
+    //        , .{e});
+
+    //    };
 
     var cmd = frame.main_command_buffer;
 
@@ -1750,6 +1758,7 @@ fn draw(self: *Self) void {
     const render_pass_begin_info = std.mem.zeroInit(c.vk.RenderPassBeginInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = self.render_pass,
+        //? maybe wrong
         .framebuffer = self.framebuffers[swapchain_image_index],
         .renderArea = .{
             .offset = .{ .x = 0, .y = 0 },
@@ -1758,9 +1767,9 @@ fn draw(self: *Self) void {
         .clearValueCount = @as(u32, @intCast(clear_values.len)),
         .pClearValues = &clear_values[0],
     });
-    c.vk.CmdBeginRenderPass(cmd, &render_pass_begin_info, c.vk.SUBPASS_CONTENTS_INLINE);
 
-    // Objects
+    c.vk.CmdBeginRenderPass(cmd, &render_pass_begin_info, c.vk.SUBPASS_CONTENTS_INLINE);
+    // Sets up perspective projection **and** draws objects within it
     self.drawObjects(cmd, self.renderables.items);
 
     // UI
@@ -1773,32 +1782,39 @@ fn draw(self: *Self) void {
     const submit_info = std.mem.zeroInit(c.vk.SubmitInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &frame.present_semaphore,
+        .pWaitSemaphores = &frame.render_semaphore,
+        // .pWaitSemaphores = null,
         .pWaitDstStageMask = &wait_stage,
         .commandBufferCount = 1,
         .pCommandBuffers = &cmd,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &frame.render_semaphore,
+        .pSignalSemaphores = &self.submit_semaphores[swapchain_image_index],
     });
+
     checkVk(c.vk.QueueSubmit(self.graphics_queue, 1, &submit_info, frame.render_fence)) catch @panic("Failed to submit to graphics queue");
 
     const present_info = std.mem.zeroInit(c.vk.PresentInfoKHR, .{
         .sType = c.vk.STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &frame.render_semaphore,
+        // .pWaitSemaphores = &frame.render_semaphore,
+        .pWaitSemaphores = &self.submit_semaphores[swapchain_image_index],
         .swapchainCount = 1,
         .pSwapchains = &self.swapchain,
         .pImageIndices = &swapchain_image_index,
     });
     checkVk(c.vk.QueuePresentKHR(self.present_queue, &present_info)) catch @panic("Failed to present swapchain image");
 
+    // `frame_number` is only ever 0 or 1
     self.frame_number +%= 1;
 }
 
 fn drawObjects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) void {
     const view = Mat4.translation(self.camera_pos);
     const aspect = @as(f32, @floatFromInt(self.swapchain_extent.width)) / @as(f32, @floatFromInt(self.swapchain_extent.height));
-    var proj = Mat4.perspective(std.math.degreesToRadians(70.0), aspect, 0.1, 200.0);
+    const near_plane = 0.1;
+    const far_plane = 200.0;
+    // 70.0 Degree **vertical** FOV
+    var proj = Mat4.perspective(std.math.degreesToRadians(70.0), aspect, near_plane, far_plane);
 
     proj.j.y *= -1.0;
 
@@ -1875,6 +1891,8 @@ fn drawObjects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) vo
 
         c.vk.CmdPushConstants(cmd, object.material.pipeline_layout, c.vk.SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(MeshPushConstants), &push_constants);
 
+        // if this is the very first mesh, or doesn't match the previously drawn mesh we need to bind vertex buffer
+        // otherwise we can skip doing that because the buffer has already been bound in the previous iteration
         if (index == 0 or object.mesh != objects[index - 1].mesh) {
             const offset: c.vk.DeviceSize = 0;
             c.vk.CmdBindVertexBuffers(cmd, 0, 1, &object.mesh.vertex_buffer.buffer, &offset);

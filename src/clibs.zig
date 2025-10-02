@@ -116,7 +116,19 @@ pub const vk = struct {
     pub const SwapchainKHR = c.VkSwapchainKHR;
     pub const AttachmentDescription = c.VkAttachmentDescription;
     pub const AttachmentReference = c.VkAttachmentReference;
+    /// A union of either:
+    ///    **VkClearColorValue:**
+    ///    The four array elements of the clear color map to R, G, B, and A components of image formats, in order.
+    ///    ---
+    ///    **VkClearDepthStencilValue:**
+    ///    **depth** is the clear value for the depth aspect of the depth/stencil attachment. It is a floating-point value which is automatically converted to the attachment’s format.
+    ///    **stencil** is the clear value for the stencil aspect of the depth/stencil attachment. It is a 32-bit integer value which is converted to the attachment’s format by taking the appropriate number of LSBs.
+    ///    ---
     pub const ClearValue = c.VkClearValue;
+    /// **flags:**
+    /// + VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT specifies that each recording of the command buffer will only be submitted once, and the command buffer will be reset and recorded again between each submission.
+    /// + VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT specifies that a secondary command buffer is considered to be entirely inside a render pass. If this is a primary command buffer, then this bit is ignored.
+    /// + VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT specifies that a command buffer can be resubmitted to any queue of the same queue family while it is in the pending state, and recorded into multiple primary command buffers.
     pub const CommandBufferBeginInfo = c.VkCommandBufferBeginInfo;
     pub const SubpassDescription = c.VkSubpassDescription;
     pub const SubpassDependency = c.VkSubpassDependency;
@@ -401,6 +413,7 @@ pub const vk = struct {
     pub const KHR_PORTABILITY_SUBSET_EXTENSION_NAME = c.VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
     pub const KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME = c.VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
     pub const KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME = c.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    pub const KHR_SWAPCHAIN_EXTENSION_NAME = c.VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 
     pub const CreateCommandPool = c.vkCreateCommandPool;
     pub const DestroyCommandPool = c.vkDestroyCommandPool;
@@ -413,6 +426,7 @@ pub const vk = struct {
     pub const EnumerateInstanceExtensionProperties = c.vkEnumerateInstanceExtensionProperties;
     pub const EnumerateDeviceExtensionProperties = c.vkEnumerateDeviceExtensionProperties;
     pub const EnumerateInstanceLayerProperties = c.vkEnumerateInstanceLayerProperties;
+    ///  Retrieve the index of the next available presentable image
     pub const AcquireNextImageKHR = c.vkAcquireNextImageKHR;
     pub const EnumerateInstanceVersion = c.vkEnumerateInstanceVersion;
     pub const EnumeratePhysicalDevices = c.vkEnumeratePhysicalDevices;
@@ -430,6 +444,7 @@ pub const vk = struct {
     pub const DestroySemaphore = c.vkDestroySemaphore;
     pub const CreateFence = c.vkCreateFence;
     pub const DestroyFence = c.vkDestroyFence;
+    /// After a command buffer is reset, any objects or memory specified by commands recorded into the command buffer must no longer be accessed when the command buffer is accessed by the implementation.
     pub const ResetCommandBuffer = c.vkResetCommandBuffer;
     pub const CreateDescriptorPool = c.vkCreateDescriptorPool;
     pub const DestroyDescriptorPool = c.vkDestroyDescriptorPool;

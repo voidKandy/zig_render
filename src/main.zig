@@ -1,6 +1,7 @@
 const std = @import("std");
 const zig_render = @import("zig_render");
 const c = @import("clibs.zig");
+const vki = @import("vulkan_init.zig");
 const VulkanEngine = @import("VulkanEngine.zig");
 
 pub fn main() !void {
