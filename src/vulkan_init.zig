@@ -744,8 +744,7 @@ pub const VkError = error{
 pub fn checkVk(result: c.vk.Result) VkError!void {
     return switch (result) {
         c.vk.SUCCESS => {},
-        // c.vk.SUBOPTIMAL_KHR => VkError.SuboptimalKHR,
-        c.vk.SUBOPTIMAL_KHR => {},
+        c.vk.SUBOPTIMAL_KHR => VkError.SuboptimalKHR,
         c.vk.NOT_READY => VkError.NotReady,
         c.vk.TIMEOUT => VkError.Timeout,
         c.vk.EVENT_SET => VkError.EventSet,

@@ -232,6 +232,7 @@ const HelloTriangleAppliation = struct {
         self.createSyncObjects();
     }
 
+    /// **Does not** deinit up array lists associated with swapchain
     fn cleanupSwapchain(self: *Self) void {
         for (self.swapchain_framebuffers.items) |fb| {
             vk.DestroyFramebuffer(self.device, fb, null);
@@ -245,6 +246,10 @@ const HelloTriangleAppliation = struct {
     }
 
     fn recreateSwapchain(self: *Self) void {
+        log.warn(
+            \\ Recreating Swapchain!
+            \\
+        , .{});
         var width: c_int, var height: c_int = .{ undefined, undefined };
         checkSdlBool(sdl.GetWindowSize(self.window, &width, &height));
         while (width == 0 or height == 0) {
@@ -264,10 +269,6 @@ const HelloTriangleAppliation = struct {
         var sdl_required_extension_count: u32 = undefined;
         const sdl_extensions = sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
         const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
-        log.info(
-            \\ Instance Extensions Slice: {s}
-            \\
-        , .{sdl_extensions.*});
 
         // Instance creation and optional debug utilities
         const instance = vulkan_init.createInstance(std.heap.page_allocator, .{
@@ -295,10 +296,19 @@ const HelloTriangleAppliation = struct {
 
         checkSdlBool(sdl.GetWindowSize(self.window, &width, &height));
 
+        const min_support_w, const max_support_w = .{
+            swapchain_support_details.capabilities.minImageExtent.width,
+            swapchain_support_details.capabilities.maxImageExtent.width,
+        };
+        const min_support_h, const max_support_h = .{
+            swapchain_support_details.capabilities.minImageExtent.height,
+            swapchain_support_details.capabilities.maxImageExtent.height,
+        };
+
         // clamping width and height to be within capabilities' min/max
         const actual_extent = vk.Extent2D{
-            .width = @min(@max(width, swapchain_support_details.capabilities.minImageExtent.width), swapchain_support_details.capabilities.maxImageExtent.width),
-            .height = @min(@max(height, swapchain_support_details.capabilities.minImageExtent.height), swapchain_support_details.capabilities.maxImageExtent.height),
+            .width = @min(@max(width, min_support_w), max_support_w),
+            .height = @min(@max(height, min_support_h), max_support_h),
         };
 
         return actual_extent;
@@ -328,10 +338,7 @@ const HelloTriangleAppliation = struct {
     fn createSwapchain(self: *Self) void {
         var details = querySwapchainSupport(self.allocator, self.physical_device.handle, self.surface) catch @panic("failed to get swapchain support details");
         // BAD! Should probably be in a deinit function
-        defer {
-            details.present_modes.deinit(self.allocator);
-            details.formats.deinit(self.allocator);
-        }
+        defer details.deinit(self.allocator);
         const surface_format = details.chooseSurfaceFormat();
         const present_mode = details.choosePresentMode();
         const extent = self.chooseSwapExtent(details);
@@ -735,7 +742,10 @@ const HelloTriangleAppliation = struct {
                     return;
                 },
                 VkError.SuboptimalKHR => {
-                    log.warn("Suboptimal KHR!", .{});
+                    log.warn(
+                        \\ Suboptimal KHR!
+                        \\
+                    , .{});
                 },
                 else => @panic("failed to acquire next image"),
             };
@@ -832,6 +842,11 @@ const SwapChainSupportDetails = struct {
     capabilities: vk.SurfaceCapabilitiesKHR = .{},
     formats: std.ArrayList(vk.SurfaceFormatKHR) = std.ArrayList(vk.SurfaceFormatKHR){},
     present_modes: std.ArrayList(vk.PresentModeKHR) = std.ArrayList(vk.PresentModeKHR){},
+
+    fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.present_modes.deinit(allocator);
+        self.formats.deinit(allocator);
+    }
 
     fn chooseSurfaceFormat(self: @This()) vk.SurfaceFormatKHR {
         for (self.formats.items) |format| {

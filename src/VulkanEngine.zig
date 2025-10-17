@@ -259,10 +259,6 @@ fn initInstance(self: *Self) void {
     var sdl_required_extension_count: u32 = undefined;
     const sdl_extensions = c.sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
     const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
-    log.info(
-        \\ Instance Extensions Slice: {s}
-        \\
-    , .{sdl_extensions.*});
 
     // Instance creation and optional debug utilities
     const instance = vki.createInstance(std.heap.page_allocator, .{
