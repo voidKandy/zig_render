@@ -116,9 +116,9 @@ pub fn build(b: *std.Build) !void {
 }
 
 fn buildBinaries(b: *std.Build, target: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, core_lib: *std.Build.Module) void {
-    const bins_entry = b.path("bins/all.zig");
+    // const bins_entry = b.path("bins/all.zig");
     const bins_dir = "bins";
-    const dir = std.fs.cwd().openDir(bins_dir, .{}) catch |e| std.debug.panic("Failed to get directory {s}: {}\n", .{ bins_entry.src_path.sub_path, e });
+    const dir = std.fs.cwd().openDir(bins_dir, .{}) catch @panic("Failed to get directory");
     var buffer: [256]u8 = undefined;
     @memset(&buffer, 0);
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
@@ -157,8 +157,6 @@ fn buildBinaries(b: *std.Build, target: std.Build.ResolvedTarget, opt: std.built
 fn compileAllShaders(
     b: *std.Build,
     lib: *std.Build.Module,
-    // exe: *std.Build.Step.Compile
-
 ) void {
     const shaders_dir = if (@hasDecl(@TypeOf(b.build_root.handle), "openIterableDir"))
         b.build_root.handle.openIterableDir("shaders", .{}) catch @panic("Failed to open shaders directory")

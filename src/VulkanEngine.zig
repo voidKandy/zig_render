@@ -257,15 +257,6 @@ pub fn init(a: std.mem.Allocator) Self {
 
 fn initInstance(self: *Self) void {
     var sdl_required_extension_count: u32 = undefined;
-    // const additional_extensions = &[_][*:0]const u8{
-    //     // this one may not be required
-    //     c.vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
-    // };
-    // const info = c.vk.InstanceCreateInfo{
-    //     .flags = c.vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
-    //     .enabledLayerCount = additional_extensions.len,
-    //     .ppEnabledExtensionNames = additional_extensions,
-    // };
     const sdl_extensions = c.sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
     const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
     log.info(
