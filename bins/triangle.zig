@@ -148,6 +148,7 @@ const HelloTriangleAppliation = struct {
         self.swapchain_framebuffers.deinit(self.allocator);
         self.command_buffers.deinit(self.allocator);
         self.image_available_semaphores.deinit(self.allocator);
+        self.render_finished_semaphores.deinit(self.allocator);
         self.frame_fences.deinit(self.allocator);
 
         vk.DestroyCommandPool(self.device, self.command_pool, null);
