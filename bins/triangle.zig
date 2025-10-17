@@ -143,6 +143,13 @@ const HelloTriangleAppliation = struct {
             vk.DestroySemaphore(self.device, self.render_finished_semaphores.items[i], null);
         }
 
+        self.swapchain_images.deinit(self.allocator);
+        self.swapchain_image_views.deinit(self.allocator);
+        self.swapchain_framebuffers.deinit(self.allocator);
+        self.command_buffers.deinit(self.allocator);
+        self.image_available_semaphores.deinit(self.allocator);
+        self.frame_fences.deinit(self.allocator);
+
         vk.DestroyCommandPool(self.device, self.command_pool, null);
 
         vk.DestroyDevice(self.device, null);
@@ -319,6 +326,11 @@ const HelloTriangleAppliation = struct {
 
     fn createSwapchain(self: *Self) void {
         var details = querySwapchainSupport(self.allocator, self.physical_device.handle, self.surface) catch @panic("failed to get swapchain support details");
+        // BAD! Should probably be in a deinit function
+        defer {
+            details.present_modes.deinit(self.allocator);
+            details.formats.deinit(self.allocator);
+        }
         const surface_format = details.chooseSurfaceFormat();
         const present_mode = details.choosePresentMode();
         const extent = self.chooseSwapExtent(details);
