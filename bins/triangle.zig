@@ -8,6 +8,38 @@ const checkVk = vulkan_init.checkVk;
 const sdl = c.sdl;
 const VkError = core.vulkan_init.VkError;
 
+const Vertex = struct {
+    pos: core.math.Vec2,
+    color: core.math.Vec3,
+
+    fn getBindingDescription() vk.VertexInputBindingDescription {
+        return .{
+            .binding = 0,
+            .stride = @sizeOf(@This()),
+            .inputRate = vk.VERTEX_INPUT_RATE_VERTEX,
+        };
+    }
+
+    /// An attribute description struct describes how to extract a vertex attribute from a chunk of vertex data originating from a binding description.
+    /// We have two attributes, position and color, so we need two attribute description structs.
+    fn getAttributeDescriptions() [2]vk.VertexInputAttributeDescription {
+        return .{
+            vk.VertexInputAttributeDescription{
+                .binding = 0,
+                .location = 0,
+                .format = vk.FORMAT_R32G32B32_SFLOAT,
+                .offset = @offsetOf(@This(), "pos"),
+            },
+            vk.VertexInputAttributeDescription{
+                .binding = 0,
+                .location = 1,
+                .format = vk.FORMAT_R32G32B32_SFLOAT,
+                .offset = @offsetOf(@This(), "color"),
+            },
+        };
+    }
+};
+
 fn debugCallback(sev: vk.DebugUtilsMessageSeverityFlagBitsEXT, typ: vk.DebugUtilsMessageTypeFlagsEXT, cb_data: [*c]const vk.DebugUtilsMessengerCallbackDataEXT, user_data: ?*anyopaque) bool {
     _ = .{ sev, typ, user_data };
     log.warn(
@@ -29,10 +61,13 @@ pub fn main() void {
     const cwd = std.process.getCwd(cwd_buff[0..]) catch @panic("cwd_buff too small");
     std.log.info("Running from: {s}", .{cwd});
 
-    var app = HelloTriangleAppliation.init(gpa.allocator());
-    defer app.deinit();
+    // var app = HelloTriangleAppliation.init(gpa.allocator());
+    // defer app.deinit();
+    //
+    var engine = core.NewVulkanEngine.init(gpa.allocator());
+    defer engine.deinit();
 
-    app.run();
+    engine.run();
 }
 
 fn checkSdl(res: bool) void {
@@ -86,6 +121,7 @@ const HelloTriangleAppliation = struct {
 
     physical_device: vulkan_init.PhysicalDevice = undefined,
     device: vk.Device = undefined,
+    vma_allocator: c.vma.Allocator = undefined,
 
     graphics_queue: vk.Queue = undefined,
     present_queue: vk.Queue = undefined,
@@ -100,6 +136,8 @@ const HelloTriangleAppliation = struct {
     render_pass: vk.RenderPass = undefined,
     pipeline_layout: vk.PipelineLayout = undefined,
     pipeline: vk.Pipeline = undefined,
+
+    vertex_buffer: vk.Buffer = undefined,
 
     command_pool: vk.CommandPool = undefined,
     command_buffers: std.ArrayList(vk.CommandBuffer),
@@ -129,6 +167,8 @@ const HelloTriangleAppliation = struct {
     fn deinit(self: *Self) void {
         self.cleanupSwapchain();
 
+        vk.DestroyBuffer(self.device, self.vertex_buffer, null);
+
         vk.DestroyPipeline(self.device, self.pipeline, null);
         vk.DestroyPipelineLayout(self.device, self.pipeline_layout, null);
 
@@ -153,6 +193,7 @@ const HelloTriangleAppliation = struct {
 
         vk.DestroyCommandPool(self.device, self.command_pool, null);
 
+        c.vma.DestroyAllocator(self.vma_allocator);
         vk.DestroyDevice(self.device, null);
 
         // if (self.enable_validation_layers) {
@@ -222,12 +263,21 @@ const HelloTriangleAppliation = struct {
         self.graphics_queue = logical_device.graphics_queue;
         self.present_queue = logical_device.present_queue;
 
+        // allocator
+        const allocator_ci = std.mem.zeroInit(c.vma.AllocatorCreateInfo, .{
+            .physicalDevice = self.physical_device.handle,
+            .device = self.device,
+            .instance = self.instance,
+        });
+        checkVk(c.vma.CreateAllocator(&allocator_ci, &self.vma_allocator)) catch @panic("Failed to create VMA allocator");
+
         self.createSwapchain();
         self.createImageViews();
         self.createRenderPass();
         self.createGraphicsPipeline();
         self.createFramebuffers();
         self.createCommandPool();
+        self.createVertexBuffer();
         self.createCommandBuffers();
         self.createSyncObjects();
     }
@@ -337,8 +387,8 @@ const HelloTriangleAppliation = struct {
 
     fn createSwapchain(self: *Self) void {
         var details = querySwapchainSupport(self.allocator, self.physical_device.handle, self.surface) catch @panic("failed to get swapchain support details");
-        // BAD! Should probably be in a deinit function
         defer details.deinit(self.allocator);
+
         const surface_format = details.chooseSurfaceFormat();
         const present_mode = details.choosePresentMode();
         const extent = self.chooseSwapExtent(details);
@@ -468,11 +518,9 @@ const HelloTriangleAppliation = struct {
         checkVk(vk.CreateRenderPass(self.device, &ci, null, &self.render_pass)) catch @panic("failed to create render pass");
     }
 
+    /// This being a better language than C/C++, means we don´t need to load
+    /// the SPIR-V code from a file, we can just embed it as an array of bytes.
     fn createShaderModule(self: *Self, code: []const u8) ?c.vk.ShaderModule {
-        // NOTE: This being a better language than C/C++, means we don´t need to load
-        // the SPIR-V code from a file, we can just embed it as an array of bytes.
-        // To reflect the different behaviour from the original code, we also changed
-        // the function name.
         std.debug.assert(code.len % 4 == 0);
 
         const data: *const u32 = @ptrCast(@alignCast(code.ptr));
@@ -493,6 +541,9 @@ const HelloTriangleAppliation = struct {
     }
 
     fn createGraphicsPipeline(self: *Self) void {
+        const bindingDescription = Vertex.getBindingDescription();
+        const attributeDescriptions = Vertex.getAttributeDescriptions();
+
         const vert_shader = core.shaders.createShaderModule("triangle.vert", self.device, null) orelse @panic("failed to create vert shader module");
         defer vk.DestroyShaderModule(self.device, vert_shader, null);
         const frag_shader = core.shaders.createShaderModule("triangle.frag", self.device, null) orelse @panic("failed to create frag shader module");
@@ -515,8 +566,10 @@ const HelloTriangleAppliation = struct {
 
         const vertex_input_info = vk.PipelineVertexInputStateCreateInfo{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-            .vertexBindingDescriptionCount = 0,
-            .vertexAttributeDescriptionCount = 0,
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &bindingDescription,
+            .vertexAttributeDescriptionCount = attributeDescriptions.len,
+            .pVertexAttributeDescriptions = &attributeDescriptions,
         };
 
         const input_assembly = vk.PipelineInputAssemblyStateCreateInfo{
@@ -618,6 +671,42 @@ const HelloTriangleAppliation = struct {
             };
             checkVk(vk.CreateFramebuffer(self.device, &ci, null, &self.swapchain_framebuffers.items[i])) catch @panic("failed to create framebuffer");
         }
+    }
+
+    fn createVertexBuffer(self: *Self) void {
+        const vertices = [_]Vertex{
+            .{
+                .pos = core.math.Vec2.make(0.0, -0.5),
+                .color = core.math.Vec3.make(1.0, 0.0, 0.0),
+            },
+            .{
+                .pos = core.math.Vec2.make(0.5, 0.5),
+                .color = core.math.Vec3.make(0.0, 1.0, 0.0),
+            },
+            .{
+                .pos = core.math.Vec2.make(-0.5, 0.5),
+                .color = core.math.Vec3.make(0.0, 0.0, 1.0),
+            },
+        };
+
+        const ci = vk.BufferCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
+            .size = @sizeOf(Vertex) * vertices.len,
+        };
+
+        const mem_requirements: vk.MemoryRequirements = undefined;
+        vk.GetBufferMemoryRequirements(self.device, self.vertex_buffer, &mem_requirements);
+
+        const ai = vk.MemoryAllocateInfo{
+            .sType = vk.STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = mem_requirements.size,
+            .memoryTypeIndex = core.vma_usage.findMemoryType(mem_requirements.memoryTypeBits, vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT),
+        };
+
+        var staging_buffer: core.vma_usage.AllocatedBuffer = undefined;
+        checkVk(c.vma.CreateBuffer(self.vma_allocator, &ci, &ai, &staging_buffer.buffer, &staging_buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
     }
 
     fn createCommandPool(self: *Self) void {

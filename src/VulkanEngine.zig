@@ -49,9 +49,7 @@ const RenderObject = struct {
 };
 
 const FrameData = struct {
-    // dont need
     present_semaphore: c.vk.Semaphore = VK_NULL_HANDLE,
-    // dont need
     render_semaphore: c.vk.Semaphore = VK_NULL_HANDLE,
     render_fence: c.vk.Fence = VK_NULL_HANDLE,
     command_pool: c.vk.CommandPool = VK_NULL_HANDLE,

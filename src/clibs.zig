@@ -208,6 +208,9 @@ pub const vk = struct {
     pub const PFN_CreateDebugUtilsMessengerEXT = c.PFN_vkCreateDebugUtilsMessengerEXT;
     pub const PFN_DestroyDebugUtilsMessengerEXT = c.PFN_vkDestroyDebugUtilsMessengerEXT;
 
+    pub const MemoryRequirements = c.VkMemoryRequirements;
+    pub const MemoryAllocateInfo = c.VkMemoryAllocateInfo;
+
     pub const MAKE_VERSION = c.VK_MAKE_VERSION;
     pub const TRUE = c.VK_TRUE;
     pub const FALSE = c.VK_FALSE;
@@ -297,6 +300,7 @@ pub const vk = struct {
     pub const STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     pub const STRUCTURE_TYPE_DEVICE_CREATE_INFO = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     pub const STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO = c.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO;
+    pub const STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     pub const QUEUE_FAMILY_IGNORED = c.VK_QUEUE_FAMILY_IGNORED;
     pub const COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pub const COMMAND_BUFFER_LEVEL_PRIMARY = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -507,6 +511,8 @@ pub const vk = struct {
     pub const BindImageMemory = c.vkBindImageMemory;
     pub const MapMemory = c.vkMapMemory;
     pub const UnmapMemory = c.vkUnmapMemory;
+
+    pub const GetBufferMemoryRequirements = c.vkGetBufferMemoryRequirements;
 };
 
 pub const cimgui = struct {
