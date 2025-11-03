@@ -64,7 +64,7 @@ pub fn main() void {
     // var app = HelloTriangleAppliation.init(gpa.allocator());
     // defer app.deinit();
     //
-    var engine = core.NewVulkanEngine.init(gpa.allocator());
+    var engine = core.VulkanEngine.init(gpa.allocator());
     defer engine.deinit();
 
     engine.run();

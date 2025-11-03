@@ -8,7 +8,7 @@ pub const clibs = @import("clibs.zig");
 pub const vma_usage = @import("vma_usage.zig");
 pub const vulkan_init = @import("vulkan_init.zig");
 pub const VulkanEngine = @import("VulkanEngine.zig");
-pub const NewVulkanEngine = @import("NewVulkanEngine.zig");
+pub const OldVulkanEngine = @import("OldVulkanEngine.zig");
 
 /// Panics if returned bool == false
 pub fn checkSdl(res: bool) void {
