@@ -3,6 +3,7 @@ const log = std.log;
 const root = @import("root.zig");
 const vulkan_init = root.vulkan_init;
 const vma_usage = root.vma_usage;
+const mesh_mod = root.mesh;
 const c = root.clibs;
 const vk = c.vk;
 const checkVk = vulkan_init.checkVk;
@@ -44,8 +45,9 @@ render_pass: vk.RenderPass = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 pipeline: vk.Pipeline = undefined,
 
-vertex_buffer: vk.Buffer = undefined,
-vertex_buffer_memory: vk.DeviceMemory = undefined,
+mesh: mesh_mod.Mesh2D = undefined,
+// vertex_buffer: vk.Buffer = undefined,
+// vertex_buffer_memory: vk.DeviceMemory = undefined,
 
 upload_context: vulkan_init.UploadContext = .{},
 
@@ -66,8 +68,8 @@ pub fn deinit(self: *Self) void {
     self.swapchain.deinit(self.allocator, self.device.handle, vk_alloc_cbs);
 
     // not using VMA!! should
-    vk.DestroyBuffer(self.device.handle, self.vertex_buffer, vk_alloc_cbs);
-    vk.FreeMemory(self.device.handle, self.vertex_buffer_memory, vk_alloc_cbs);
+    // vk.DestroyBuffer(self.device.handle, self.vertex_buffer, vk_alloc_cbs);
+    // vk.FreeMemory(self.device.handle, self.vertex_buffer_memory, vk_alloc_cbs);
 
     vk.DestroyPipeline(self.device.handle, self.pipeline, vk_alloc_cbs);
     vk.DestroyPipelineLayout(self.device.handle, self.pipeline_layout, vk_alloc_cbs);
@@ -92,6 +94,8 @@ pub fn deinit(self: *Self) void {
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         self.frames[i].deinit(self.device.handle, vk_alloc_cbs);
     }
+
+    self.allocator.free(self.mesh.vertices);
 
     c.vma.DestroyAllocator(self.vma_allocator);
     vk.DestroyDevice(self.device.handle, vk_alloc_cbs);
@@ -191,9 +195,9 @@ fn initVulkan(self: *Self) void {
 
     self.swapchain.createFramebuffers(self.allocator, self.device.handle, vk_alloc_cbs, self.render_pass) catch @panic("failed to create framebuffers");
 
-    self.createFrameCommands();
-    self.createVertexBuffer();
+    self.createCommands();
     self.createSyncObjects();
+    self.createMesh();
 }
 
 fn createInstance(self: *Self) void {
@@ -287,8 +291,12 @@ fn createShaderModule(self: *Self, code: []const u8) ?c.vk.ShaderModule {
 }
 
 fn createGraphicsPipeline(self: *Self) void {
-    const bindingDescription = root.Vertex.getBindingDescription();
-    const attributeDescriptions = root.Vertex.getAttributeDescriptions();
+    // const bindingDescription =
+    //     mesh_mod.Vertex2D.vertex_input_description.bindings;
+    // const attributeDescriptions =
+    //     mesh_mod.Vertex2D.vertex_input_description.attributes;
+
+    const vertex2D_description = mesh_mod.Vertex2D.vertex_input_description;
 
     const vert_shader = root.shaders.createShaderModule("triangle.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(self.device.handle, vert_shader, vk_alloc_cbs);
@@ -312,10 +320,10 @@ fn createGraphicsPipeline(self: *Self) void {
 
     const vertex_input_info = vk.PipelineVertexInputStateCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 1,
-        .pVertexBindingDescriptions = &bindingDescription,
-        .vertexAttributeDescriptionCount = attributeDescriptions.len,
-        .pVertexAttributeDescriptions = &attributeDescriptions,
+        .vertexBindingDescriptionCount = @as(u32, @intCast(vertex2D_description.bindings.len)),
+        .pVertexBindingDescriptions = vertex2D_description.bindings.ptr,
+        .vertexAttributeDescriptionCount = @as(u32, @intCast(vertex2D_description.attributes.len)),
+        .pVertexAttributeDescriptions = vertex2D_description.attributes.ptr,
     };
 
     const input_assembly = vk.PipelineInputAssemblyStateCreateInfo{
@@ -401,22 +409,17 @@ fn createGraphicsPipeline(self: *Self) void {
         @panic("failed to create graphics pipeline");
 }
 
-/// creates command pools and buffer per frame in flight
-fn createFrameCommands(self: *Self) void {
+/// creates command pools and buffer per frame in flight & for the singular upload context
+fn createCommands(self: *Self) void {
     // Create a command pool
-    const command_pool_ci = std.mem.zeroInit(vk.CommandPoolCreateInfo, .{
+    const command_pool_ci = vk.CommandPoolCreateInfo{
         .sType = vk.STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = self.physical_device.graphics_queue_family,
-    });
+    };
 
     for (&self.frames) |*frame| {
         checkVk(vk.CreateCommandPool(self.device.handle, &command_pool_ci, vk_alloc_cbs, &frame.command_pool)) catch log.err("Failed to create command pool", .{});
-        // self.deletion_queue.append(
-        //     self.allocator,
-        //     VulkanDeleter.make(frame.command_pool, vk.DestroyCommandPool, vk_alloc_cbs),
-        // ) catch @panic("Out of memory");
-
         // Allocate a command buffer from the command pool
         const command_buffer_ai = std.mem.zeroInit(vk.CommandBufferAllocateInfo, .{
             .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -426,8 +429,6 @@ fn createFrameCommands(self: *Self) void {
         });
 
         checkVk(vk.AllocateCommandBuffers(self.device.handle, &command_buffer_ai, &frame.main_command_buffer)) catch @panic("Failed to allocate command buffer");
-
-        log.info("Created command pool and command buffer", .{});
     }
 
     // =================================
@@ -435,11 +436,11 @@ fn createFrameCommands(self: *Self) void {
     //
 
     // For the time being this is submitting on the graphics queue
-    const upload_command_pool_ci = std.mem.zeroInit(vk.CommandPoolCreateInfo, .{
+    const upload_command_pool_ci = vk.CommandPoolCreateInfo{
         .sType = vk.STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = 0,
         .queueFamilyIndex = self.physical_device.graphics_queue_family,
-    });
+    };
 
     checkVk(vk.CreateCommandPool(self.device.handle, &upload_command_pool_ci, vk_alloc_cbs, &self.upload_context.command_pool)) catch @panic("Failed to create upload command pool");
     self.deletion_queue.append(
@@ -475,8 +476,9 @@ fn createFramebuffers(self: *Self) void {
     }
 }
 
-fn createVertexBuffer(self: *Self) void {
-    const vertices = [_]root.Vertex{
+// Creates and binds mesh
+fn createMesh(self: *Self) void {
+    const vertices = [_]mesh_mod.Vertex2D{
         .{
             .position = Vec2.make(0.0, -0.5),
             .color = Vec3.make(1.0, 0.0, 0.0),
@@ -491,61 +493,71 @@ fn createVertexBuffer(self: *Self) void {
         },
     };
 
-    const alloc_size = @sizeOf(root.Vertex) * vertices.len;
-    const bci = vk.BufferCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
-        .size = alloc_size,
-    };
-    checkVk(vk.CreateBuffer(self.device.handle, &bci, vk_alloc_cbs, &self.vertex_buffer)) catch @panic("failed to create vertext buffer");
-    // const buffer = vma_usage.AllocatedBuffer.create(self.vma_allocator, alloc_size, c.vma.MEMORY_USAGE_AUTO, c.vma.MemoryUsage);
-
-    // self.buffer_deletion_queue.append(
-    //     self.allocator,
-    //     vma_usage.VmaBufferDeleter{ .buffer = buffer },
-    // ) catch @panic("Out of memory");
-
-    var mem_reqs: vk.MemoryRequirements = undefined;
-    vk.GetBufferMemoryRequirements(self.device.handle, self.vertex_buffer, &mem_reqs);
-
-    const alloc_info = vk.MemoryAllocateInfo{
-        .sType = vk.STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .allocationSize = mem_reqs.size,
-        .memoryTypeIndex = vma_usage.findMemoryType(self.physical_device.handle, mem_reqs.memoryTypeBits, vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT),
+    self.mesh = mesh_mod.Mesh2D{
+        .vertices = self.allocator.dupe(mesh_mod.Vertex2D, vertices[0..]) catch @panic("out of memory"),
     };
 
-    checkVk(vk.AllocateMemory(self.device.handle, &alloc_info, vk_alloc_cbs, &self.vertex_buffer_memory)) catch @panic("failed to allocate vertex buffer memory");
-    checkVk(vk.BindBufferMemory(self.device.handle, self.vertex_buffer, self.vertex_buffer_memory, 0)) catch @panic("failed to bind buffer memory");
+    const alloc_size = @sizeOf(mesh_mod.Vertex2D) * self.mesh.vertices.len;
+
+    const staging_buffer = stage_cpu: {
+        const ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+            .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = alloc_size,
+            .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
+        });
+
+        const ai = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
+            .usage = c.vma.MEMORY_USAGE_CPU_ONLY,
+        });
+
+        var buffer: vma_usage.AllocatedBuffer = undefined;
+        checkVk(c.vma.CreateBuffer(self.vma_allocator, &ci, &ai, &buffer.buffer, &buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
+        break :stage_cpu buffer;
+    };
 
     var data: ?*anyopaque = undefined;
-    checkVk(vk.MapMemory(self.device.handle, self.vertex_buffer_memory, 0, bci.size, 0, &data)) catch @panic("failed to map memory");
+    checkVk(c.vma.MapMemory(self.vma_allocator, staging_buffer.allocation, &data)) catch @panic("failed to map memory");
+    const aligned_data: [*]mesh_mod.Vertex2D = @ptrCast(@alignCast(data));
+    @memcpy(aligned_data, self.mesh.vertices);
+    c.vma.UnmapMemory(self.vma_allocator, staging_buffer.allocation);
 
-    const aligned_data: [*]root.Vertex = @ptrCast(@alignCast(data));
-    @memcpy(aligned_data, &vertices);
-    vk.UnmapMemory(self.device.handle, self.vertex_buffer_memory);
+    gpu_allocation: {
+        const ci = vk.BufferCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = alloc_size,
+            .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+        };
 
-    // const gpu_buffer_ci = std.mem.zeroInit(vk.BufferCreateInfo, .{
-    //     .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-    //     .size = alloc_size,
-    //     .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT,
-    // });
+        const ai = c.vma.AllocationCreateInfo{
+            .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
+        };
 
-    // const gpu_buffer_ai = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
-    //     .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-    // });
+        checkVk(c.vma.CreateBuffer(self.vma_allocator, &ci, &ai, &self.mesh.vertex_buffer.buffer, &self.mesh.vertex_buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
+        break :gpu_allocation;
+    }
+    self.buffer_deletion_queue.append(
+        self.allocator,
+        vma_usage.VmaBufferDeleter{ .buffer = self.mesh.vertex_buffer },
+    ) catch @panic("Out of memory");
 
-    // checkVk(c.vma.CreateBuffer(self.vma_allocator, &gpu_buffer_ci, &gpu_buffer_ai, &mesh.vertex_buffer.buffer, &mesh.vertex_buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
+    self.upload_context.immediateSubmit(self.device, struct {
+        mesh_buffer: c.vk.Buffer,
+        staging_buffer: c.vk.Buffer,
+        size: usize,
 
-    // const aci = c.vma.AllocationCreateInfo{
-    //     .usage = c.vma.MEMORY_USAGE_AUTO,
-    //     // .sType = vk.STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-    //     // .allocationSize = mem_requirements.size,
-    //     // .memoryTypeIndex = vma_usage.findMemoryType(self.physical_device.handle, mem_requirements.memoryTypeBits, vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT),
-    // };
+        pub fn submit(ctx: @This(), cmd: c.vk.CommandBuffer) void {
+            const copy_region = std.mem.zeroInit(c.vk.BufferCopy, .{
+                .size = ctx.size,
+            });
+            c.vk.CmdCopyBuffer(cmd, ctx.staging_buffer, ctx.mesh_buffer, 1, &copy_region);
+        }
+    }{
+        .mesh_buffer = self.mesh.vertex_buffer.buffer,
+        .staging_buffer = staging_buffer.buffer,
+        .size = alloc_size,
+    });
 
-    // var staging_buffer: vma_usage.AllocatedBuffer = undefined;
-    // checkVk(c.vma.CreateBuffer(self.vma_allocator, &bci, &aci, &staging_buffer.buffer, &staging_buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
+    c.vma.DestroyBuffer(self.vma_allocator, staging_buffer.buffer, staging_buffer.allocation);
 }
 
 fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
@@ -577,7 +589,7 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
 
         vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
 
-        const vertex_buffers = &[_]vk.Buffer{self.vertex_buffer};
+        const vertex_buffers = &[_]vk.Buffer{self.mesh.vertex_buffer.buffer};
         const offsets = &[_]u64{0};
         const first_binding: u32 = 0;
         const binding_count: u32 = @intCast(vertex_buffers.len);
@@ -609,20 +621,8 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
 }
 
 fn createSyncObjects(self: *Self) void {
-    // self.image_available_semaphores.resize(self.allocator, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
-    // self.frame_fences.resize(self.allocator, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
 
-    // self.render_finished_semaphores.resize(self.allocator, self.swapchain_images.items.len) catch @panic("out of memory");
-
-    // const semaphore_ci = vk.SemaphoreCreateInfo{
-    //     .sType = vk.STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-    // };
-
-    // const fence_ci = vk.FenceCreateInfo{
-    //     .sType = vk.STRUCTURE_TYPE_FENCE_CREATE_INFO,
-    //     .flags = vk.FENCE_CREATE_SIGNALED_BIT,
-    // };
-
+    // Frames
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         self.frames[i].init(self.device.handle, vk_alloc_cbs);
         // checkVk(vk.CreateSemaphore(self.device.handle, &semaphore_ci, null, &self.image_available_semaphores.items[i])) catch
@@ -631,10 +631,17 @@ fn createSyncObjects(self: *Self) void {
         //     @panic("failed to create fence");
     }
 
-    // for (0..self.swapchain_images.items.len) |i| {
-    //     checkVk(vk.CreateSemaphore(self.device.handle, &semaphore_ci, null, &self.render_finished_semaphores.items[i])) catch
-    //         @panic("failed to create render finished semaphore");
-    // }
+    // Upload Context
+    const upload_fence_ci = vk.FenceCreateInfo{
+        .sType = c.vk.STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+
+    checkVk(c.vk.CreateFence(self.device.handle, &upload_fence_ci, vk_alloc_cbs, &self.upload_context.upload_fence)) catch @panic("Failed to create upload fence");
+
+    self.deletion_queue.append(
+        self.allocator,
+        VulkanDeleter.make(self.upload_context.upload_fence, c.vk.DestroyFence, vk_alloc_cbs),
+    ) catch @panic("Out of memory");
 }
 
 fn drawFrame(self: *Self) void {

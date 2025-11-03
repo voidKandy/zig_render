@@ -9,6 +9,75 @@ pub const UploadContext = struct {
     upload_fence: c.vk.Fence = null,
     command_pool: c.vk.CommandPool = null,
     command_buffer: c.vk.CommandBuffer = null,
+
+    pub fn immediateSubmit(self: *@This(), device: Device, submit_ctx: anytype) void {
+        // Check the context is good
+        comptime {
+            var Context = @TypeOf(submit_ctx);
+            var is_ptr = false;
+            switch (@typeInfo(Context)) {
+                .@"struct", .@"union", .@"enum" => {},
+                .pointer => |ptr| {
+                    if (ptr.size != .one) {
+                        @compileError("Context must be a type with a submit function. " ++ @typeName(Context) ++ "is a multi element pointer");
+                    }
+                    Context = ptr.child;
+                    is_ptr = true;
+                    switch (Context) {
+                        .Struct, .Union, .Enum, .Opaque => {},
+                        else => @compileError("Context must be a type with a submit function. " ++ @typeName(Context) ++ "is a pointer to a non struct/union/enum/opaque type"),
+                    }
+                },
+                else => @compileError("Context must be a type with a submit method. Cannot use: " ++ @typeName(Context)),
+            }
+
+            if (!@hasDecl(Context, "submit")) {
+                @compileError("Context should have a PUBLIC submit method");
+            }
+
+            const submit_fn_info = @typeInfo(@TypeOf(Context.submit));
+            if (submit_fn_info != .@"fn") {
+                @compileError("Context submit method should be a function");
+            }
+
+            if (submit_fn_info.@"fn".params.len != 2) {
+                @compileError("Context submit method should have two parameters");
+            }
+
+            if (submit_fn_info.@"fn".params[0].type != Context) {
+                @compileError("Context submit method first parameter should be of type: " ++ @typeName(Context));
+            }
+
+            if (submit_fn_info.@"fn".params[1].type != c.vk.CommandBuffer) {
+                @compileError("Context submit method second parameter should be of type: " ++ @typeName(c.vk.CommandBuffer));
+            }
+        }
+
+        const cmd = self.command_buffer;
+
+        const commmand_begin_ci = c.vk.CommandBufferBeginInfo{
+            .sType = c.vk.STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = c.vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
+        checkVk(c.vk.BeginCommandBuffer(cmd, &commmand_begin_ci)) catch @panic("Failed to begin command buffer");
+
+        submit_ctx.submit(cmd);
+
+        checkVk(c.vk.EndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
+
+        const submit_info = std.mem.zeroInit(c.vk.SubmitInfo, .{
+            .sType = c.vk.STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &cmd,
+        });
+
+        checkVk(c.vk.QueueSubmit(device.graphics_queue, 1, &submit_info, self.upload_fence)) catch @panic("Failed to submit to graphics queue");
+
+        checkVk(c.vk.WaitForFences(device.handle, 1, &self.upload_fence, c.vk.TRUE, 1_000_000_000)) catch @panic("Failed to wait for upload fence");
+        checkVk(c.vk.ResetFences(device.handle, 1, &self.upload_fence)) catch @panic("Failed to reset upload fence");
+
+        checkVk(c.vk.ResetCommandPool(device.handle, self.command_pool, 0)) catch @panic("Failed to reset command pool");
+    }
 };
 
 pub const FrameData = struct {

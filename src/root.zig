@@ -17,39 +17,3 @@ pub fn checkSdl(res: bool) void {
         @panic("SDL error");
     }
 }
-
-/// BAD!
-/// Conflicts with Vertex
-/// This is the 2D version of that
-/// A nanme change is advised
-pub const Vertex = struct {
-    position: math.Vec2,
-    color: math.Vec3,
-
-    pub fn getBindingDescription() clibs.vk.VertexInputBindingDescription {
-        return .{
-            .binding = 0,
-            .stride = @sizeOf(@This()),
-            .inputRate = clibs.vk.VERTEX_INPUT_RATE_VERTEX,
-        };
-    }
-
-    /// An attribute description struct describes how to extract a vertex attribute from a chunk of vertex data originating from a binding description.
-    /// We have two attributes, position and color, so we need two attribute description structs.
-    pub fn getAttributeDescriptions() [2]clibs.vk.VertexInputAttributeDescription {
-        return .{
-            clibs.vk.VertexInputAttributeDescription{
-                .binding = 0,
-                .location = 0,
-                .format = clibs.vk.FORMAT_R32G32B32_SFLOAT,
-                .offset = @offsetOf(@This(), "position"),
-            },
-            clibs.vk.VertexInputAttributeDescription{
-                .binding = 0,
-                .location = 1,
-                .format = clibs.vk.FORMAT_R32G32B32_SFLOAT,
-                .offset = @offsetOf(@This(), "color"),
-            },
-        };
-    }
-};

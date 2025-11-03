@@ -4,7 +4,7 @@ const vki = @import("vulkan_init.zig");
 const checkVk = vki.checkVk;
 const VkError = vki.VkError;
 const mesh_mod = @import("mesh.zig");
-const Mesh = mesh_mod.Mesh;
+const Mesh = mesh_mod.Mesh3D;
 
 const math3d = @import("math3d.zig");
 const Vec2 = math3d.Vec2;
@@ -839,7 +839,7 @@ fn initPipelines(self: *Self) void {
     _ = self.createMaterial(rgb_triangle_pipeline, triangle_pipeline_layout, "rgb_triangle_mat");
 
     // Create pipeline for meshes
-    const vertex_description = mesh_mod.Vertex.vertex_input_description;
+    const vertex_description = mesh_mod.Vertex3D.vertex_input_description;
 
     pipeline_builder.vertex_input_state.pVertexAttributeDescriptions = vertex_description.attributes.ptr;
     pipeline_builder.vertex_input_state.vertexAttributeDescriptionCount = @as(u32, @intCast(vertex_description.attributes.len));
@@ -1464,7 +1464,7 @@ fn loadTextures(self: *Self) void {
 }
 
 fn loadMeshes(self: *Self) void {
-    const vertices = [_]mesh_mod.Vertex{ .{
+    const vertices = [_]mesh_mod.Vertex3D{ .{
         .position = Vec3.make(1.0, 1.0, 0.0),
         .normal = undefined,
         .color = Vec3.make(0.0, 1.0, 0.0),
@@ -1482,7 +1482,7 @@ fn loadMeshes(self: *Self) void {
     } };
 
     var triangle_mesh = Mesh{
-        .vertices = self.allocator.dupe(mesh_mod.Vertex, vertices[0..]) catch @panic("Out of memory"),
+        .vertices = self.allocator.dupe(mesh_mod.Vertex3D, vertices[0..]) catch @panic("Out of memory"),
     };
     self.uploadMesh(&triangle_mesh);
     self.meshes.put("triangle", triangle_mesh) catch @panic("Out of memory");
@@ -1508,7 +1508,7 @@ fn uploadMesh(self: *Self, mesh: *Mesh) void {
     // Create a cpu buffer for staging
     const staging_buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex),
+        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex3D),
         .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
     });
 
@@ -1523,7 +1523,7 @@ fn uploadMesh(self: *Self, mesh: *Mesh) void {
 
     var data: ?*anyopaque = undefined;
     checkVk(c.vma.MapMemory(self.vma_allocator, staging_buffer.allocation, &data)) catch @panic("Failed to map vertex buffer");
-    const aligned_data: [*]mesh_mod.Vertex = @ptrCast(@alignCast(data));
+    const aligned_data: [*]mesh_mod.Vertex3D = @ptrCast(@alignCast(data));
     @memcpy(aligned_data, mesh.vertices);
     c.vma.UnmapMemory(self.vma_allocator, staging_buffer.allocation);
 
@@ -1531,7 +1531,7 @@ fn uploadMesh(self: *Self, mesh: *Mesh) void {
 
     const gpu_buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex),
+        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex3D),
         .usage = c.vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
     });
 
@@ -1564,7 +1564,7 @@ fn uploadMesh(self: *Self, mesh: *Mesh) void {
     }{
         .mesh_buffer = mesh.vertex_buffer.buffer,
         .staging_buffer = staging_buffer.buffer,
-        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex),
+        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex3D),
     });
 
     // We can free the staging buffer at this point.
