@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log;
+const log = std.log.scoped(.vulkan_engine);
 const root = @import("root.zig");
 const vulkan_init = root.vulkan_init;
 const vma_usage = root.vma_usage;
