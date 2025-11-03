@@ -497,15 +497,15 @@ pub const Swapchain = struct {
         }
         _ = vk.DeviceWaitIdle(opts.device);
 
-        self.deinit(opts.device, vk_alloc_cbs);
-
         // maybe this fn should take a ptr to opts?
         // opts.window_height = height;
         // opts.window_width = width;
 
         // opts.old_swapchain = self.handle;
 
-        self.* = Swapchain.create(a, opts) catch @panic("failed to create swapchain in recreate fn!");
+        const new_swapchain = Swapchain.create(a, opts) catch @panic("failed to create swapchain in recreate fn!");
+        self.deinit(opts.device, vk_alloc_cbs);
+        self.* = new_swapchain;
         // self.createImageViews();
         self.createFramebuffers(a, opts.device, opts.alloc_cb, render_pass) catch @panic("Failed to create framebuffers");
     }

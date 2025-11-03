@@ -73,6 +73,7 @@ pub const vma = struct {
     pub const MEMORY_USAGE_CPU_TO_GPU = c.VMA_MEMORY_USAGE_CPU_TO_GPU;
     pub const MEMORY_USAGE_CPU_ONLY = c.VMA_MEMORY_USAGE_CPU_ONLY;
     pub const MEMORY_USAGE_GPU_ONLY = c.VMA_MEMORY_USAGE_GPU_ONLY;
+    pub const MEMORY_USAGE_AUTO = c.VMA_MEMORY_USAGE_AUTO;
 };
 
 /// Vulkan
@@ -94,6 +95,7 @@ pub const vk = struct {
     pub const Device = c.VkDevice;
     pub const DeviceAddress = c.VkDeviceAddress;
     pub const DeviceSize = c.VkDeviceSize;
+    pub const DeviceMemory = c.VkDeviceMemory;
     pub const DynamicState = c.VkDynamicState;
     pub const Fence = c.VkFence;
     pub const Format = c.VkFormat;

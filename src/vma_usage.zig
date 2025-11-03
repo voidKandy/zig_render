@@ -1,10 +1,28 @@
 const std = @import("std");
+const root = @import("root.zig");
 const c = @import("clibs.zig");
 const vk = c.vk;
 
 pub const AllocatedBuffer = struct {
     buffer: vk.Buffer,
     allocation: c.vma.Allocation,
+
+    pub fn create(vma_a: c.vma.Allocator, alloc_size: usize, usage: c.vk.BufferUsageFlags, memory_usage: c.vma.MemoryUsage) AllocatedBuffer {
+        const buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+            .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = alloc_size,
+            .usage = usage,
+        });
+
+        const vma_alloc_info = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
+            .usage = memory_usage,
+        });
+
+        var buffer: AllocatedBuffer = undefined;
+        root.checkVk(c.vma.CreateBuffer(vma_a, &buffer_ci, &vma_alloc_info, &buffer.buffer, &buffer.allocation, null)) catch @panic("Failed to create buffer");
+
+        return buffer;
+    }
 };
 
 pub const AllocatedImage = struct {
@@ -13,12 +31,12 @@ pub const AllocatedImage = struct {
 };
 
 pub fn findMemoryType(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) u32 {
-    const mem_properties: vk.PhysicalDeviceMemoryProperties = undefined;
+    var mem_properties: vk.PhysicalDeviceMemoryProperties = undefined;
     vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties);
 
     for (0..mem_properties.memoryTypeCount) |i| {
-        if ((type_filter & (1 << i)) and (mem_properties.memoryTypes[i].propertyFlags & properties) == properties) {
-            return i;
+        if (((type_filter & (@as(u32, 1) << @as(u5, @intCast(i)))) != 0) and (mem_properties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return @as(u32, @intCast(i));
         }
     }
 

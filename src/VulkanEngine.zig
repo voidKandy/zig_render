@@ -322,7 +322,7 @@ fn initSwapchain(self: *Self) void {
     checkSdl(c.sdl.GetWindowSize(self.window, &win_width, &win_height));
 
     // Create a swapchain
-    const swapchain = vki.createSwapchain(self.allocator, .{
+    const swapchain = vki.Swapchain.create(self.allocator, .{
         .physical_device = self.physical_device,
         .graphics_queue_family = self.graphics_queue_family,
         .present_queue_family = self.graphics_queue_family,
