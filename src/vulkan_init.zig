@@ -2,7 +2,7 @@ const std = @import("std");
 const root = @import("root.zig");
 pub const c = @import("clibs.zig");
 const vk = c.vk;
-
+const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.vulkan_init);
 
 pub const UploadContext = struct {
@@ -24,7 +24,7 @@ pub const FrameData = struct {
 
     const Self = @This();
 
-    pub fn init(self: *Self, a: std.mem.Allocator, device: c.vk.Device, n_swapchain_imgs: usize, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
+    pub fn init(self: *Self, a: Allocator, device: c.vk.Device, n_swapchain_imgs: usize, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
         const semaphore_ci = vk.SemaphoreCreateInfo{
             .sType = vk.STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         };
@@ -44,7 +44,7 @@ pub const FrameData = struct {
         checkVk(c.vk.CreateFence(device, &fence_ci, vk_alloc_cbs, &self.render_fence)) catch @panic("failed to create render fence");
     }
 
-    pub fn deinit(self: *Self, a: std.mem.Allocator, device: c.vk.Device, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
+    pub fn deinit(self: *Self, a: Allocator, device: c.vk.Device, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
         vk.DestroySemaphore(device, self.present_semaphore, vk_alloc_cbs);
         for (0..self.render_semaphores.len) |k| {
             vk.DestroySemaphore(device, self.render_semaphores[k], vk_alloc_cbs);
@@ -84,7 +84,7 @@ pub const Instance = struct {
 ///
 /// Initialization code does not require persistent allocations.
 /// All the allocation are automatically cleared when the function returns.
-pub fn createInstance(alloc: std.mem.Allocator, opts: VkiInstanceOpts) !Instance {
+pub fn createInstance(alloc: Allocator, opts: VkiInstanceOpts) !Instance {
     // Check the api version is supported
     if (opts.api_version > vk.MAKE_VERSION(1, 0, 0)) {
         var api_requested = opts.api_version;
@@ -243,7 +243,7 @@ pub const PhysicalDevice = struct {
 /// # Allocations
 /// This function does not require persistent allocations.
 ///
-pub fn selectPhysicalDevice(a: std.mem.Allocator, instance: vk.Instance, opts: PhysicalDeviceSelectOpts) !PhysicalDevice {
+pub fn selectPhysicalDevice(a: Allocator, instance: vk.Instance, opts: PhysicalDeviceSelectOpts) !PhysicalDevice {
     var physical_device_count: u32 = undefined;
     try checkVk(vk.EnumeratePhysicalDevices(instance, &physical_device_count, null));
 
@@ -312,7 +312,7 @@ pub const Device = struct {
 ///
 /// # Allocations
 /// This function does not require persistent allocations.
-pub fn createLogicalDevice(a: std.mem.Allocator, opts: DeviceCreateOpts) !Device {
+pub fn createLogicalDevice(a: Allocator, opts: DeviceCreateOpts) !Device {
     var arena_state = std.heap.ArenaAllocator.init(a);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -401,7 +401,7 @@ pub const Swapchain = struct {
     format: vk.Format = undefined,
     extent: vk.Extent2D = undefined,
 
-    pub fn create(a: std.mem.Allocator, opts: SwapchainCreateOpts) !@This() {
+    pub fn create(a: Allocator, opts: SwapchainCreateOpts) !@This() {
         const support_info = try SwapchainSupportInfo.init(a, opts.physical_device, opts.surface);
         defer support_info.deinit(a);
 
@@ -473,7 +473,7 @@ pub const Swapchain = struct {
         };
     }
 
-    pub fn deinit(self: *@This(), device: vk.Device, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
+    pub fn deinit(self: *@This(), a: Allocator, device: vk.Device, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
         for (self.framebuffers) |fb| {
             vk.DestroyFramebuffer(device, fb, vk_alloc_cbs);
         }
@@ -482,10 +482,14 @@ pub const Swapchain = struct {
             vk.DestroyImageView(device, iv, vk_alloc_cbs);
         }
 
+        a.free(self.images);
+        a.free(self.image_views);
+        a.free(self.framebuffers);
+
         vk.DestroySwapchainKHR(device, self.handle, vk_alloc_cbs);
     }
 
-    pub fn recreate(self: *@This(), a: std.mem.Allocator, opts: SwapchainCreateOpts, window: *c.sdl.Window, render_pass: vk.RenderPass, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
+    pub fn recreate(self: *@This(), a: Allocator, opts: SwapchainCreateOpts, window: *c.sdl.Window, render_pass: vk.RenderPass, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
         log.warn(
             \\ Recreating Swapchain!
             \\
@@ -504,13 +508,13 @@ pub const Swapchain = struct {
         // opts.old_swapchain = self.handle;
 
         const new_swapchain = Swapchain.create(a, opts) catch @panic("failed to create swapchain in recreate fn!");
-        self.deinit(opts.device, vk_alloc_cbs);
+        self.deinit(a, opts.device, vk_alloc_cbs);
         self.* = new_swapchain;
         // self.createImageViews();
         self.createFramebuffers(a, opts.device, opts.alloc_cb, render_pass) catch @panic("Failed to create framebuffers");
     }
 
-    pub fn createFramebuffers(self: *@This(), a: std.mem.Allocator, device: vk.Device, vk_alloc_cbs: ?*vk.AllocationCallbacks, render_pass: vk.RenderPass) !void {
+    pub fn createFramebuffers(self: *@This(), a: Allocator, device: vk.Device, vk_alloc_cbs: ?*vk.AllocationCallbacks, render_pass: vk.RenderPass) !void {
         const framebuffers = try a.alloc(vk.Framebuffer, self.image_views.len);
         errdefer a.free(framebuffers);
 
@@ -532,7 +536,7 @@ pub const Swapchain = struct {
     }
 };
 
-fn makePhysicalDevice(a: std.mem.Allocator, device: vk.PhysicalDevice, surface: vk.SurfaceKHR) !PhysicalDevice {
+fn makePhysicalDevice(a: Allocator, device: vk.PhysicalDevice, surface: vk.SurfaceKHR) !PhysicalDevice {
     var props = std.mem.zeroInit(vk.PhysicalDeviceProperties, .{});
     vk.GetPhysicalDeviceProperties(device, &props);
 
@@ -595,7 +599,7 @@ fn makePhysicalDevice(a: std.mem.Allocator, device: vk.PhysicalDevice, surface: 
     };
 }
 
-fn isPhysicalDeviceSuitable(a: std.mem.Allocator, device: PhysicalDevice, opts: PhysicalDeviceSelectOpts) !bool {
+fn isPhysicalDeviceSuitable(a: Allocator, device: PhysicalDevice, opts: PhysicalDeviceSelectOpts) !bool {
     if (device.properties.apiVersion < opts.min_api_version) {
         return false;
     }
@@ -644,7 +648,7 @@ const SwapchainSupportInfo = struct {
 
     const Self = @This();
 
-    fn init(a: std.mem.Allocator, device: vk.PhysicalDevice, surface: vk.SurfaceKHR) !SwapchainSupportInfo {
+    fn init(a: Allocator, device: vk.PhysicalDevice, surface: vk.SurfaceKHR) !SwapchainSupportInfo {
         var capabilities: vk.SurfaceCapabilitiesKHR = undefined;
         try checkVk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities));
 
@@ -665,7 +669,7 @@ const SwapchainSupportInfo = struct {
         };
     }
 
-    fn deinit(self: *const SwapchainSupportInfo, a: std.mem.Allocator) void {
+    fn deinit(self: *const SwapchainSupportInfo, a: Allocator) void {
         a.free(self.formats);
         a.free(self.present_modes);
     }

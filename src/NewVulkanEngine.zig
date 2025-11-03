@@ -76,7 +76,7 @@ pub fn init(a: std.mem.Allocator) Self {
 
 pub fn deinit(self: *Self) void {
     checkVk(c.vk.DeviceWaitIdle(self.device.handle)) catch @panic("Failed to wait for device idle");
-    self.swapchain.deinit(self.device.handle, vk_alloc_cbs);
+    self.swapchain.deinit(self.allocator, self.device.handle, vk_alloc_cbs);
 
     // not using VMA!! should
     vk.DestroyBuffer(self.device.handle, self.vertex_buffer, vk_alloc_cbs);
@@ -86,10 +86,6 @@ pub fn deinit(self: *Self) void {
     vk.DestroyPipelineLayout(self.device.handle, self.pipeline_layout, vk_alloc_cbs);
 
     vk.DestroyRenderPass(self.device.handle, self.render_pass, vk_alloc_cbs);
-
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        self.frames[i].deinit(self.allocator, self.device.handle, vk_alloc_cbs);
-    }
 
     for (self.buffer_deletion_queue.items) |*entry| {
         entry.delete(self.vma_allocator);
@@ -105,6 +101,10 @@ pub fn deinit(self: *Self) void {
         entry.delete(self.device.handle);
     }
     self.deletion_queue.deinit(self.allocator);
+
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        self.frames[i].deinit(self.allocator, self.device.handle, vk_alloc_cbs);
+    }
 
     // self.allocator.free(self.swapchain.images);
     // self.allocator.free(self.swapchain.image_views);
@@ -438,7 +438,6 @@ fn createGraphicsPipeline(self: *Self) void {
 
 /// creates command pools and buffer per frame in flight
 fn createFrameCommands(self: *Self) void {
-    @breakpoint();
     // Create a command pool
     const command_pool_ci = std.mem.zeroInit(vk.CommandPoolCreateInfo, .{
         .sType = vk.STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -448,10 +447,10 @@ fn createFrameCommands(self: *Self) void {
 
     for (&self.frames) |*frame| {
         checkVk(vk.CreateCommandPool(self.device.handle, &command_pool_ci, vk_alloc_cbs, &frame.command_pool)) catch log.err("Failed to create command pool", .{});
-        self.deletion_queue.append(
-            self.allocator,
-            VulkanDeleter.make(frame.command_pool, vk.DestroyCommandPool, vk_alloc_cbs),
-        ) catch @panic("Out of memory");
+        // self.deletion_queue.append(
+        //     self.allocator,
+        //     VulkanDeleter.make(frame.command_pool, vk.DestroyCommandPool, vk_alloc_cbs),
+        // ) catch @panic("Out of memory");
 
         // Allocate a command buffer from the command pool
         const command_buffer_ai = std.mem.zeroInit(vk.CommandBufferAllocateInfo, .{
