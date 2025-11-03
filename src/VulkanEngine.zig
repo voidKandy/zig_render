@@ -32,15 +32,13 @@ surface: vk.SurfaceKHR = undefined,
 physical_device: vulkan_init.PhysicalDevice = undefined,
 device: vulkan_init.Device = undefined,
 
-// graphics_queue: vk.Queue = undefined,
-// present_queue: vk.Queue = undefined,
-
 vma_allocator: c.vma.Allocator = undefined,
 deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
 buffer_deletion_queue: std.ArrayList(vma_usage.VmaBufferDeleter) = undefined,
 image_deletion_queue: std.ArrayList(vma_usage.VmaImageDeleter) = undefined,
 
 swapchain: vulkan_init.Swapchain = undefined,
+framebuffer_resized: bool = false,
 
 render_pass: vk.RenderPass = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
@@ -51,18 +49,8 @@ vertex_buffer_memory: vk.DeviceMemory = undefined,
 
 upload_context: vulkan_init.UploadContext = .{},
 
-// command_pool: vk.CommandPool = undefined,
-// command_buffers: std.ArrayList(vk.CommandBuffer),
-
 frames: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT,
-/// Per In-Flight Frame
-// image_available_semaphores: std.ArrayList(vk.Semaphore),
-// frame_fences: std.ArrayList(vk.Fence),
-/// Per Swapchain Image
-// render_finished_semaphores: std.ArrayList(vk.Semaphore),
-
 current_frame: u32 = 0,
-framebuffer_resized: bool = false,
 
 pub fn init(a: std.mem.Allocator) Self {
     return .{
@@ -172,10 +160,6 @@ fn initVulkan(self: *Self) void {
         .pnext = &shader_draw_parameters_features,
     }) catch @panic("Failed to create logical device");
     self.device = logical_device;
-    // we moved to using the vulkan_init.Device abstraction because it encapsulates queues, features, etc
-    // self.device = logical_device.handle;
-    // self.graphics_queue = logical_device.graphics_queue;
-    // self.device.present_queue = logical_device.present_queue;
 
     // vma allocator
     const allocator_ci = std.mem.zeroInit(c.vma.AllocatorCreateInfo, .{
@@ -203,21 +187,13 @@ fn initVulkan(self: *Self) void {
     }) catch @panic("failed to create swapchain");
 
     self.createRenderPass();
-    log.warn("createRenderPass\n", .{});
     self.createGraphicsPipeline();
-    log.warn("createGraphicsPipeline\n", .{});
 
     self.swapchain.createFramebuffers(self.allocator, self.device.handle, vk_alloc_cbs, self.render_pass) catch @panic("failed to create framebuffers");
-    log.warn("createFrameBuffers\n", .{});
 
     self.createFrameCommands();
-    log.warn("createFrameCommands\n", .{});
     self.createVertexBuffer();
-    log.warn("createVertexBuffer\n", .{});
-    // self.createCommandBuffers();
-    // log.warn("createCommandBuffers\n",.{});
     self.createSyncObjects();
-    log.warn("createSyncObjects\n", .{});
 }
 
 fn createInstance(self: *Self) void {
