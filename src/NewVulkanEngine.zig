@@ -67,7 +67,6 @@ framebuffer_resized: bool = false,
 pub fn init(a: std.mem.Allocator) Self {
     return .{
         .allocator = a,
-
         .deletion_queue = std.ArrayList(VulkanDeleter){},
         .buffer_deletion_queue = std.ArrayList(vma_usage.VmaBufferDeleter){},
         .image_deletion_queue = std.ArrayList(vma_usage.VmaImageDeleter){},
@@ -103,18 +102,8 @@ pub fn deinit(self: *Self) void {
     self.deletion_queue.deinit(self.allocator);
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        self.frames[i].deinit(self.allocator, self.device.handle, vk_alloc_cbs);
+        self.frames[i].deinit(self.device.handle, vk_alloc_cbs);
     }
-
-    // self.allocator.free(self.swapchain.images);
-    // self.allocator.free(self.swapchain.image_views);
-    // self.swapchain_framebuffers.deinit(self.allocator);
-    // self.command_buffers.deinit(self.allocator);
-    // self.image_available_semaphores.deinit(self.allocator);
-    // self.render_finished_semaphores.deinit(self.allocator);
-    // self.frame_fences.deinit(self.allocator);
-
-    // vk.DestroyCommandPool(self.device.handle, self.command_pool, null);
 
     c.vma.DestroyAllocator(self.vma_allocator);
     vk.DestroyDevice(self.device.handle, vk_alloc_cbs);
@@ -659,7 +648,7 @@ fn createSyncObjects(self: *Self) void {
     // };
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        self.frames[i].init(self.allocator, self.device.handle, self.swapchain.image_views.len, vk_alloc_cbs);
+        self.frames[i].init(self.device.handle, vk_alloc_cbs);
         // checkVk(vk.CreateSemaphore(self.device.handle, &semaphore_ci, null, &self.image_available_semaphores.items[i])) catch
         //     @panic("failed to create image available semaphore");
         // checkVk(vk.CreateFence(self.device.handle, &fence_ci, null, &self.frame_fences.items[i])) catch
@@ -715,7 +704,7 @@ fn drawFrame(self: *Self) void {
         };
 
     const submit_semaphore =
-        current_frame.render_semaphores[image_idx];
+        self.swapchain.render_semaphores[image_idx];
 
     checkVk(vk.ResetFences(self.device.handle, 1, &current_frame.render_fence)) catch @panic("failed to reset fences");
     checkVk(vk.ResetCommandBuffer(current_frame.main_command_buffer, 0)) catch @panic("failed to reset command buffers");

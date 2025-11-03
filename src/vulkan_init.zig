@@ -13,8 +13,6 @@ pub const UploadContext = struct {
 
 pub const FrameData = struct {
     present_semaphore: c.vk.Semaphore = null,
-    /// one finish semaphore per swapchain image
-    render_semaphores: []c.vk.Semaphore = &.{},
     render_fence: c.vk.Fence = null,
     command_pool: c.vk.CommandPool = null,
     main_command_buffer: c.vk.CommandBuffer = null,
@@ -24,7 +22,7 @@ pub const FrameData = struct {
 
     const Self = @This();
 
-    pub fn init(self: *Self, a: Allocator, device: c.vk.Device, n_swapchain_imgs: usize, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
+    pub fn init(self: *Self, device: c.vk.Device, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
         const semaphore_ci = vk.SemaphoreCreateInfo{
             .sType = vk.STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         };
@@ -34,24 +32,14 @@ pub const FrameData = struct {
             .flags = vk.FENCE_CREATE_SIGNALED_BIT,
         };
 
-        self.render_semaphores = a.alloc(c.vk.Semaphore, n_swapchain_imgs) catch @panic("Out of memory");
         checkVk(c.vk.CreateSemaphore(device, &semaphore_ci, vk_alloc_cbs, &self.present_semaphore)) catch @panic("failed to create semaphore");
-
-        for (0..self.render_semaphores.len) |i| {
-            checkVk(c.vk.CreateSemaphore(device, &semaphore_ci, vk_alloc_cbs, &self.render_semaphores[i])) catch @panic("failed to create semaphore");
-        }
 
         checkVk(c.vk.CreateFence(device, &fence_ci, vk_alloc_cbs, &self.render_fence)) catch @panic("failed to create render fence");
     }
 
-    pub fn deinit(self: *Self, a: Allocator, device: c.vk.Device, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
+    pub fn deinit(self: *Self, device: c.vk.Device, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
         vk.DestroySemaphore(device, self.present_semaphore, vk_alloc_cbs);
-        for (0..self.render_semaphores.len) |k| {
-            vk.DestroySemaphore(device, self.render_semaphores[k], vk_alloc_cbs);
-        }
         vk.DestroyFence(device, self.render_fence, vk_alloc_cbs);
-        a.free(self.render_semaphores);
-
         vk.DestroyCommandPool(device, self.command_pool, vk_alloc_cbs);
     }
 };
@@ -396,6 +384,8 @@ pub const SwapchainCreateOpts = struct {
 pub const Swapchain = struct {
     handle: vk.SwapchainKHR = null,
     images: []vk.Image = &.{},
+    /// one finish semaphore per swapchain image
+    render_semaphores: []c.vk.Semaphore = &.{},
     image_views: []vk.ImageView = &.{},
     framebuffers: []vk.Framebuffer = &.{},
     format: vk.Format = undefined,
@@ -464,9 +454,20 @@ pub const Swapchain = struct {
             view.* = try createImageView(opts.device, image, format, vk.IMAGE_ASPECT_COLOR_BIT, opts.alloc_cb);
         }
 
+        const semaphore_ci = vk.SemaphoreCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+        const semaphores = a.alloc(c.vk.Semaphore, swapchain_image_count) catch @panic("Out of memory");
+        errdefer a.free(semaphores);
+
+        for (0..semaphores.len) |i| {
+            checkVk(c.vk.CreateSemaphore(opts.device, &semaphore_ci, opts.alloc_cb, &semaphores[i])) catch @panic("failed to create semaphore");
+        }
+
         return .{
             .handle = swapchain,
             .images = swapchain_images,
+            .render_semaphores = semaphores,
             .image_views = swapchain_image_views,
             .format = format,
             .extent = extent,
@@ -482,9 +483,14 @@ pub const Swapchain = struct {
             vk.DestroyImageView(device, iv, vk_alloc_cbs);
         }
 
+        for (0..self.render_semaphores.len) |k| {
+            vk.DestroySemaphore(device, self.render_semaphores[k], vk_alloc_cbs);
+        }
+
         a.free(self.images);
         a.free(self.image_views);
         a.free(self.framebuffers);
+        a.free(self.render_semaphores);
 
         vk.DestroySwapchainKHR(device, self.handle, vk_alloc_cbs);
     }
