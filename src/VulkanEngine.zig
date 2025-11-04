@@ -479,16 +479,20 @@ fn createFramebuffers(self: *Self) void {
 fn createMesh(self: *Self) void {
     const vertices = [_]mesh_mod.Vertex2D{
         .{
-            .position = Vec2.make(0.0, -0.5),
+            .position = Vec2.make(-0.5, -0.5),
             .color = Vec3.make(1.0, 0.0, 0.0),
         },
         .{
-            .position = Vec2.make(0.5, 0.5),
+            .position = Vec2.make(0.5, -0.5),
             .color = Vec3.make(0.0, 1.0, 0.0),
         },
         .{
-            .position = Vec2.make(-0.5, 0.5),
+            .position = Vec2.make(0.5, 0.5),
             .color = Vec3.make(0.0, 0.0, 1.0),
+        },
+        .{
+            .position = Vec2.make(-0.5, 0.5),
+            .color = Vec3.make(1.0, 1.0, 1.0),
         },
     };
     const indices = [_]u16{ 0, 1, 2, 2, 3, 0 };
@@ -545,6 +549,8 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         const binding_count: u32 = @intCast(vertex_buffers.len);
         vk.CmdBindVertexBuffers(command_buffer, first_binding, binding_count, vertex_buffers, offsets);
 
+        vk.CmdBindIndexBuffer(command_buffer, self.mesh.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT16);
+
         const viewport = vk.Viewport{
             .x = 0.0,
             .y = 0.0,
@@ -564,7 +570,9 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         // the tutorial sets `vertices` as a static variable, so it is accessible to all methods,
         // we set `vertices` only in the createVertexBuffers method, so we know the second arg should be 3
         // however this is BAD for obvious reasons
-        vk.CmdDraw(command_buffer, 3, 1, 0, 0);
+
+        vk.CmdDrawIndexed(command_buffer, @as(u32, @intCast(self.mesh.indices.len)), 1, 0, 0, 0);
+        // vk.CmdDraw(command_buffer, self.mesh.vertices.len, 1, 0, 0);
     }
 
     checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");

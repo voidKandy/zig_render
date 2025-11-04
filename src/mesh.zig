@@ -56,7 +56,7 @@ pub const Mesh2D = struct {
     pub fn upload(self: *@This(), vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.Device) void {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex2D),
-            self.vertices.len * @sizeOf(u16),
+            self.indices.len * @sizeOf(u16),
         };
 
         const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
@@ -113,7 +113,7 @@ pub const Mesh2D = struct {
             const idx_ci = vk.BufferCreateInfo{
                 .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                 .size = idx_alloc_size,
-                .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+                .usage = vk.BUFFER_USAGE_INDEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
             };
 
             const ai = c.vma.AllocationCreateInfo{
