@@ -23,6 +23,7 @@ const vk_alloc_cbs: ?*vk.AllocationCallbacks = null;
 const window_extent = vk.Extent2D{ .width = 1600, .height = 900 };
 
 allocator: std.mem.Allocator,
+vma_allocator: c.vma.Allocator = undefined,
 
 window: *sdl.Window = undefined,
 
@@ -33,7 +34,6 @@ surface: vk.SurfaceKHR = undefined,
 physical_device: vulkan_init.PhysicalDevice = undefined,
 device: vulkan_init.Device = undefined,
 
-vma_allocator: c.vma.Allocator = undefined,
 deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
 buffer_deletion_queue: std.ArrayList(vma_usage.VmaBufferDeleter) = undefined,
 image_deletion_queue: std.ArrayList(vma_usage.VmaImageDeleter) = undefined,
@@ -45,14 +45,11 @@ render_pass: vk.RenderPass = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 pipeline: vk.Pipeline = undefined,
 
-mesh: mesh_mod.Mesh2D = undefined,
-// vertex_buffer: vk.Buffer = undefined,
-// vertex_buffer_memory: vk.DeviceMemory = undefined,
-
 upload_context: vulkan_init.UploadContext = .{},
-
 frames: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT,
 current_frame: u32 = 0,
+
+mesh: mesh_mod.Mesh2D = undefined,
 
 pub fn init(a: std.mem.Allocator) Self {
     return .{
@@ -95,7 +92,9 @@ pub fn deinit(self: *Self) void {
         self.frames[i].deinit(self.device.handle, vk_alloc_cbs);
     }
 
+    // maybe mesh should have deinit?
     self.allocator.free(self.mesh.vertices);
+    self.allocator.free(self.mesh.indices);
 
     c.vma.DestroyAllocator(self.vma_allocator);
     vk.DestroyDevice(self.device.handle, vk_alloc_cbs);
@@ -492,72 +491,23 @@ fn createMesh(self: *Self) void {
             .color = Vec3.make(0.0, 0.0, 1.0),
         },
     };
+    const indices = [_]u16{ 0, 1, 2, 2, 3, 0 };
 
     self.mesh = mesh_mod.Mesh2D{
         .vertices = self.allocator.dupe(mesh_mod.Vertex2D, vertices[0..]) catch @panic("out of memory"),
+        .indices = self.allocator.dupe(u16, indices[0..]) catch @panic("out of memory"),
     };
 
-    const alloc_size = @sizeOf(mesh_mod.Vertex2D) * self.mesh.vertices.len;
+    self.mesh.upload(self.vma_allocator, &self.upload_context, self.device);
 
-    const staging_buffer = stage_cpu: {
-        const ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
-            .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = alloc_size,
-            .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-        });
-
-        const ai = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
-            .usage = c.vma.MEMORY_USAGE_CPU_ONLY,
-        });
-
-        var buffer: vma_usage.AllocatedBuffer = undefined;
-        checkVk(c.vma.CreateBuffer(self.vma_allocator, &ci, &ai, &buffer.buffer, &buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
-        break :stage_cpu buffer;
-    };
-
-    var data: ?*anyopaque = undefined;
-    checkVk(c.vma.MapMemory(self.vma_allocator, staging_buffer.allocation, &data)) catch @panic("failed to map memory");
-    const aligned_data: [*]mesh_mod.Vertex2D = @ptrCast(@alignCast(data));
-    @memcpy(aligned_data, self.mesh.vertices);
-    c.vma.UnmapMemory(self.vma_allocator, staging_buffer.allocation);
-
-    gpu_allocation: {
-        const ci = vk.BufferCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = alloc_size,
-            .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
-        };
-
-        const ai = c.vma.AllocationCreateInfo{
-            .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-        };
-
-        checkVk(c.vma.CreateBuffer(self.vma_allocator, &ci, &ai, &self.mesh.vertex_buffer.buffer, &self.mesh.vertex_buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
-        break :gpu_allocation;
-    }
     self.buffer_deletion_queue.append(
         self.allocator,
         vma_usage.VmaBufferDeleter{ .buffer = self.mesh.vertex_buffer },
     ) catch @panic("Out of memory");
-
-    self.upload_context.immediateSubmit(self.device, struct {
-        mesh_buffer: c.vk.Buffer,
-        staging_buffer: c.vk.Buffer,
-        size: usize,
-
-        pub fn submit(ctx: @This(), cmd: c.vk.CommandBuffer) void {
-            const copy_region = std.mem.zeroInit(c.vk.BufferCopy, .{
-                .size = ctx.size,
-            });
-            c.vk.CmdCopyBuffer(cmd, ctx.staging_buffer, ctx.mesh_buffer, 1, &copy_region);
-        }
-    }{
-        .mesh_buffer = self.mesh.vertex_buffer.buffer,
-        .staging_buffer = staging_buffer.buffer,
-        .size = alloc_size,
-    });
-
-    c.vma.DestroyBuffer(self.vma_allocator, staging_buffer.buffer, staging_buffer.allocation);
+    self.buffer_deletion_queue.append(
+        self.allocator,
+        vma_usage.VmaBufferDeleter{ .buffer = self.mesh.index_buffer },
+    ) catch @panic("Out of memory");
 }
 
 fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
