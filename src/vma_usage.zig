@@ -1,5 +1,6 @@
 const std = @import("std");
 const root = @import("root.zig");
+const checkVk = root.vulkan_init.checkVk;
 const c = @import("clibs.zig");
 const vk = c.vk;
 
@@ -19,7 +20,7 @@ pub const AllocatedBuffer = struct {
         });
 
         var buffer: AllocatedBuffer = undefined;
-        root.checkVk(c.vma.CreateBuffer(vma_a, &buffer_ci, &vma_alloc_info, &buffer.buffer, &buffer.allocation, null)) catch @panic("Failed to create buffer");
+        checkVk(c.vma.CreateBuffer(vma_a, &buffer_ci, &vma_alloc_info, &buffer.buffer, &buffer.allocation, null)) catch @panic("Failed to create buffer");
 
         return buffer;
     }

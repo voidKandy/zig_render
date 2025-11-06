@@ -86,8 +86,8 @@ pub const FrameData = struct {
     command_pool: c.vk.CommandPool = null,
     main_command_buffer: c.vk.CommandBuffer = null,
 
-    object_buffer: root.vma_usage.AllocatedBuffer = .{ .buffer = null, .allocation = null },
-    object_descriptor_set: c.vk.DescriptorSet = null,
+    uniform_buffer: root.vma_usage.AllocatedBuffer = .{ .buffer = null, .allocation = null },
+    uniform_descriptor_set: c.vk.DescriptorSet = null,
 
     const Self = @This();
 

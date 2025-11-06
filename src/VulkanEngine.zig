@@ -15,6 +15,7 @@ const FrameData = root.vulkan_init.FrameData;
 const VulkanDeleter = vma_usage.VulkanDeleter;
 const Vec2 = root.math.Vec2;
 const Vec3 = root.math.Vec3;
+const Mat4 = root.math.Mat4;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
@@ -42,6 +43,7 @@ swapchain: vulkan_init.Swapchain = undefined,
 framebuffer_resized: bool = false,
 
 render_pass: vk.RenderPass = undefined,
+descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 pipeline: vk.Pipeline = undefined,
 
@@ -50,6 +52,12 @@ frames: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT
 current_frame: u32 = 0,
 
 mesh: mesh_mod.Mesh2D = undefined,
+
+// pretty sure this should live in frameData
+uniform_buffers: []vma_usage.AllocatedBuffer = undefined,
+uniform_buffers_mapped: []?*anyopaque = undefined,
+descriptor_pool: vk.DescriptorPool = undefined,
+descriptor_sets: []vk.DescriptorSet = undefined,
 
 pub fn init(a: std.mem.Allocator) Self {
     return .{
@@ -68,6 +76,16 @@ pub fn deinit(self: *Self) void {
     // vk.DestroyBuffer(self.device.handle, self.vertex_buffer, vk_alloc_cbs);
     // vk.FreeMemory(self.device.handle, self.vertex_buffer_memory, vk_alloc_cbs);
 
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        c.vma.UnmapMemory(self.vma_allocator, self.uniform_buffers[i].allocation);
+        c.vma.DestroyBuffer(self.vma_allocator, self.uniform_buffers[i].buffer, self.uniform_buffers[i].allocation);
+        self.frames[i].deinit(self.device.handle, vk_alloc_cbs);
+    }
+    self.allocator.free(self.uniform_buffers);
+    self.allocator.free(self.uniform_buffers_mapped);
+
+    vk.DestroyDescriptorPool(self.device.handle, self.descriptor_pool, vk_alloc_cbs);
+    vk.DestroyDescriptorSetLayout(self.device.handle, self.descriptor_set_layout, vk_alloc_cbs);
     vk.DestroyPipeline(self.device.handle, self.pipeline, vk_alloc_cbs);
     vk.DestroyPipelineLayout(self.device.handle, self.pipeline_layout, vk_alloc_cbs);
 
@@ -88,13 +106,13 @@ pub fn deinit(self: *Self) void {
     }
     self.deletion_queue.deinit(self.allocator);
 
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        self.frames[i].deinit(self.device.handle, vk_alloc_cbs);
-    }
+    self.allocator.free(self.descriptor_sets);
 
-    // maybe mesh should have deinit?
-    self.allocator.free(self.mesh.vertices);
+    // mesh should have deinit?
+    c.vma.DestroyBuffer(self.vma_allocator, self.mesh.index_buffer.buffer, self.mesh.index_buffer.allocation);
+    c.vma.DestroyBuffer(self.vma_allocator, self.mesh.vertex_buffer.buffer, self.mesh.vertex_buffer.allocation);
     self.allocator.free(self.mesh.indices);
+    self.allocator.free(self.mesh.vertices);
 
     c.vma.DestroyAllocator(self.vma_allocator);
     vk.DestroyDevice(self.device.handle, vk_alloc_cbs);
@@ -190,6 +208,7 @@ fn initVulkan(self: *Self) void {
     }) catch @panic("failed to create swapchain");
 
     self.createRenderPass();
+    self.createDescriptorSetLayout();
     self.createGraphicsPipeline();
 
     self.swapchain.createFramebuffers(self.allocator, self.device.handle, vk_alloc_cbs, self.render_pass) catch @panic("failed to create framebuffers");
@@ -197,6 +216,9 @@ fn initVulkan(self: *Self) void {
     self.createCommands();
     self.createSyncObjects();
     self.createMesh();
+    self.createUniformBuffers();
+    self.createDescriptorPool();
+    self.createDescriptorSets();
 }
 
 fn createInstance(self: *Self) void {
@@ -289,15 +311,29 @@ fn createShaderModule(self: *Self, code: []const u8) ?c.vk.ShaderModule {
     return shader_module;
 }
 
-fn createGraphicsPipeline(self: *Self) void {
-    // const bindingDescription =
-    //     mesh_mod.Vertex2D.vertex_input_description.bindings;
-    // const attributeDescriptions =
-    //     mesh_mod.Vertex2D.vertex_input_description.attributes;
+fn createDescriptorSetLayout(self: *Self) void {
+    const ubo_layout_binding = vk.DescriptorSetLayoutBinding{
+        .binding = 0,
+        .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        .pImmutableSamplers = null,
+    };
 
+    const ci = vk.DescriptorSetLayoutCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &ubo_layout_binding,
+    };
+
+    checkVk(vk.CreateDescriptorSetLayout(self.device.handle, &ci, vk_alloc_cbs, &self.descriptor_set_layout)) catch @panic("failed to create descriptor set layout");
+}
+
+fn createGraphicsPipeline(self: *Self) void {
     const vertex2D_description = mesh_mod.Vertex2D.vertex_input_description;
 
-    const vert_shader = root.shaders.createShaderModule("triangle.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
+    // const vert_shader = root.shaders.createShaderModule("triangle.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
+    const vert_shader = root.shaders.createShaderModule("uniform_buffer.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(self.device.handle, vert_shader, vk_alloc_cbs);
     const frag_shader = root.shaders.createShaderModule("triangle.frag", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create frag shader module");
     defer vk.DestroyShaderModule(self.device.handle, frag_shader, vk_alloc_cbs);
@@ -380,7 +416,8 @@ fn createGraphicsPipeline(self: *Self) void {
     };
     const pipeline_layout_ci = vk.PipelineLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 0,
+        .setLayoutCount = 1,
+        .pSetLayouts = &self.descriptor_set_layout,
         .pushConstantRangeCount = 0,
     };
 
@@ -503,15 +540,80 @@ fn createMesh(self: *Self) void {
     };
 
     self.mesh.upload(self.vma_allocator, &self.upload_context, self.device);
+}
 
-    self.buffer_deletion_queue.append(
-        self.allocator,
-        vma_usage.VmaBufferDeleter{ .buffer = self.mesh.vertex_buffer },
-    ) catch @panic("Out of memory");
-    self.buffer_deletion_queue.append(
-        self.allocator,
-        vma_usage.VmaBufferDeleter{ .buffer = self.mesh.index_buffer },
-    ) catch @panic("Out of memory");
+fn createUniformBuffers(self: *Self) void {
+    const buf_size = @sizeOf(root.UniformBufferObject);
+    self.uniform_buffers = self.allocator.alloc(vma_usage.AllocatedBuffer, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
+    self.uniform_buffers_mapped = self.allocator.alloc(?*anyopaque, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
+
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        self.uniform_buffers[i] = vma_usage.AllocatedBuffer.create(self.vma_allocator, buf_size, vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT, c.vma.MEMORY_USAGE_CPU_TO_GPU);
+        checkVk(c.vma.MapMemory(self.vma_allocator, self.uniform_buffers[i].allocation, &self.uniform_buffers_mapped[i])) catch @panic("failed to map uniform buffer");
+    }
+}
+
+fn createDescriptorPool(self: *Self) void {
+    const size = vk.DescriptorPoolSize{
+        .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
+    };
+
+    const ci = vk.DescriptorPoolCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .poolSizeCount = 1,
+        .pPoolSizes = &size,
+        .maxSets = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
+    };
+
+    checkVk(vk.CreateDescriptorPool(self.device.handle, &ci, vk_alloc_cbs, &self.descriptor_pool)) catch @panic("failed to create descriptor pool");
+}
+
+fn createDescriptorSets(self: *Self) void {
+    const layouts = self.allocator.alloc(vk.DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
+    defer self.allocator.free(layouts);
+
+    // i just feel like this could be better
+    // basically we need to initialize layouts with copies to self.descriptor_set_layout
+    for (0..layouts.len) |i| {
+        layouts[i] = self.descriptor_set_layout;
+    }
+
+    const ai = vk.DescriptorSetAllocateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = self.descriptor_pool,
+        .descriptorSetCount = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
+        .pSetLayouts = layouts.ptr,
+    };
+
+    self.descriptor_sets = self.allocator.alloc(vk.DescriptorSet, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
+
+    checkVk(vk.AllocateDescriptorSets(self.device.handle, &ai, self.descriptor_sets.ptr)) catch @panic("failed to allocate descriptor sets");
+
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        const bi = vk.DescriptorBufferInfo{
+            .buffer = self.uniform_buffers[i].buffer,
+            .offset = 0,
+            .range = @sizeOf(root.UniformBufferObject),
+        };
+
+        const write = vk.WriteDescriptorSet{
+            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = self.descriptor_sets[i],
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            // would be null if pImageInfo or pTexelBufferView weren't
+            .pBufferInfo = &bi,
+            // used for descirptors that refer to image data
+            .pImageInfo = null,
+            // used for descirptors that refer to buffer views
+            .pTexelBufferView = null,
+        };
+
+        vk.UpdateDescriptorSets(self.device.handle, 1, &write, 0, null);
+    }
 }
 
 fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
@@ -567,10 +669,7 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         };
         vk.CmdSetScissor(command_buffer, 0, 1, &scissor);
 
-        // the tutorial sets `vertices` as a static variable, so it is accessible to all methods,
-        // we set `vertices` only in the createVertexBuffers method, so we know the second arg should be 3
-        // however this is BAD for obvious reasons
-
+        vk.CmdBindDescriptorSets(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline_layout, 0, 1, &self.descriptor_sets[self.current_frame], 0, null);
         vk.CmdDrawIndexed(command_buffer, @as(u32, @intCast(self.mesh.indices.len)), 1, 0, 0, 0);
         // vk.CmdDraw(command_buffer, self.mesh.vertices.len, 1, 0, 0);
     }
@@ -607,6 +706,8 @@ fn drawFrame(self: *Self) void {
         self.frames[self.current_frame];
     // const frame_fence =
     //     self.frames[self.current_frame].render_fence;
+
+    self.updateUniformBuffer(self.current_frame);
 
     const present_semaphore =
         current_frame.present_semaphore;
@@ -691,4 +792,34 @@ fn drawFrame(self: *Self) void {
 
     self.current_frame = (self.current_frame + 1) % @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT));
     std.debug.assert(self.current_frame < @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)));
+}
+
+fn updateUniformBuffer(self: *Self, current_frame: usize) void {
+    const State = struct {
+        var start: i128 = 0;
+    };
+
+    // If first call, initialize start time
+    if (State.start == 0) {
+        State.start = std.time.nanoTimestamp();
+    }
+
+    const now = std.time.nanoTimestamp();
+    const delta_ns = now - State.start;
+    const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
+    const fov = 45.0;
+    const near_plane = 0.1;
+    const far_plane = 10.0;
+    const aspect =
+        @as(f32, @floatFromInt(self.swapchain.extent.width)) /
+        @as(f32, @floatFromInt(self.swapchain.extent.height));
+    const ubo = root.UniformBufferObject{
+        .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 90.0),
+        .view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0)),
+        .proj = Mat4.perspective(fov, aspect, near_plane, far_plane),
+    };
+
+    const aligned_data: *root.UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[current_frame]));
+    aligned_data.* = ubo;
+    // @memcpy(aligned_data, &[_]root.UniformBufferObject{ubo});
 }

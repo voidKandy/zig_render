@@ -83,6 +83,14 @@ pub const Vec3 = struct {
     pub inline fn dot(a: Self, b: Self) f32 {
         return a.x * b.x + a.y * b.y + a.z * b.z;
     }
+
+    pub inline fn cross(a: Self, b: Self) Self {
+        return Self.make(
+            a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x,
+        );
+    }
 };
 
 pub const Vec4 = struct {
@@ -146,6 +154,19 @@ pub const Mat4 = struct {
         Vec4.make(0.0, 0.0, 1.0, 0.0),
         Vec4.make(0.0, 0.0, 0.0, 1.0),
     );
+
+    pub inline fn lookAt(eye: Vec3, center: Vec3, up: Vec3) Self {
+        const f = center.sub(eye).normalized();
+        const r = f.cross(up).normalized();
+        const u = r.cross(f);
+
+        return Mat4{
+            .i = Vec4.make(r.x, u.x, -f.x, 0),
+            .j = Vec4.make(r.y, u.y, -f.y, 0),
+            .k = Vec4.make(r.z, u.z, -f.z, 0),
+            .t = Vec4.make(-r.dot(eye), -u.dot(eye), f.dot(eye), 1),
+        };
+    }
 
     pub inline fn make(i: Vec4, j: Vec4, k: Vec4, t: Vec4) Self {
         return .{ .i = i, .j = j, .k = k, .t = t };

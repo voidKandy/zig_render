@@ -17,3 +17,9 @@ pub fn checkSdl(res: bool) void {
         @panic("SDL error");
     }
 }
+
+pub const UniformBufferObject = struct {
+    model: math.Mat4,
+    view: math.Mat4,
+    proj: math.Mat4,
+};
