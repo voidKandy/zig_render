@@ -380,7 +380,7 @@ fn createGraphicsPipeline(self: *Self) void {
         .polygonMode = vk.POLYGON_MODE_FILL,
         .lineWidth = 1.0,
         .cullMode = vk.CULL_MODE_BACK_BIT,
-        .frontFace = vk.FRONT_FACE_CLOCKWISE,
+        .frontFace = vk.FRONT_FACE_COUNTER_CLOCKWISE,
         .depthBiasEnable = vk.FALSE,
     };
 
@@ -813,11 +813,13 @@ fn updateUniformBuffer(self: *Self, current_frame: usize) void {
     const aspect =
         @as(f32, @floatFromInt(self.swapchain.extent.width)) /
         @as(f32, @floatFromInt(self.swapchain.extent.height));
-    const ubo = root.UniformBufferObject{
+    var ubo = root.UniformBufferObject{
         .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 90.0),
         .view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0)),
         .proj = Mat4.perspective(fov, aspect, near_plane, far_plane),
     };
+
+    ubo.proj.j.y *= -1;
 
     const aligned_data: *root.UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[current_frame]));
     aligned_data.* = ubo;
