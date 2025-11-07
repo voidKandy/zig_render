@@ -53,11 +53,11 @@ pub const Mesh = struct {
 };
 
 pub const ParseError = error{
-    unexpected_end_of_file,
-    invalid_token,
-    invalid_entry,
-    invalid_number,
-    invalid_index,
+    UnexpectedEndOfFile,
+    InvalidToken,
+    InvalidEntry,
+    InvalidNumber,
+    InvalidIndex,
 };
 
 const ParseContext = struct {
@@ -149,7 +149,7 @@ fn parse_content(ctx: *ParseContext, content: []const u8) !void {
             'v' => {
                 if (line.len < 2) {
                     log_err(ctx, "Unexpected end of file", .{});
-                    return ParseError.unexpected_end_of_file;
+                    return ParseError.UnexpectedEndOfFile;
                 }
                 switch (line[1]) {
                     ' ' => try parse_vertex(ctx, line[1..]),
@@ -160,7 +160,7 @@ fn parse_content(ctx: *ParseContext, content: []const u8) !void {
                     },
                     else => {
                         log_err(ctx, "Unknown token: {s}", .{line[0..2]});
-                        return ParseError.invalid_token;
+                        return ParseError.InvalidToken;
                     },
                 }
             },
@@ -169,7 +169,7 @@ fn parse_content(ctx: *ParseContext, content: []const u8) !void {
             'g' => {
                 if (!std.mem.startsWith(u8, line, "g ")) {
                     log_err(ctx, "Unknown token at beginning of line: {s}", .{line});
-                    return ParseError.invalid_token;
+                    return ParseError.InvalidToken;
                 } else {
                     log_warn(ctx, "Groups are not supported. Group name: {s}", .{line[2..]});
                 }
@@ -179,7 +179,7 @@ fn parse_content(ctx: *ParseContext, content: []const u8) !void {
                     try parse_material(ctx, line);
                 } else {
                     log_err(ctx, "Unknown token at beginning of line: {s}", .{line});
-                    return ParseError.invalid_token;
+                    return ParseError.InvalidToken;
                 }
             },
             'u' => {
@@ -187,7 +187,7 @@ fn parse_content(ctx: *ParseContext, content: []const u8) !void {
                     log_warn(ctx, "Use materials not supported yet", .{});
                 } else {
                     log_err(ctx, "Unknown token at beginning of line: {s}", .{line});
-                    return ParseError.invalid_token;
+                    return ParseError.InvalidToken;
                 }
             },
             'l' => {
@@ -198,7 +198,7 @@ fn parse_content(ctx: *ParseContext, content: []const u8) !void {
             },
             else => {
                 log_err(ctx, "Unknown token: {c}", .{line[0]});
-                return ParseError.invalid_token;
+                return ParseError.InvalidToken;
             },
         }
     }
@@ -210,12 +210,12 @@ fn parse_values(ctx: *ParseContext, line: []const u8, values: []f32, type_name: 
     while (it.next()) |pos| {
         if (count > values.len) {
             log_err(ctx, "Too many values for {s}. Expected: {}, Found: {}", .{ type_name, values.len, count });
-            return ParseError.invalid_entry;
+            return ParseError.InvalidEntry;
         }
 
         values[count] = std.fmt.parseFloat(f32, pos) catch {
             log_err(ctx, "Invalid number: {s}", .{pos});
-            return ParseError.invalid_number;
+            return ParseError.InvalidNumber;
         };
 
         count += 1;
@@ -230,7 +230,7 @@ inline fn parse_vertex(ctx: *ParseContext, line: []const u8) !void {
 
     if (read < 3) {
         log_err(ctx, "Invalid vertex. Expected at least 3 values", .{});
-        return ParseError.invalid_entry;
+        return ParseError.InvalidEntry;
     }
 
     if (read > 3) {
@@ -246,7 +246,7 @@ inline fn parse_normal(ctx: *ParseContext, line: []const u8) !void {
 
     if (read < 3) {
         log_err(ctx, "Invalid normal. Expected 3 values, found: {}", .{read});
-        return ParseError.invalid_entry;
+        return ParseError.InvalidEntry;
     }
 
     try ctx.normals.append(ctx.allocator, .{ values[0], values[1], values[2] });
@@ -270,35 +270,35 @@ inline fn parse_face(ctx: *ParseContext, line: []const u8) !void {
         var index_it = std.mem.splitScalar(u8, vertex, '/');
         const pos = index_it.next() orelse {
             log_err(ctx, "Invalid face. Position index is missing for vertex: {s}", .{vertex});
-            return ParseError.invalid_entry;
+            return ParseError.InvalidEntry;
         };
 
         const uv = index_it.next() orelse {
             log_err(ctx, "Invalid face. UV index is missing for vertex: {s}", .{vertex});
-            return ParseError.invalid_entry;
+            return ParseError.InvalidEntry;
         };
 
         const norm = index_it.next() orelse {
             log_err(ctx, "Invalid face. Normal index is missing for vertex: {s}", .{vertex});
-            return ParseError.invalid_entry;
+            return ParseError.InvalidEntry;
         };
 
         // Ensure consistency between faces with and without uv coordinates
         if (norm.len == 0) {
             if (ctx.face_parsing_state == .uvs) {
                 log_err(ctx, "Invalid face. Mismatch between face with and without uv coordinates.", .{});
-                return ParseError.invalid_entry;
+                return ParseError.InvalidEntry;
             } else ctx.face_parsing_state = .no_uvs;
         } else {
             if (ctx.face_parsing_state == .no_uvs) {
                 log_err(ctx, "Invalid face. Mismatch between face with and without uv coordinates.", .{});
-                return ParseError.invalid_entry;
+                return ParseError.InvalidEntry;
             } else ctx.face_parsing_state = .uvs;
         }
 
         var pos_index = std.fmt.parseInt(i32, pos, 10) catch {
             log_err(ctx, "Invalid face. Invalid position index: {s}", .{pos});
-            return ParseError.invalid_index;
+            return ParseError.InvalidIndex;
         };
 
         var uv_index = if (uv.len == 0) blk: {
@@ -309,13 +309,13 @@ inline fn parse_face(ctx: *ParseContext, line: []const u8) !void {
             break :blk 0;
         } else std.fmt.parseInt(i32, uv, 10) catch {
             log_err(ctx, "Invalid face. Invalid uv index: {s}", .{uv});
-            return ParseError.invalid_index;
+            return ParseError.InvalidIndex;
         };
 
         // FIXME:This is not technically correct, as normals are optional. Revise this later.
         var norm_index = std.fmt.parseInt(i32, norm, 10) catch {
             log_err(ctx, "Invalid face. Invalid normal index: {s}", .{norm});
-            return ParseError.invalid_index;
+            return ParseError.InvalidIndex;
         };
 
         if (pos_index < 0) {
@@ -323,7 +323,7 @@ inline fn parse_face(ctx: *ParseContext, line: []const u8) !void {
         }
         if (pos_index < 0 or pos_index >= ctx.vertices.items.len) {
             log_err(ctx, "Invalid face. Position index out of bounds: {s}. Index: {}, Expected between: [0, {}]", .{ pos, pos_index, ctx.vertices.items.len - 1 });
-            return ParseError.invalid_index;
+            return ParseError.InvalidIndex;
         }
 
         if (uv_index < 0) {
@@ -331,7 +331,7 @@ inline fn parse_face(ctx: *ParseContext, line: []const u8) !void {
         }
         if (uv_index < 0 or uv_index >= ctx.uvs.items.len) {
             log_err(ctx, "Invalid face. UV index out of bounds: {s}. Index: {}, Expected between: [0, {}]", .{ uv, uv_index, ctx.uvs.items.len - 1 });
-            return ParseError.invalid_index;
+            return ParseError.InvalidIndex;
         }
 
         if (norm_index < 0) {
@@ -339,7 +339,7 @@ inline fn parse_face(ctx: *ParseContext, line: []const u8) !void {
         }
         if (norm_index < 0 or norm_index >= ctx.normals.items.len) {
             log_err(ctx, "Invalid face. Normal index out of bounds: {s}. Index: {}, Expected between: [0, {}]", .{ norm, norm_index, ctx.normals.items.len - 1 });
-            return ParseError.invalid_index;
+            return ParseError.InvalidIndex;
         }
 
         const index = Index{
@@ -353,7 +353,7 @@ inline fn parse_face(ctx: *ParseContext, line: []const u8) !void {
 
     if (vertices_count < 3) {
         log_err(ctx, "Invalid face. Expected at least 3 vertices, found: {}", .{vertices_count});
-        return ParseError.invalid_entry;
+        return ParseError.InvalidEntry;
     }
 
     try ctx.face_vertices.append(ctx.allocator, vertices_count);

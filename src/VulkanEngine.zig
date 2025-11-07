@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.vulkan_engine);
 const root = @import("root.zig");
+const texs = @import("textures.zig");
 const vulkan_init = root.vulkan_init;
 const vma_usage = root.vma_usage;
 const mesh_mod = root.mesh;
@@ -51,7 +52,9 @@ upload_context: vulkan_init.UploadContext = .{},
 frames: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT,
 current_frame: u32 = 0,
 
+/// eventually these should be string hash maps
 mesh: mesh_mod.Mesh2D = undefined,
+texture: texs.Texture = undefined,
 
 // pretty sure this should live in frameData
 uniform_buffers: []vma_usage.AllocatedBuffer = undefined,
@@ -107,6 +110,10 @@ pub fn deinit(self: *Self) void {
     self.deletion_queue.deinit(self.allocator);
 
     self.allocator.free(self.descriptor_sets);
+
+    // texture should have deinit?
+    vk.DestroyImageView(self.device.handle, self.texture.image_view, vk_alloc_cbs);
+    c.vma.DestroyImage(self.vma_allocator, self.texture.image.image, self.texture.image.allocation);
 
     // mesh should have deinit?
     c.vma.DestroyBuffer(self.vma_allocator, self.mesh.index_buffer.buffer, self.mesh.index_buffer.allocation);
@@ -215,6 +222,7 @@ fn initVulkan(self: *Self) void {
 
     self.createCommands();
     self.createSyncObjects();
+    self.createTextureImage();
     self.createMesh();
     self.createUniformBuffers();
     self.createDescriptorPool();
@@ -510,6 +518,42 @@ fn createFramebuffers(self: *Self) void {
         };
         checkVk(vk.CreateFramebuffer(self.device.handle, &ci, null, &self.swapchain_framebuffers.items[i])) catch @panic("failed to create framebuffer");
     }
+}
+
+fn createTextureImage(self: *Self) void {
+    const lost_empire_image = texs.loadImageFromFile(self.vma_allocator, &self.upload_context, self.device, "assets/lost_empire-RGBA.png") catch @panic("Failed to load image");
+    // self.image_deletion_queue.append(
+    //     self.allocator,
+    //     vma_usage.VmaImageDeleter{ .image = lost_empire_image },
+    // ) catch @panic("Out of memory");
+
+    const image_view_ci = std.mem.zeroInit(c.vk.ImageViewCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .viewType = c.vk.IMAGE_VIEW_TYPE_2D,
+        .image = lost_empire_image.image,
+        .format = c.vk.FORMAT_R8G8B8A8_SRGB,
+        .components = .{
+            .r = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .g = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .b = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .a = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = .{
+            .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    });
+
+    var lost_empire = texs.Texture{
+        .image = lost_empire_image,
+        .image_view = null,
+    };
+
+    checkVk(c.vk.CreateImageView(self.device.handle, &image_view_ci, vk_alloc_cbs, &lost_empire.image_view)) catch @panic("Failed to create image view");
+    self.texture = lost_empire;
 }
 
 // Creates and binds mesh

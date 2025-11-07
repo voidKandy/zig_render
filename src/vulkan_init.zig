@@ -199,7 +199,7 @@ pub fn createInstance(alloc: Allocator, opts: VkiInstanceOpts) !Instance {
             try extensions.append(arena, required_ext);
         } else {
             log.err("Required vulkan extension not supported: {s}", .{required_ext});
-            return error.vulkan_extension_not_supported;
+            return error.VulkanExtensionNotSupported;
         }
     }
 
@@ -332,7 +332,7 @@ pub fn selectPhysicalDevice(a: Allocator, instance: vk.Instance, opts: PhysicalD
 
     if (suitable_pd == null) {
         log.err("No suitable physical device found.", .{});
-        return error.vulkan_no_suitable_physical_device;
+        return error.VulkanNoSuitablePhysicalDevice;
     }
     const res = suitable_pd.?;
 
