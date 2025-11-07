@@ -56,6 +56,8 @@ current_frame: u32 = 0,
 mesh: mesh_mod.Mesh2D = undefined,
 texture: texs.Texture = undefined,
 
+texture_sampler: vk.Sampler = undefined,
+
 // pretty sure this should live in frameData
 uniform_buffers: []vma_usage.AllocatedBuffer = undefined,
 uniform_buffers_mapped: []?*anyopaque = undefined,
@@ -72,7 +74,7 @@ pub fn init(a: std.mem.Allocator) Self {
 }
 
 pub fn deinit(self: *Self) void {
-    checkVk(c.vk.DeviceWaitIdle(self.device.handle)) catch @panic("Failed to wait for device idle");
+    checkVk(vk.DeviceWaitIdle(self.device.handle)) catch @panic("Failed to wait for device idle");
     self.swapchain.deinit(self.allocator, self.device.handle, vk_alloc_cbs);
 
     // not using VMA!! should
@@ -110,6 +112,8 @@ pub fn deinit(self: *Self) void {
     self.deletion_queue.deinit(self.allocator);
 
     self.allocator.free(self.descriptor_sets);
+
+    vk.DestroySampler(self.device.handle, self.texture_sampler, vk_alloc_cbs);
 
     // texture should have deinit?
     vk.DestroyImageView(self.device.handle, self.texture.image_view, vk_alloc_cbs);
@@ -167,9 +171,9 @@ fn initVulkan(self: *Self) void {
     checkSdl(sdl.Vulkan_CreateSurface(self.window, self.instance, vk_alloc_cbs, &self.surface));
 
     // Physical device creation
-    const required_device_extensions: []const [*c]const u8 = &.{c.vk.KHR_SWAPCHAIN_EXTENSION_NAME};
+    const required_device_extensions: []const [*c]const u8 = &.{vk.KHR_SWAPCHAIN_EXTENSION_NAME};
     const physical_device = vulkan_init.selectPhysicalDevice(self.allocator, self.instance, .{
-        .min_api_version = c.vk.MAKE_VERSION(1, 1, 0),
+        .min_api_version = vk.MAKE_VERSION(1, 1, 0),
         .required_extensions = required_device_extensions,
         .surface = self.surface,
         .criteria = .PreferDiscrete,
@@ -177,13 +181,15 @@ fn initVulkan(self: *Self) void {
     self.physical_device = physical_device;
 
     // logical device creation
-    const shader_draw_parameters_features = std.mem.zeroInit(c.vk.PhysicalDeviceShaderDrawParametersFeatures, .{
-        .sType = c.vk.STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
-        .shaderDrawParameters = c.vk.TRUE,
+    const shader_draw_parameters_features = std.mem.zeroInit(vk.PhysicalDeviceShaderDrawParametersFeatures, .{
+        .sType = vk.STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+        .shaderDrawParameters = vk.TRUE,
     });
     const logical_device = vulkan_init.createLogicalDevice(self.allocator, .{
         .physical_device = self.physical_device,
-        .features = std.mem.zeroInit(c.vk.PhysicalDeviceFeatures, .{}),
+        .features = vk.PhysicalDeviceFeatures{
+            .samplerAnisotropy = vk.TRUE,
+        },
         .alloc_cb = vk_alloc_cbs,
         .pnext = &shader_draw_parameters_features,
     }) catch @panic("Failed to create logical device");
@@ -223,6 +229,7 @@ fn initVulkan(self: *Self) void {
     self.createCommands();
     self.createSyncObjects();
     self.createTextureImage();
+    self.createTextureSampler();
     self.createMesh();
     self.createUniformBuffers();
     self.createDescriptorPool();
@@ -237,10 +244,10 @@ fn createInstance(self: *Self) void {
     // Instance creation and optional debug utilities
     const instance = vulkan_init.createInstance(std.heap.page_allocator, .{
         .application_name = "VkGuide",
-        .application_version = c.vk.MAKE_VERSION(0, 1, 0),
+        .application_version = vk.MAKE_VERSION(0, 1, 0),
         .engine_name = "VkGuide",
-        .engine_version = c.vk.MAKE_VERSION(0, 1, 0),
-        .api_version = c.vk.MAKE_VERSION(1, 1, 0),
+        .engine_version = vk.MAKE_VERSION(0, 1, 0),
+        .api_version = vk.MAKE_VERSION(1, 1, 0),
         .debug = true,
         .required_extensions = sdl_extension_slice,
     }) catch |err| {
@@ -299,19 +306,19 @@ fn createRenderPass(self: *Self) void {
 
 /// This being a better language than C/C++, means we don´t need to load
 /// the SPIR-V code from a file, we can just embed it as an array of bytes.
-fn createShaderModule(self: *Self, code: []const u8) ?c.vk.ShaderModule {
+fn createShaderModule(self: *Self, code: []const u8) ?vk.ShaderModule {
     std.debug.assert(code.len % 4 == 0);
 
     const data: *const u32 = @ptrCast(@alignCast(code.ptr));
 
-    const shader_module_ci = std.mem.zeroInit(c.vk.ShaderModuleCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+    const shader_module_ci = std.mem.zeroInit(vk.ShaderModuleCreateInfo, .{
+        .sType = vk.STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = code.len,
         .pCode = data,
     });
 
-    var shader_module: c.vk.ShaderModule = undefined;
-    checkVk(c.vk.CreateShaderModule(self.device.handle, &shader_module_ci, vk_alloc_cbs, &shader_module)) catch |err| {
+    var shader_module: vk.ShaderModule = undefined;
+    checkVk(vk.CreateShaderModule(self.device.handle, &shader_module_ci, vk_alloc_cbs, &shader_module)) catch |err| {
         log.err("Failed to create shader module with error: {s}", .{@errorName(err)});
         return null;
     };
@@ -522,38 +529,57 @@ fn createFramebuffers(self: *Self) void {
 
 fn createTextureImage(self: *Self) void {
     const lost_empire_image = texs.loadImageFromFile(self.vma_allocator, &self.upload_context, self.device, "assets/lost_empire-RGBA.png") catch @panic("Failed to load image");
-    // self.image_deletion_queue.append(
-    //     self.allocator,
-    //     vma_usage.VmaImageDeleter{ .image = lost_empire_image },
-    // ) catch @panic("Out of memory");
 
-    const image_view_ci = std.mem.zeroInit(c.vk.ImageViewCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .viewType = c.vk.IMAGE_VIEW_TYPE_2D,
+    const image_view_ci = vk.ImageViewCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .viewType = vk.IMAGE_VIEW_TYPE_2D,
         .image = lost_empire_image.image,
-        .format = c.vk.FORMAT_R8G8B8A8_SRGB,
+        .format = vk.FORMAT_R8G8B8A8_SRGB,
         .components = .{
-            .r = c.vk.COMPONENT_SWIZZLE_IDENTITY,
-            .g = c.vk.COMPONENT_SWIZZLE_IDENTITY,
-            .b = c.vk.COMPONENT_SWIZZLE_IDENTITY,
-            .a = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .r = vk.COMPONENT_SWIZZLE_IDENTITY,
+            .g = vk.COMPONENT_SWIZZLE_IDENTITY,
+            .b = vk.COMPONENT_SWIZZLE_IDENTITY,
+            .a = vk.COMPONENT_SWIZZLE_IDENTITY,
         },
         .subresourceRange = .{
-            .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
+            .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
             .baseMipLevel = 0,
             .levelCount = 1,
             .baseArrayLayer = 0,
             .layerCount = 1,
         },
-    });
+    };
 
     var lost_empire = texs.Texture{
         .image = lost_empire_image,
         .image_view = null,
     };
 
-    checkVk(c.vk.CreateImageView(self.device.handle, &image_view_ci, vk_alloc_cbs, &lost_empire.image_view)) catch @panic("Failed to create image view");
+    checkVk(vk.CreateImageView(self.device.handle, &image_view_ci, vk_alloc_cbs, &lost_empire.image_view)) catch @panic("Failed to create image view");
     self.texture = lost_empire;
+}
+
+fn createTextureSampler(self: *Self) void {
+    const ci = vk.SamplerCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter = vk.FILTER_LINEAR,
+        .minFilter = vk.FILTER_LINEAR,
+        .addressModeU = vk.SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeV = vk.SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeW = vk.SAMPLER_ADDRESS_MODE_REPEAT,
+        .anisotropyEnable = vk.TRUE,
+        .maxAnisotropy = self.physical_device.properties.limits.maxSamplerAnisotropy,
+        .borderColor = vk.BORDER_COLOR_INT_OPAQUE_BLACK,
+        .unnormalizedCoordinates = vk.FALSE,
+        .compareEnable = vk.FALSE,
+        .compareOp = vk.COMPARE_OP_ALWAYS,
+        .mipmapMode = vk.SAMPLER_MIPMAP_MODE_LINEAR,
+        .mipLodBias = 0.0,
+        .minLod = 0.0,
+        .maxLod = 0.0,
+    };
+
+    checkVk(vk.CreateSampler(self.device.handle, &ci, null, &self.texture_sampler)) catch @panic("failed to create sampler");
 }
 
 // Creates and binds mesh
@@ -734,14 +760,14 @@ fn createSyncObjects(self: *Self) void {
 
     // Upload Context
     const upload_fence_ci = vk.FenceCreateInfo{
-        .sType = c.vk.STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .sType = vk.STRUCTURE_TYPE_FENCE_CREATE_INFO,
     };
 
-    checkVk(c.vk.CreateFence(self.device.handle, &upload_fence_ci, vk_alloc_cbs, &self.upload_context.upload_fence)) catch @panic("Failed to create upload fence");
+    checkVk(vk.CreateFence(self.device.handle, &upload_fence_ci, vk_alloc_cbs, &self.upload_context.upload_fence)) catch @panic("Failed to create upload fence");
 
     self.deletion_queue.append(
         self.allocator,
-        VulkanDeleter.make(self.upload_context.upload_fence, c.vk.DestroyFence, vk_alloc_cbs),
+        VulkanDeleter.make(self.upload_context.upload_fence, vk.DestroyFence, vk_alloc_cbs),
     ) catch @panic("Out of memory");
 }
 

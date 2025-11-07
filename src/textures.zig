@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("clibs.zig");
+const vk = c.vk;
 const vma_usage = @import("vma_usage.zig");
 const vk_init = @import("vulkan_init.zig");
 const checkVk = vk_init.checkVk;
@@ -8,7 +9,7 @@ const log = std.log.scoped(.textures);
 
 pub const Texture = struct {
     image: vma_usage.AllocatedImage,
-    image_view: c.vk.ImageView,
+    image_view: vk.ImageView,
 };
 
 pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadContext, device: vk_init.Device, filepath: []const u8) !vma_usage.AllocatedImage {
@@ -31,12 +32,12 @@ pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadCont
 
     log.info("Loaded image from file to ram: {s}", .{filepath});
 
-    const image_size = @as(c.vk.DeviceSize, @intCast(width * height * 4));
+    const image_size = @as(vk.DeviceSize, @intCast(width * height * 4));
 
     const staging_buffer = vma_usage.AllocatedBuffer.create(
         vma_a,
         image_size,
-        c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
+        vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
         c.vma.MEMORY_USAGE_CPU_ONLY,
     );
     defer c.vma.DestroyBuffer(vma_a, staging_buffer.buffer, staging_buffer.allocation);
@@ -51,29 +52,29 @@ pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadCont
 
     c.vma.UnmapMemory(vma_a, staging_buffer.allocation);
 
-    const extent = c.vk.Extent3D{
+    const extent = vk.Extent3D{
         .width = @as(c_uint, @intCast(width)),
         .height = @as(c_uint, @intCast(height)),
         .depth = 1,
     };
 
-    const img_info = c.vk.ImageCreateInfo{
-        .sType = c.vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = c.vk.IMAGE_TYPE_2D,
-        .format = c.vk.FORMAT_R8G8B8A8_SRGB,
+    const img_info = vk.ImageCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = vk.IMAGE_TYPE_2D,
+        .format = vk.FORMAT_R8G8B8A8_SRGB,
         .extent = extent,
         .mipLevels = 1,
         .arrayLayers = 1,
-        .samples = c.vk.SAMPLE_COUNT_1_BIT,
-        .tiling = c.vk.IMAGE_TILING_OPTIMAL,
-        .usage = c.vk.IMAGE_USAGE_TRANSFER_DST_BIT | c.vk.IMAGE_USAGE_SAMPLED_BIT,
+        .samples = vk.SAMPLE_COUNT_1_BIT,
+        .tiling = vk.IMAGE_TILING_OPTIMAL,
+        .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
     };
 
     const alloc_ci = c.vma.AllocationCreateInfo{
         .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
     };
 
-    var image: c.vk.Image = undefined;
+    var image: vk.Image = undefined;
     var allocation: c.vma.Allocation = undefined;
     try checkVk(c.vma.CreateImage(vma_a, &img_info, &alloc_ci, &image, &allocation, null));
     if (allocation == null) {
@@ -85,39 +86,50 @@ pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadCont
     // Tranfer CPU memory to GPU memory
     //
     upload_ctx.immediateSubmit(device, struct {
-        image: c.vk.Image,
-        extent: c.vk.Extent3D,
+        image: vk.Image,
+        extent: vk.Extent3D,
         staging_buffer: vma_usage.AllocatedBuffer,
 
-        pub fn submit(self: @This(), cmd: c.vk.CommandBuffer) void {
-            const range = c.vk.ImageSubresourceRange{
-                .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
+        pub fn submit(self: @This(), cmd: vk.CommandBuffer) void {
+            const range = vk.ImageSubresourceRange{
+                .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
                 .baseMipLevel = 0,
                 .levelCount = 1,
                 .baseArrayLayer = 0,
                 .layerCount = 1,
             };
 
-            const barrier_to_transfer = c.vk.ImageMemoryBarrier{
-                .sType = c.vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            const barrier_to_transfer = vk.ImageMemoryBarrier{
+                .sType = vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 .srcAccessMask = 0,
-                .dstAccessMask = c.vk.ACCESS_TRANSFER_WRITE_BIT,
-                .oldLayout = c.vk.IMAGE_LAYOUT_UNDEFINED,
-                .newLayout = c.vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .srcQueueFamilyIndex = c.vk.QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = c.vk.QUEUE_FAMILY_IGNORED,
+                .dstAccessMask = vk.ACCESS_TRANSFER_WRITE_BIT,
+                .oldLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
                 .image = self.image,
                 .subresourceRange = range,
             };
 
-            c.vk.CmdPipelineBarrier(cmd, c.vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT, c.vk.PIPELINE_STAGE_TRANSFER_BIT, 0, 0, null, 0, null, 1, &barrier_to_transfer);
+            vk.CmdPipelineBarrier(
+                cmd,
+                vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                vk.PIPELINE_STAGE_TRANSFER_BIT,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &barrier_to_transfer,
+            );
 
-            const copy_region = c.vk.BufferImageCopy{
+            const copy_region = vk.BufferImageCopy{
                 .bufferOffset = 0,
                 .bufferRowLength = 0,
                 .bufferImageHeight = 0,
                 .imageSubresource = .{
-                    .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
+                    .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
                     .mipLevel = 0,
                     .baseArrayLayer = 0,
                     .layerCount = 1,
@@ -126,21 +138,39 @@ pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadCont
                 .imageExtent = self.extent,
             };
 
-            c.vk.CmdCopyBufferToImage(cmd, self.staging_buffer.buffer, self.image, c.vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+            vk.CmdCopyBufferToImage(
+                cmd,
+                self.staging_buffer.buffer,
+                self.image,
+                vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                1,
+                &copy_region,
+            );
 
-            const barrier_to_shader_read = c.vk.ImageMemoryBarrier{
-                .sType = c.vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask = c.vk.ACCESS_TRANSFER_WRITE_BIT,
-                .dstAccessMask = c.vk.ACCESS_SHADER_READ_BIT,
-                .oldLayout = c.vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .newLayout = c.vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                .srcQueueFamilyIndex = c.vk.QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = c.vk.QUEUE_FAMILY_IGNORED,
+            const barrier_to_shader_read = vk.ImageMemoryBarrier{
+                .sType = vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask = vk.ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = vk.ACCESS_SHADER_READ_BIT,
+                .oldLayout = vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                .srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
                 .image = self.image,
                 .subresourceRange = range,
             };
 
-            c.vk.CmdPipelineBarrier(cmd, c.vk.PIPELINE_STAGE_TRANSFER_BIT, c.vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, null, 0, null, 1, &barrier_to_shader_read);
+            vk.CmdPipelineBarrier(
+                cmd,
+                vk.PIPELINE_STAGE_TRANSFER_BIT,
+                vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &barrier_to_shader_read,
+            );
         }
     }{
         .image = image,

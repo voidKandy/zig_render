@@ -386,12 +386,12 @@ pub fn createLogicalDevice(a: Allocator, opts: DeviceCreateOpts) !Device {
     var qfi_iter = queue_family_set.iterator();
     try queue_create_infos.ensureTotalCapacity(arena, queue_family_set.count());
     while (qfi_iter.next()) |qfi| {
-        try queue_create_infos.append(arena, std.mem.zeroInit(vk.DeviceQueueCreateInfo, .{
+        try queue_create_infos.append(arena, vk.DeviceQueueCreateInfo{
             .sType = vk.STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .queueFamilyIndex = qfi.key_ptr.*,
             .queueCount = 1,
             .pQueuePriorities = &queue_priorities,
-        }));
+        });
     }
 
     const device_extensions: []const [*c]const u8 = &.{
@@ -400,7 +400,7 @@ pub fn createLogicalDevice(a: Allocator, opts: DeviceCreateOpts) !Device {
         vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
     };
 
-    const device_info = std.mem.zeroInit(vk.DeviceCreateInfo, .{
+    const device_info = vk.DeviceCreateInfo{
         .sType = vk.STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = opts.pnext,
         .queueCreateInfoCount = @as(u32, @intCast(queue_create_infos.items.len)),
@@ -410,7 +410,7 @@ pub fn createLogicalDevice(a: Allocator, opts: DeviceCreateOpts) !Device {
         .enabledExtensionCount = @as(u32, @intCast(device_extensions.len)),
         .ppEnabledExtensionNames = device_extensions.ptr,
         .pEnabledFeatures = &opts.features,
-    });
+    };
 
     var device: vk.Device = undefined;
     try checkVk(vk.CreateDevice(opts.physical_device.handle, &device_info, opts.alloc_cb, &device));
