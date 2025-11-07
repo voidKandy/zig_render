@@ -20,6 +20,7 @@ pub const VertexInputDescription = struct {
 pub const Vertex2D = struct {
     position: Vec2,
     color: Vec3,
+    tex_coord: Vec2,
 
     pub const vertex_input_description = VertexInputDescription{
         .bindings = &.{c.vk.VertexInputBindingDescription{
@@ -28,13 +29,11 @@ pub const Vertex2D = struct {
             .inputRate = c.vk.VERTEX_INPUT_RATE_VERTEX,
         }},
 
-        // An attribute description struct describes how to extract a vertex attribute from a chunk of vertex data originating from a binding description.
-        // We have two attributes, position and color, so we need two attribute description structs.
         .attributes = &.{
             c.vk.VertexInputAttributeDescription{
                 .binding = 0,
                 .location = 0,
-                .format = c.vk.FORMAT_R32G32B32_SFLOAT,
+                .format = c.vk.FORMAT_R32G32_SFLOAT,
                 .offset = @offsetOf(@This(), "position"),
             },
             c.vk.VertexInputAttributeDescription{
@@ -42,6 +41,12 @@ pub const Vertex2D = struct {
                 .location = 1,
                 .format = c.vk.FORMAT_R32G32B32_SFLOAT,
                 .offset = @offsetOf(@This(), "color"),
+            },
+            c.vk.VertexInputAttributeDescription{
+                .binding = 0,
+                .location = 2,
+                .format = c.vk.FORMAT_R32G32_SFLOAT,
+                .offset = @offsetOf(@This(), "tex_coord"),
             },
         },
     };

@@ -329,16 +329,25 @@ fn createShaderModule(self: *Self, code: []const u8) ?vk.ShaderModule {
 fn createDescriptorSetLayout(self: *Self) void {
     const ubo_layout_binding = vk.DescriptorSetLayoutBinding{
         .binding = 0,
-        .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         .descriptorCount = 1,
+        .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         .pImmutableSamplers = null,
     };
+    const sampler_layout_binding = vk.DescriptorSetLayoutBinding{
+        .binding = 1,
+        .descriptorCount = 1,
+        .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
+        .pImmutableSamplers = null,
+    };
+
+    const bindings = &[_]vk.DescriptorSetLayoutBinding{ ubo_layout_binding, sampler_layout_binding };
 
     const ci = vk.DescriptorSetLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1,
-        .pBindings = &ubo_layout_binding,
+        .bindingCount = bindings.len,
+        .pBindings = bindings,
     };
 
     checkVk(vk.CreateDescriptorSetLayout(self.device.handle, &ci, vk_alloc_cbs, &self.descriptor_set_layout)) catch @panic("failed to create descriptor set layout");
@@ -588,18 +597,22 @@ fn createMesh(self: *Self) void {
         .{
             .position = Vec2.make(-0.5, -0.5),
             .color = Vec3.make(1.0, 0.0, 0.0),
+            .tex_coord = Vec2.make(1.0, 0.0),
         },
         .{
             .position = Vec2.make(0.5, -0.5),
             .color = Vec3.make(0.0, 1.0, 0.0),
+            .tex_coord = Vec2.make(0.0, 0.0),
         },
         .{
             .position = Vec2.make(0.5, 0.5),
             .color = Vec3.make(0.0, 0.0, 1.0),
+            .tex_coord = Vec2.make(0.0, 1.0),
         },
         .{
             .position = Vec2.make(-0.5, 0.5),
             .color = Vec3.make(1.0, 1.0, 1.0),
+            .tex_coord = Vec2.make(1.0, 1.0),
         },
     };
     const indices = [_]u16{ 0, 1, 2, 2, 3, 0 };
@@ -624,15 +637,21 @@ fn createUniformBuffers(self: *Self) void {
 }
 
 fn createDescriptorPool(self: *Self) void {
-    const size = vk.DescriptorPoolSize{
+    const ubo_size = vk.DescriptorPoolSize{
         .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         .descriptorCount = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
     };
+    const sampler_size = vk.DescriptorPoolSize{
+        .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
+    };
+
+    const sizes = &[_]vk.DescriptorPoolSize{ ubo_size, sampler_size };
 
     const ci = vk.DescriptorPoolCreateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .poolSizeCount = 1,
-        .pPoolSizes = &size,
+        .poolSizeCount = sizes.len,
+        .pPoolSizes = sizes,
         .maxSets = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
     };
 
@@ -661,28 +680,41 @@ fn createDescriptorSets(self: *Self) void {
     checkVk(vk.AllocateDescriptorSets(self.device.handle, &ai, self.descriptor_sets.ptr)) catch @panic("failed to allocate descriptor sets");
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        const bi = vk.DescriptorBufferInfo{
+        const ubo_info = vk.DescriptorBufferInfo{
             .buffer = self.uniform_buffers[i].buffer,
             .offset = 0,
             .range = @sizeOf(root.UniformBufferObject),
         };
 
-        const write = vk.WriteDescriptorSet{
+        const img_info = vk.DescriptorImageInfo{
+            .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .imageView = self.texture.image_view,
+            .sampler = self.texture_sampler,
+        };
+
+        const ubo_write = vk.WriteDescriptorSet{
+            .dstBinding = 0,
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstSet = self.descriptor_sets[i],
-            .dstBinding = 0,
             .dstArrayElement = 0,
             .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             .descriptorCount = 1,
-            // would be null if pImageInfo or pTexelBufferView weren't
-            .pBufferInfo = &bi,
-            // used for descirptors that refer to image data
-            .pImageInfo = null,
-            // used for descirptors that refer to buffer views
-            .pTexelBufferView = null,
+            .pBufferInfo = &ubo_info,
         };
 
-        vk.UpdateDescriptorSets(self.device.handle, 1, &write, 0, null);
+        const img_write = vk.WriteDescriptorSet{
+            .dstBinding = 1,
+            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = self.descriptor_sets[i],
+            .dstArrayElement = 0,
+            .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = 1,
+            .pImageInfo = &img_info,
+        };
+
+        const writes = &[_]vk.WriteDescriptorSet{ ubo_write, img_write };
+
+        vk.UpdateDescriptorSets(self.device.handle, writes.len, writes, 0, null);
     }
 }
 
