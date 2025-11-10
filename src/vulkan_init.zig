@@ -113,32 +113,33 @@ pub const FrameData = struct {
     }
 };
 
-/// Instance initialisation settings.
-///
-pub const VkiInstanceOpts = struct {
-    application_name: [:0]const u8 = "vki",
-    application_version: u32 = vk.MAKE_VERSION(1, 0, 0),
-    engine_name: ?[:0]const u8 = null,
-    engine_version: u32 = vk.MAKE_VERSION(1, 0, 0),
-    api_version: u32 = vk.MAKE_VERSION(1, 0, 0),
-    debug: bool = false,
-    debug_callback: vk.PFN_DebugUtilsMessengerCallbackEXT = null,
-    required_extensions: []const [*c]const u8 = &.{},
-    alloc_cb: ?*vk.AllocationCallbacks = null,
-};
-
 /// Contains the instance and an optional debug messenger, if
-/// VkiInstanceOpts.debug was true and the validation layer was available.
+/// Options.debug was true and the validation layer was available.
 pub const Instance = struct {
     handle: vk.Instance = null,
     debug_messenger: vk.DebugUtilsMessengerEXT = null,
+
+    /// Instance initialisation settings.
+    ///
+    pub const Options = struct {
+        application_name: [:0]const u8 = "vki",
+        application_version: u32 = vk.MAKE_VERSION(1, 0, 0),
+        engine_name: ?[:0]const u8 = null,
+        engine_version: u32 = vk.MAKE_VERSION(1, 0, 0),
+        api_version: u32 = vk.MAKE_VERSION(1, 0, 0),
+        debug: bool = false,
+        debug_callback: vk.PFN_DebugUtilsMessengerCallbackEXT = null,
+        required_extensions: []const [*c]const u8 = &.{},
+        alloc_cb: ?*vk.AllocationCallbacks = null,
+    };
+
     /// Create a vulkan instance and otpional debug functionalities.
     ///
     /// # Allocations
     ///
     /// Initialization code does not require persistent allocations.
     /// All the allocation are automatically cleared when the function returns.
-    pub fn create(alloc: Allocator, opts: VkiInstanceOpts) !@This() {
+    pub fn create(alloc: Allocator, opts: Options) !@This() {
         // Check the api version is supported
         if (opts.api_version > vk.MAKE_VERSION(1, 0, 0)) {
             var api_requested = opts.api_version;
@@ -252,6 +253,68 @@ pub const Instance = struct {
             null;
 
         return .{ .handle = instance, .debug_messenger = debug_messenger };
+    }
+
+    pub fn getDestroyDebugUtilsMessengerFn(self: @This()) vk.PFN_DestroyDebugUtilsMessengerEXT {
+        return getVulkanInstanceFunct(vk.PFN_DestroyDebugUtilsMessengerEXT, self.handle, "vkDestroyDebugUtilsMessengerEXT");
+    }
+
+    fn getVulkanInstanceFunct(comptime Fn: type, instance: vk.Instance, name: [*c]const u8) Fn {
+        const get_proc_addr: vk.PFN_GetInstanceProcAddr = @ptrCast(c.sdl.Vulkan_GetVkGetInstanceProcAddr());
+        if (get_proc_addr) |get_proc_addr_fn| {
+            return @ptrCast(get_proc_addr_fn(instance, name));
+        }
+
+        @panic("SDL_Vulkan_GetVkGetInstanceProcAddr returned null");
+    }
+
+    fn createDebugCallback(instance: vk.Instance, opts: Options) !vk.DebugUtilsMessengerEXT {
+        const create_fn_opt = getVulkanInstanceFunct(vk.PFN_CreateDebugUtilsMessengerEXT, instance, "vkCreateDebugUtilsMessengerEXT");
+        if (create_fn_opt) |create_fn| {
+            const create_info = std.mem.zeroInit(vk.DebugUtilsMessengerCreateInfoEXT, .{
+                .sType = vk.STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+                .messageSeverity = vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                    vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                    vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+                .messageType = vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                    vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                    vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+                .pfnUserCallback = opts.debug_callback orelse defaultDebugCallback,
+                .pUserData = null,
+            });
+            var debug_messenger: vk.DebugUtilsMessengerEXT = undefined;
+            try checkVk(create_fn(instance, &create_info, opts.alloc_cb, &debug_messenger));
+            log.info("Created vulkan debug messenger.", .{});
+            return debug_messenger;
+        }
+        return null;
+    }
+
+    fn defaultDebugCallback(severity: vk.DebugUtilsMessageSeverityFlagBitsEXT, msg_type: vk.DebugUtilsMessageTypeFlagsEXT, callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT, user_data: ?*anyopaque) callconv(.c) vk.Bool32 {
+        _ = user_data;
+        const severity_str = switch (severity) {
+            vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT => "verbose",
+            vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT => "info",
+            vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT => "warning",
+            vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT => "error",
+            else => "unknown",
+        };
+
+        const type_str = switch (msg_type) {
+            vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT => "general",
+            vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT => "validation",
+            vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT => "performance",
+            else => "unknown",
+        };
+
+        const message: [*c]const u8 = if (callback_data) |cb_data| cb_data.pMessage else "NO MESSAGE!";
+        log.err("[{s}][{s}]. Message:\n  {s}", .{ severity_str, type_str, message });
+
+        if (severity >= vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+            @panic("Unrecoverable vulkan error.");
+        }
+
+        return vk.FALSE;
     }
 };
 
@@ -833,68 +896,6 @@ fn createImageView(device: vk.Device, image: vk.Image, format: vk.Format, aspect
     var image_view: vk.ImageView = undefined;
     try checkVk(vk.CreateImageView(device, &view_info, alloc_cb, &image_view));
     return image_view;
-}
-
-fn getVulkanInstanceFunct(comptime Fn: type, instance: vk.Instance, name: [*c]const u8) Fn {
-    const get_proc_addr: vk.PFN_GetInstanceProcAddr = @ptrCast(c.sdl.Vulkan_GetVkGetInstanceProcAddr());
-    if (get_proc_addr) |get_proc_addr_fn| {
-        return @ptrCast(get_proc_addr_fn(instance, name));
-    }
-
-    @panic("SDL_Vulkan_GetVkGetInstanceProcAddr returned null");
-}
-
-fn createDebugCallback(instance: vk.Instance, opts: VkiInstanceOpts) !vk.DebugUtilsMessengerEXT {
-    const create_fn_opt = getVulkanInstanceFunct(vk.PFN_CreateDebugUtilsMessengerEXT, instance, "vkCreateDebugUtilsMessengerEXT");
-    if (create_fn_opt) |create_fn| {
-        const create_info = std.mem.zeroInit(vk.DebugUtilsMessengerCreateInfoEXT, .{
-            .sType = vk.STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-            .messageSeverity = vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-                vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-            .messageType = vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-            .pfnUserCallback = opts.debug_callback orelse defaultDebugCallback,
-            .pUserData = null,
-        });
-        var debug_messenger: vk.DebugUtilsMessengerEXT = undefined;
-        try checkVk(create_fn(instance, &create_info, opts.alloc_cb, &debug_messenger));
-        log.info("Created vulkan debug messenger.", .{});
-        return debug_messenger;
-    }
-    return null;
-}
-
-pub fn getDestroyDebugUtilsMessengerFn(instance: vk.Instance) vk.PFN_DestroyDebugUtilsMessengerEXT {
-    return getVulkanInstanceFunct(vk.PFN_DestroyDebugUtilsMessengerEXT, instance, "vkDestroyDebugUtilsMessengerEXT");
-}
-
-fn defaultDebugCallback(severity: vk.DebugUtilsMessageSeverityFlagBitsEXT, msg_type: vk.DebugUtilsMessageTypeFlagsEXT, callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT, user_data: ?*anyopaque) callconv(.c) vk.Bool32 {
-    _ = user_data;
-    const severity_str = switch (severity) {
-        vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT => "verbose",
-        vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT => "info",
-        vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT => "warning",
-        vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT => "error",
-        else => "unknown",
-    };
-
-    const type_str = switch (msg_type) {
-        vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT => "general",
-        vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT => "validation",
-        vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT => "performance",
-        else => "unknown",
-    };
-
-    const message: [*c]const u8 = if (callback_data) |cb_data| cb_data.pMessage else "NO MESSAGE!";
-    log.err("[{s}][{s}]. Message:\n  {s}", .{ severity_str, type_str, message });
-
-    if (severity >= vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-        @panic("Unrecoverable vulkan error.");
-    }
-
-    return vk.FALSE;
 }
 
 pub const VkError = error{

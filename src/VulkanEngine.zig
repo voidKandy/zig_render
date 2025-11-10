@@ -134,7 +134,7 @@ pub fn deinit(self: *Self) void {
     vk.DestroyDevice(self.device.handle, vk_alloc_cbs);
 
     if (self.instance.debug_messenger != null) {
-        const destroy_fn = root.vulkan_init.getDestroyDebugUtilsMessengerFn(self.instance.handle) orelse @panic("Debug messenger present but there is no destroy function?")();
+        const destroy_fn = self.instance.getDestroyDebugUtilsMessengerFn() orelse @panic("Debug messenger present but there is no destroy function?")();
         destroy_fn(self.instance.handle, self.instance.debug_messenger, vk_alloc_cbs);
     }
 
