@@ -1693,23 +1693,6 @@ fn draw(self: *Self) void {
     checkVk(vk.AcquireNextImageKHR(self.device, self.swapchain, timeout, frame.render_semaphore, VK_NULL_HANDLE, &swapchain_image_index)) catch
         @panic("Failed to acquire next image");
 
-    // switch (checkVk(aq_img_res)) {
-    //     VkError.SuboptimalKHR => {
-    //         // recreate swapchian
-    //     },
-    //     void => {},
-    //     _ => {
-    //         @panic("encountered unexpected error acquiring swapchain image");
-    //     },
-    // }
-    // catch |e|
-    //    {
-    //        std.log.err(
-    //            \\ Acquire Image Error: {any}
-    //        , .{e});
-
-    //    };
-
     var cmd = frame.main_command_buffer;
 
     checkVk(vk.ResetCommandBuffer(cmd, 0)) catch @panic("Failed to reset command buffer");

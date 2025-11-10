@@ -53,7 +53,7 @@ frames: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT
 current_frame: u32 = 0,
 
 /// eventually these should be string hash maps
-mesh: mesh_mod.Mesh2D = undefined,
+meshes: []mesh_mod.Mesh3D = undefined,
 texture: texs.Texture = undefined,
 
 texture_sampler: vk.Sampler = undefined,
@@ -119,11 +119,14 @@ pub fn deinit(self: *Self) void {
     vk.DestroyImageView(self.device.handle, self.texture.image_view, vk_alloc_cbs);
     c.vma.DestroyImage(self.vma_allocator, self.texture.image.image, self.texture.image.allocation);
 
-    // mesh should have deinit?
-    c.vma.DestroyBuffer(self.vma_allocator, self.mesh.index_buffer.buffer, self.mesh.index_buffer.allocation);
-    c.vma.DestroyBuffer(self.vma_allocator, self.mesh.vertex_buffer.buffer, self.mesh.vertex_buffer.allocation);
-    self.allocator.free(self.mesh.indices);
-    self.allocator.free(self.mesh.vertices);
+    for (0..self.meshes.len) |i| {
+        // mesh should have deinit?
+        c.vma.DestroyBuffer(self.vma_allocator, self.meshes[i].index_buffer.buffer, self.meshes[i].index_buffer.allocation);
+        c.vma.DestroyBuffer(self.vma_allocator, self.meshes[i].vertex_buffer.buffer, self.meshes[i].vertex_buffer.allocation);
+        self.allocator.free(self.meshes[i].indices);
+        self.allocator.free(self.meshes[i].vertices);
+    }
+    self.allocator.free(self.meshes);
 
     c.vma.DestroyAllocator(self.vma_allocator);
     vk.DestroyDevice(self.device.handle, vk_alloc_cbs);
@@ -146,13 +149,13 @@ pub fn run(self: *Self) void {
 
     var quit = false;
     var event: c.sdl.Event = undefined;
+
     while (!quit) {
         while (c.sdl.PollEvent(&event)) {
-            if (event.type == c.sdl.EVENT_QUIT)
-                quit = true
-            else
-                self.drawFrame();
+            if (event.type == c.sdl.EVENT_QUIT) quit = true;
         }
+
+        self.drawFrame();
     }
 
     _ = vk.DeviceWaitIdle(self.device.handle);
@@ -181,10 +184,10 @@ fn initVulkan(self: *Self) void {
     self.physical_device = physical_device;
 
     // logical device creation
-    const shader_draw_parameters_features = std.mem.zeroInit(vk.PhysicalDeviceShaderDrawParametersFeatures, .{
+    const shader_draw_parameters_features = vk.PhysicalDeviceShaderDrawParametersFeatures{
         .sType = vk.STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
         .shaderDrawParameters = vk.TRUE,
-    });
+    };
     const logical_device = vulkan_init.createLogicalDevice(self.allocator, .{
         .physical_device = self.physical_device,
         .features = vk.PhysicalDeviceFeatures{
@@ -196,11 +199,11 @@ fn initVulkan(self: *Self) void {
     self.device = logical_device;
 
     // vma allocator
-    const allocator_ci = std.mem.zeroInit(c.vma.AllocatorCreateInfo, .{
+    const allocator_ci = c.vma.AllocatorCreateInfo{
         .physicalDevice = self.physical_device.handle,
         .device = self.device.handle,
         .instance = self.instance,
-    });
+    };
     checkVk(c.vma.CreateAllocator(&allocator_ci, &self.vma_allocator)) catch @panic("Failed to create VMA allocator");
 
     // Swapchain creation
@@ -230,7 +233,7 @@ fn initVulkan(self: *Self) void {
     self.createSyncObjects();
     self.createTextureImage();
     self.createTextureSampler();
-    self.createMesh();
+    self.createMeshes();
     self.createUniformBuffers();
     self.createDescriptorPool();
     self.createDescriptorSets();
@@ -311,11 +314,11 @@ fn createShaderModule(self: *Self, code: []const u8) ?vk.ShaderModule {
 
     const data: *const u32 = @ptrCast(@alignCast(code.ptr));
 
-    const shader_module_ci = std.mem.zeroInit(vk.ShaderModuleCreateInfo, .{
+    const shader_module_ci = vk.ShaderModuleCreateInfo{
         .sType = vk.STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = code.len,
         .pCode = data,
-    });
+    };
 
     var shader_module: vk.ShaderModule = undefined;
     checkVk(vk.CreateShaderModule(self.device.handle, &shader_module_ci, vk_alloc_cbs, &shader_module)) catch |err| {
@@ -354,7 +357,7 @@ fn createDescriptorSetLayout(self: *Self) void {
 }
 
 fn createGraphicsPipeline(self: *Self) void {
-    const vertex2D_description = mesh_mod.Vertex2D.vertex_input_description;
+    const vertex3D_description = mesh_mod.Vertex3D.vertex_input_description;
 
     // const vert_shader = root.shaders.createShaderModule("triangle.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
     const vert_shader = root.shaders.createShaderModule("uniform_buffer.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
@@ -379,10 +382,10 @@ fn createGraphicsPipeline(self: *Self) void {
 
     const vertex_input_info = vk.PipelineVertexInputStateCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = @as(u32, @intCast(vertex2D_description.bindings.len)),
-        .pVertexBindingDescriptions = vertex2D_description.bindings.ptr,
-        .vertexAttributeDescriptionCount = @as(u32, @intCast(vertex2D_description.attributes.len)),
-        .pVertexAttributeDescriptions = vertex2D_description.attributes.ptr,
+        .vertexBindingDescriptionCount = @as(u32, @intCast(vertex3D_description.bindings.len)),
+        .pVertexBindingDescriptions = vertex3D_description.bindings.ptr,
+        .vertexAttributeDescriptionCount = @as(u32, @intCast(vertex3D_description.attributes.len)),
+        .pVertexAttributeDescriptions = vertex3D_description.attributes.ptr,
     };
 
     const input_assembly = vk.PipelineInputAssemblyStateCreateInfo{
@@ -481,12 +484,12 @@ fn createCommands(self: *Self) void {
     for (&self.frames) |*frame| {
         checkVk(vk.CreateCommandPool(self.device.handle, &command_pool_ci, vk_alloc_cbs, &frame.command_pool)) catch log.err("Failed to create command pool", .{});
         // Allocate a command buffer from the command pool
-        const command_buffer_ai = std.mem.zeroInit(vk.CommandBufferAllocateInfo, .{
+        const command_buffer_ai = vk.CommandBufferAllocateInfo{
             .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = frame.command_pool,
             .level = vk.COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount = 1,
-        });
+        };
 
         checkVk(vk.AllocateCommandBuffers(self.device.handle, &command_buffer_ai, &frame.main_command_buffer)) catch @panic("Failed to allocate command buffer");
     }
@@ -508,12 +511,12 @@ fn createCommands(self: *Self) void {
         VulkanDeleter.make(self.upload_context.command_pool, vk.DestroyCommandPool, vk_alloc_cbs),
     ) catch @panic("Out of memory");
 
-    const upload_command_buffer_ai = std.mem.zeroInit(vk.CommandBufferAllocateInfo, .{
+    const upload_command_buffer_ai = vk.CommandBufferAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = self.upload_context.command_pool,
         .level = vk.COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
-    });
+    };
 
     checkVk(vk.AllocateCommandBuffers(self.device.handle, &upload_command_buffer_ai, &self.upload_context.command_buffer)) catch @panic("Failed to allocate upload command buffer");
 }
@@ -537,7 +540,7 @@ fn createFramebuffers(self: *Self) void {
 }
 
 fn createTextureImage(self: *Self) void {
-    const lost_empire_image = texs.loadImageFromFile(self.vma_allocator, &self.upload_context, self.device, "assets/lost_empire-RGBA.png") catch @panic("Failed to load image");
+    const lost_empire_image = texs.loadImageFromFile(self.vma_allocator, &self.upload_context, self.device, "assets/test_img.jpg") catch @panic("Failed to load image");
 
     const image_view_ci = vk.ImageViewCreateInfo{
         .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -591,38 +594,78 @@ fn createTextureSampler(self: *Self) void {
     checkVk(vk.CreateSampler(self.device.handle, &ci, null, &self.texture_sampler)) catch @panic("failed to create sampler");
 }
 
-// Creates and binds mesh
-fn createMesh(self: *Self) void {
-    const vertices = [_]mesh_mod.Vertex2D{
+fn createMeshes(self: *Self) void {
+    const vertices_indices = [_]struct { [4]mesh_mod.Vertex3D, [6]u16 }{
         .{
-            .position = Vec2.make(-0.5, -0.5),
-            .color = Vec3.make(1.0, 0.0, 0.0),
-            .tex_coord = Vec2.make(1.0, 0.0),
+            [_]mesh_mod.Vertex3D{
+                .{
+                    .position = Vec3.make(-0.5, -0.5, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 0.0, 0.0),
+                    .uv = Vec2.make(1.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(0.5, -0.5, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 1.0, 0.0),
+                    .uv = Vec2.make(0.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(0.5, 0.5, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 0.0, 1.0),
+                    .uv = Vec2.make(0.0, 1.0),
+                },
+                .{
+                    .position = Vec3.make(-0.5, 0.5, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 1.0, 1.0),
+                    .uv = Vec2.make(1.0, 1.0),
+                },
+            },
+            [_]u16{ 0, 1, 2, 2, 3, 0 },
         },
         .{
-            .position = Vec2.make(0.5, -0.5),
-            .color = Vec3.make(0.0, 1.0, 0.0),
-            .tex_coord = Vec2.make(0.0, 0.0),
-        },
-        .{
-            .position = Vec2.make(0.5, 0.5),
-            .color = Vec3.make(0.0, 0.0, 1.0),
-            .tex_coord = Vec2.make(0.0, 1.0),
-        },
-        .{
-            .position = Vec2.make(-0.5, 0.5),
-            .color = Vec3.make(1.0, 1.0, 1.0),
-            .tex_coord = Vec2.make(1.0, 1.0),
+            [_]mesh_mod.Vertex3D{
+                .{
+                    .position = Vec3.make(-0.5, -0.5, -0.5),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 0.0, 0.0),
+                    .uv = Vec2.make(0.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(0.5, -0.5, -0.5),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 1.0, 0.0),
+                    .uv = Vec2.make(1.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(0.5, 0.5, -0.5),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 0.0, 1.0),
+                    .uv = Vec2.make(1.0, 1.0),
+                },
+                .{
+                    .position = Vec3.make(-0.5, 0.5, -0.5),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 1.0, 1.0),
+                    .uv = Vec2.make(0.0, 1.0),
+                },
+            },
+            [_]u16{ 4, 5, 6, 6, 7, 4 },
         },
     };
-    const indices = [_]u16{ 0, 1, 2, 2, 3, 0 };
 
-    self.mesh = mesh_mod.Mesh2D{
-        .vertices = self.allocator.dupe(mesh_mod.Vertex2D, vertices[0..]) catch @panic("out of memory"),
-        .indices = self.allocator.dupe(u16, indices[0..]) catch @panic("out of memory"),
-    };
+    self.meshes = self.allocator.alloc(mesh_mod.Mesh3D, vertices_indices.len) catch @panic("out of memory");
+    for (vertices_indices, 0..) |vi, i| {
+        var mesh = mesh_mod.Mesh3D{
+            .vertices = self.allocator.dupe(mesh_mod.Vertex3D, vi.@"0"[0..]) catch @panic("out of memory"),
+            .indices = self.allocator.dupe(u16, vi.@"1"[0..]) catch @panic("out of memory"),
+        };
 
-    self.mesh.upload(self.vma_allocator, &self.upload_context, self.device);
+        mesh.upload(self.vma_allocator, &self.upload_context, self.device);
+        self.meshes[i] = mesh;
+    }
 }
 
 fn createUniformBuffers(self: *Self) void {
@@ -747,14 +790,6 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
 
         vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
 
-        const vertex_buffers = &[_]vk.Buffer{self.mesh.vertex_buffer.buffer};
-        const offsets = &[_]u64{0};
-        const first_binding: u32 = 0;
-        const binding_count: u32 = @intCast(vertex_buffers.len);
-        vk.CmdBindVertexBuffers(command_buffer, first_binding, binding_count, vertex_buffers, offsets);
-
-        vk.CmdBindIndexBuffer(command_buffer, self.mesh.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT16);
-
         const viewport = vk.Viewport{
             .x = 0.0,
             .y = 0.0,
@@ -771,9 +806,27 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         };
         vk.CmdSetScissor(command_buffer, 0, 1, &scissor);
 
-        vk.CmdBindDescriptorSets(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline_layout, 0, 1, &self.descriptor_sets[self.current_frame], 0, null);
-        vk.CmdDrawIndexed(command_buffer, @as(u32, @intCast(self.mesh.indices.len)), 1, 0, 0, 0);
-        // vk.CmdDraw(command_buffer, self.mesh.vertices.len, 1, 0, 0);
+        vk.CmdBindDescriptorSets(
+            command_buffer,
+            vk.PIPELINE_BIND_POINT_GRAPHICS,
+            self.pipeline_layout,
+            0,
+            1,
+            &self.descriptor_sets[self.current_frame],
+            0,
+            null,
+        );
+
+        for (0..self.meshes.len) |i| {
+            const mesh = self.meshes[i];
+            const vertex_buffers = &[_]vk.Buffer{mesh.vertex_buffer.buffer};
+            const offsets = &[_]u64{0};
+            const first_binding: u32 = 0;
+            const binding_count: u32 = @intCast(vertex_buffers.len);
+            vk.CmdBindVertexBuffers(command_buffer, first_binding, binding_count, vertex_buffers, offsets);
+            vk.CmdBindIndexBuffer(command_buffer, mesh.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT16);
+            vk.CmdDrawIndexed(command_buffer, @as(u32, @intCast(mesh.indices.len)), 1, 0, 0, 0);
+        }
     }
 
     checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
@@ -806,8 +859,6 @@ fn createSyncObjects(self: *Self) void {
 fn drawFrame(self: *Self) void {
     const current_frame =
         self.frames[self.current_frame];
-    // const frame_fence =
-    //     self.frames[self.current_frame].render_fence;
 
     self.updateUniformBuffer(self.current_frame);
 
@@ -896,6 +947,8 @@ fn drawFrame(self: *Self) void {
     std.debug.assert(self.current_frame < @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)));
 }
 
+/// Not calling this will cause any meshes that require uniform buffer to not be drawn
+/// It is more than just an update function
 fn updateUniformBuffer(self: *Self, current_frame: usize) void {
     const State = struct {
         var start: i128 = 0;
@@ -909,14 +962,16 @@ fn updateUniformBuffer(self: *Self, current_frame: usize) void {
     const now = std.time.nanoTimestamp();
     const delta_ns = now - State.start;
     const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
+
     const fov = 45.0;
     const near_plane = 0.1;
     const far_plane = 10.0;
+
     const aspect =
         @as(f32, @floatFromInt(self.swapchain.extent.width)) /
         @as(f32, @floatFromInt(self.swapchain.extent.height));
     var ubo = root.UniformBufferObject{
-        .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 90.0),
+        .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 1.0),
         .view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0)),
         .proj = Mat4.perspective(fov, aspect, near_plane, far_plane),
     };
@@ -925,5 +980,4 @@ fn updateUniformBuffer(self: *Self, current_frame: usize) void {
 
     const aligned_data: *root.UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[current_frame]));
     aligned_data.* = ubo;
-    // @memcpy(aligned_data, &[_]root.UniformBufferObject{ubo});
 }

@@ -20,7 +20,7 @@ pub const VertexInputDescription = struct {
 pub const Vertex2D = struct {
     position: Vec2,
     color: Vec3,
-    tex_coord: Vec2,
+    uv: Vec2,
 
     pub const vertex_input_description = VertexInputDescription{
         .bindings = &.{c.vk.VertexInputBindingDescription{
@@ -46,7 +46,7 @@ pub const Vertex2D = struct {
                 .binding = 0,
                 .location = 2,
                 .format = c.vk.FORMAT_R32G32_SFLOAT,
-                .offset = @offsetOf(@This(), "tex_coord"),
+                .offset = @offsetOf(@This(), "uv"),
             },
         },
     };
@@ -165,11 +165,11 @@ pub const Vertex3D = struct {
 
     pub const vertex_input_description = VertexInputDescription{
         .bindings = &.{
-            std.mem.zeroInit(c.vk.VertexInputBindingDescription, .{
+            c.vk.VertexInputBindingDescription{
                 .binding = 0,
                 .stride = @sizeOf(Vertex3D),
                 .inputRate = c.vk.VERTEX_INPUT_RATE_VERTEX,
-            }),
+            },
         },
         .attributes = &.{
             std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
@@ -203,6 +203,107 @@ pub const Vertex3D = struct {
 pub const Mesh3D = struct {
     vertices: []Vertex3D,
     vertex_buffer: AllocatedBuffer = undefined,
+    indices: []u16,
+    index_buffer: AllocatedBuffer = undefined,
+
+    pub fn upload(self: *@This(), vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.Device) void {
+        const vert_alloc_size, const idx_alloc_size = .{
+            self.vertices.len * @sizeOf(Vertex3D),
+            self.indices.len * @sizeOf(u16),
+        };
+
+        const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
+            const vert_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+                .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .size = vert_alloc_size,
+                .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
+            });
+            const idx_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+                .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .size = idx_alloc_size,
+                .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
+            });
+
+            const ai = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
+                .usage = c.vma.MEMORY_USAGE_CPU_ONLY,
+            });
+
+            var vert_buf: vma_usage.AllocatedBuffer = undefined;
+            checkVk(c.vma.CreateBuffer(vma_a, &vert_ci, &ai, &vert_buf.buffer, &vert_buf.allocation, null)) catch @panic("Failed to create vertex buffer");
+            var idx_buf: vma_usage.AllocatedBuffer = undefined;
+            checkVk(c.vma.CreateBuffer(vma_a, &idx_ci, &ai, &idx_buf.buffer, &idx_buf.allocation, null)) catch @panic("Failed to create index buffer");
+            break :stage_cpu .{ vert_buf, idx_buf };
+        };
+
+        defer {
+            c.vma.DestroyBuffer(vma_a, vert_staging_buffer.buffer, vert_staging_buffer.allocation);
+            c.vma.DestroyBuffer(vma_a, idx_staging_buffer.buffer, idx_staging_buffer.allocation);
+        }
+
+        // mapping memory
+        {
+            var data: ?*anyopaque = undefined;
+            checkVk(c.vma.MapMemory(vma_a, vert_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
+            defer c.vma.UnmapMemory(vma_a, vert_staging_buffer.allocation);
+
+            const vert_aligned_data: [*]Vertex3D = @ptrCast(@alignCast(data));
+            @memcpy(vert_aligned_data, self.vertices);
+
+            data = undefined;
+            checkVk(c.vma.MapMemory(vma_a, idx_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
+            defer c.vma.UnmapMemory(vma_a, idx_staging_buffer.allocation);
+
+            const idx_aligned_data: [*]u16 = @ptrCast(@alignCast(data));
+            @memcpy(idx_aligned_data, self.indices);
+        }
+
+        // gpu allocation
+        {
+            const vert_ci = vk.BufferCreateInfo{
+                .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .size = vert_alloc_size,
+                .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+            };
+            const idx_ci = vk.BufferCreateInfo{
+                .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .size = idx_alloc_size,
+                .usage = vk.BUFFER_USAGE_INDEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+            };
+
+            const ai = c.vma.AllocationCreateInfo{
+                .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
+            };
+
+            checkVk(c.vma.CreateBuffer(vma_a, &vert_ci, &ai, &self.vertex_buffer.buffer, &self.vertex_buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
+            checkVk(c.vma.CreateBuffer(vma_a, &idx_ci, &ai, &self.index_buffer.buffer, &self.index_buffer.allocation, null)) catch @panic("Failed to create index buffer");
+        }
+
+        const SubmitCtx =
+            struct {
+                mesh_buffer: c.vk.Buffer,
+                staging_buffer: c.vk.Buffer,
+                size: usize,
+
+                pub fn submit(ctx: @This(), cmd: c.vk.CommandBuffer) void {
+                    const copy_region = c.vk.BufferCopy{
+                        .size = ctx.size,
+                    };
+                    c.vk.CmdCopyBuffer(cmd, ctx.staging_buffer, ctx.mesh_buffer, 1, &copy_region);
+                }
+            };
+
+        upload_ctx.immediateSubmit(device, SubmitCtx{
+            .mesh_buffer = self.vertex_buffer.buffer,
+            .staging_buffer = vert_staging_buffer.buffer,
+            .size = vert_alloc_size,
+        });
+
+        upload_ctx.immediateSubmit(device, SubmitCtx{
+            .mesh_buffer = self.index_buffer.buffer,
+            .staging_buffer = idx_staging_buffer.buffer,
+            .size = idx_alloc_size,
+        });
+    }
 };
 
 const obj_loader = @import("obj_loader.zig");
