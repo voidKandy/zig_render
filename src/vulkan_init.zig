@@ -127,135 +127,133 @@ pub const VkiInstanceOpts = struct {
     alloc_cb: ?*vk.AllocationCallbacks = null,
 };
 
-/// Result of a call to create_instance.
 /// Contains the instance and an optional debug messenger, if
 /// VkiInstanceOpts.debug was true and the validation layer was available.
 pub const Instance = struct {
     handle: vk.Instance = null,
     debug_messenger: vk.DebugUtilsMessengerEXT = null,
-};
+    /// Create a vulkan instance and otpional debug functionalities.
+    ///
+    /// # Allocations
+    ///
+    /// Initialization code does not require persistent allocations.
+    /// All the allocation are automatically cleared when the function returns.
+    pub fn create(alloc: Allocator, opts: VkiInstanceOpts) !@This() {
+        // Check the api version is supported
+        if (opts.api_version > vk.MAKE_VERSION(1, 0, 0)) {
+            var api_requested = opts.api_version;
+            try checkVk(vk.EnumerateInstanceVersion(@ptrCast(&api_requested)));
+        }
 
-/// Create a vulkan instance and otpional debug functionalities.
-///
-/// # Allocations
-///
-/// Initialization code does not require persistent allocations.
-/// All the allocation are automatically cleared when the function returns.
-pub fn createInstance(alloc: Allocator, opts: VkiInstanceOpts) !Instance {
-    // Check the api version is supported
-    if (opts.api_version > vk.MAKE_VERSION(1, 0, 0)) {
-        var api_requested = opts.api_version;
-        try checkVk(vk.EnumerateInstanceVersion(@ptrCast(&api_requested)));
-    }
+        var enable_validation = opts.debug;
 
-    var enable_validation = opts.debug;
+        var arena_state = std.heap.ArenaAllocator.init(alloc);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
 
-    var arena_state = std.heap.ArenaAllocator.init(alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+        // Get supported layers and extensions
+        var layer_count: u32 = undefined;
+        try checkVk(vk.EnumerateInstanceLayerProperties(&layer_count, null));
+        const layer_props = try arena.alloc(vk.LayerProperties, layer_count);
+        try checkVk(vk.EnumerateInstanceLayerProperties(&layer_count, layer_props.ptr));
 
-    // Get supported layers and extensions
-    var layer_count: u32 = undefined;
-    try checkVk(vk.EnumerateInstanceLayerProperties(&layer_count, null));
-    const layer_props = try arena.alloc(vk.LayerProperties, layer_count);
-    try checkVk(vk.EnumerateInstanceLayerProperties(&layer_count, layer_props.ptr));
+        var extension_count: u32 = undefined;
+        try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, null));
+        const extension_props = try arena.alloc(vk.ExtensionProperties, extension_count);
+        try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, extension_props.ptr));
 
-    var extension_count: u32 = undefined;
-    try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, null));
-    const extension_props = try arena.alloc(vk.ExtensionProperties, extension_count);
-    try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, extension_props.ptr));
-
-    // Check if the validation layer is supported
-    var layers = std.ArrayListUnmanaged([*c]const u8){};
-    if (enable_validation) {
-        enable_validation = blk: for (layer_props) |layer_prop| {
-            const layer_name: [*c]const u8 = @ptrCast(layer_prop.layerName[0..]);
-            const validation_layer_name: [*c]const u8 = "VK_LAYER_KHRONOS_validation";
-            if (std.mem.eql(u8, std.mem.span(validation_layer_name), std.mem.span(layer_name))) {
-                try layers.append(arena, validation_layer_name);
-                break :blk true;
-            }
-        } else false;
-    }
-
-    // Check if the required extensions are supported
-    var extensions = std.ArrayListUnmanaged([*c]const u8){};
-
-    const ExtensionFinder = struct {
-        fn find(name: [*c]const u8, props: []vk.ExtensionProperties) bool {
-            for (props) |prop| {
-                const prop_name: [*c]const u8 = @ptrCast(prop.extensionName[0..]);
-                if (std.mem.eql(u8, std.mem.span(name), std.mem.span(prop_name))) {
-                    return true;
+        // Check if the validation layer is supported
+        var layers = std.ArrayListUnmanaged([*c]const u8){};
+        if (enable_validation) {
+            enable_validation = blk: for (layer_props) |layer_prop| {
+                const layer_name: [*c]const u8 = @ptrCast(layer_prop.layerName[0..]);
+                const validation_layer_name: [*c]const u8 = "VK_LAYER_KHRONOS_validation";
+                if (std.mem.eql(u8, std.mem.span(validation_layer_name), std.mem.span(layer_name))) {
+                    try layers.append(arena, validation_layer_name);
+                    break :blk true;
                 }
+            } else false;
+        }
+
+        // Check if the required extensions are supported
+        var extensions = std.ArrayListUnmanaged([*c]const u8){};
+
+        const ExtensionFinder = struct {
+            fn find(name: [*c]const u8, props: []vk.ExtensionProperties) bool {
+                for (props) |prop| {
+                    const prop_name: [*c]const u8 = @ptrCast(prop.extensionName[0..]);
+                    if (std.mem.eql(u8, std.mem.span(name), std.mem.span(prop_name))) {
+                        return true;
+                    }
+                }
+                return false;
             }
-            return false;
-        }
-    };
+        };
 
-    // Start ensuring all SDL required extensions are supported
-    for (opts.required_extensions) |required_ext| {
-        if (ExtensionFinder.find(required_ext, extension_props)) {
-            try extensions.append(arena, required_ext);
+        // Start ensuring all SDL required extensions are supported
+        for (opts.required_extensions) |required_ext| {
+            if (ExtensionFinder.find(required_ext, extension_props)) {
+                try extensions.append(arena, required_ext);
+            } else {
+                log.err("Required vulkan extension not supported: {s}", .{required_ext});
+                return error.VulkanExtensionNotSupported;
+            }
+        }
+
+        // Add extensions required to run on Mac with MoltenVK
+        // https://stackoverflow.com/questions/58732459/vk-error-incompatible-driver-with-mac-os-and-vulkan-moltenvk
+        // https://docs.vulkan.org/guide/latest/enabling_extensions.html
+        try extensions.append(arena, vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+        try extensions.append(arena, vk.KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+        // FOR DEVICE!
+        // try extensions.append(arena, vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+
+        // If we need validation, also add the debug utils extension
+        if (enable_validation and ExtensionFinder.find("VK_EXT_debug_utils", extension_props)) {
+            try extensions.append(arena, "VK_EXT_debug_utils");
         } else {
-            log.err("Required vulkan extension not supported: {s}", .{required_ext});
-            return error.VulkanExtensionNotSupported;
+            enable_validation = false;
         }
-    }
 
-    // Add extensions required to run on Mac with MoltenVK
-    // https://stackoverflow.com/questions/58732459/vk-error-incompatible-driver-with-mac-os-and-vulkan-moltenvk
-    // https://docs.vulkan.org/guide/latest/enabling_extensions.html
-    try extensions.append(arena, vk.KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-    try extensions.append(arena, vk.KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-    // FOR DEVICE!
-    // try extensions.append(arena, vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+        const app_info = std.mem.zeroInit(vk.ApplicationInfo, .{
+            .sType = vk.STRUCTURE_TYPE_APPLICATION_INFO,
+            .apiVersion = opts.api_version,
+            .pApplicationName = opts.application_name,
+            .pEngineName = opts.engine_name orelse opts.application_name,
+        });
 
-    // If we need validation, also add the debug utils extension
-    if (enable_validation and ExtensionFinder.find("VK_EXT_debug_utils", extension_props)) {
-        try extensions.append(arena, "VK_EXT_debug_utils");
-    } else {
-        enable_validation = false;
-    }
-
-    const app_info = std.mem.zeroInit(vk.ApplicationInfo, .{
-        .sType = vk.STRUCTURE_TYPE_APPLICATION_INFO,
-        .apiVersion = opts.api_version,
-        .pApplicationName = opts.application_name,
-        .pEngineName = opts.engine_name orelse opts.application_name,
-    });
-
-    log.info(
-        \\ Creating Instance with extensions:
-    , .{});
-    for (extensions.items) |i| {
         log.info(
-            \\ {s}
-        , .{i});
+            \\ Creating Instance with extensions:
+        , .{});
+        for (extensions.items) |i| {
+            log.info(
+                \\ {s}
+            , .{i});
+        }
+
+        const instance_info = std.mem.zeroInit(vk.InstanceCreateInfo, .{
+            .flags = vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+            .sType = vk.STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+            .pApplicationInfo = &app_info,
+            .enabledLayerCount = @as(u32, @intCast(layers.items.len)),
+            .ppEnabledLayerNames = layers.items.ptr,
+            .enabledExtensionCount = @as(u32, @intCast(extensions.items.len)),
+            .ppEnabledExtensionNames = extensions.items.ptr,
+        });
+
+        var instance: vk.Instance = undefined;
+        try checkVk(vk.CreateInstance(&instance_info, opts.alloc_cb, &instance));
+        log.info("Created vulkan instance.", .{});
+
+        // Create the debug messenger if needed
+        const debug_messenger = if (enable_validation)
+            try createDebugCallback(instance, opts)
+        else
+            null;
+
+        return .{ .handle = instance, .debug_messenger = debug_messenger };
     }
-
-    const instance_info = std.mem.zeroInit(vk.InstanceCreateInfo, .{
-        .flags = vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
-        .sType = vk.STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-        .pApplicationInfo = &app_info,
-        .enabledLayerCount = @as(u32, @intCast(layers.items.len)),
-        .ppEnabledLayerNames = layers.items.ptr,
-        .enabledExtensionCount = @as(u32, @intCast(extensions.items.len)),
-        .ppEnabledExtensionNames = extensions.items.ptr,
-    });
-
-    var instance: vk.Instance = undefined;
-    try checkVk(vk.CreateInstance(&instance_info, opts.alloc_cb, &instance));
-    log.info("Created vulkan instance.", .{});
-
-    // Create the debug messenger if needed
-    const debug_messenger = if (enable_validation)
-        try createDebugCallback(instance, opts)
-    else
-        null;
-
-    return .{ .handle = instance, .debug_messenger = debug_messenger };
-}
+};
 
 /// Selection criteria for a physical device.
 ///

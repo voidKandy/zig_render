@@ -29,8 +29,7 @@ vma_allocator: c.vma.Allocator = undefined,
 
 window: *sdl.Window = undefined,
 
-instance: vk.Instance = undefined,
-debug_messenger: vk.DebugUtilsMessengerEXT = undefined,
+instance: vulkan_init.Instance = undefined,
 surface: vk.SurfaceKHR = undefined,
 
 physical_device: vulkan_init.PhysicalDevice = undefined,
@@ -58,8 +57,10 @@ texture: texs.Texture = undefined,
 
 texture_sampler: vk.Sampler = undefined,
 
+depth_image: vma_usage.AllocatedImage = undefined,
+depth_image_view: vk.ImageView = undefined,
+
 // pretty sure this should live in frameData
-// don't need because push constatns?
 uniform_buffers: []vma_usage.AllocatedBuffer = undefined,
 uniform_buffers_mapped: []?*anyopaque = undefined,
 descriptor_pool: vk.DescriptorPool = undefined,
@@ -132,13 +133,13 @@ pub fn deinit(self: *Self) void {
     c.vma.DestroyAllocator(self.vma_allocator);
     vk.DestroyDevice(self.device.handle, vk_alloc_cbs);
 
-    if (self.debug_messenger != null) {
-        const destroy_fn = root.vulkan_init.getDestroyDebugUtilsMessengerFn(self.instance) orelse @panic("Debug messenger present but there is no destroy function?")();
-        destroy_fn(self.instance, self.debug_messenger, vk_alloc_cbs);
+    if (self.instance.debug_messenger != null) {
+        const destroy_fn = root.vulkan_init.getDestroyDebugUtilsMessengerFn(self.instance.handle) orelse @panic("Debug messenger present but there is no destroy function?")();
+        destroy_fn(self.instance.handle, self.instance.debug_messenger, vk_alloc_cbs);
     }
 
-    vk.DestroySurfaceKHR(self.instance, self.surface, vk_alloc_cbs);
-    vk.DestroyInstance(self.instance, vk_alloc_cbs);
+    vk.DestroySurfaceKHR(self.instance.handle, self.surface, vk_alloc_cbs);
+    vk.DestroyInstance(self.instance.handle, vk_alloc_cbs);
 
     sdl.DestroyWindow(self.window);
     sdl.Quit();
@@ -169,14 +170,30 @@ fn initWindow(self: *Self) void {
 }
 
 fn initVulkan(self: *Self) void {
-    self.createInstance();
+    // Instance creation and optional debug utilities
+    var sdl_required_extension_count: u32 = undefined;
+    const sdl_extensions = sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
+    const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
+
+    self.instance = vulkan_init.Instance.create(std.heap.page_allocator, .{
+        .application_name = "VkGuide",
+        .application_version = vk.MAKE_VERSION(0, 1, 0),
+        .engine_name = "VkGuide",
+        .engine_version = vk.MAKE_VERSION(0, 1, 0),
+        .api_version = vk.MAKE_VERSION(1, 1, 0),
+        .debug = true,
+        .required_extensions = sdl_extension_slice,
+    }) catch |err| {
+        log.err("Failed to create vulkan instance with error: {s}", .{@errorName(err)});
+        unreachable;
+    };
 
     // surface creation
-    checkSdl(sdl.Vulkan_CreateSurface(self.window, self.instance, vk_alloc_cbs, &self.surface));
+    checkSdl(sdl.Vulkan_CreateSurface(self.window, self.instance.handle, vk_alloc_cbs, &self.surface));
 
     // Physical device creation
     const required_device_extensions: []const [*c]const u8 = &.{vk.KHR_SWAPCHAIN_EXTENSION_NAME};
-    const physical_device = vulkan_init.selectPhysicalDevice(self.allocator, self.instance, .{
+    const physical_device = vulkan_init.selectPhysicalDevice(self.allocator, self.instance.handle, .{
         .min_api_version = vk.MAKE_VERSION(1, 1, 0),
         .required_extensions = required_device_extensions,
         .surface = self.surface,
@@ -203,7 +220,7 @@ fn initVulkan(self: *Self) void {
     const allocator_ci = c.vma.AllocatorCreateInfo{
         .physicalDevice = self.physical_device.handle,
         .device = self.device.handle,
-        .instance = self.instance,
+        .instance = self.instance.handle,
     };
     checkVk(c.vma.CreateAllocator(&allocator_ci, &self.vma_allocator)) catch @panic("Failed to create VMA allocator");
 
@@ -232,35 +249,13 @@ fn initVulkan(self: *Self) void {
 
     self.createCommands();
     self.createSyncObjects();
+    self.createDepthResources();
     self.createTextureImage();
     self.createTextureSampler();
     self.createMeshes();
     self.createUniformBuffers();
     self.createDescriptorPool();
     self.createDescriptorSets();
-}
-
-fn createInstance(self: *Self) void {
-    var sdl_required_extension_count: u32 = undefined;
-    const sdl_extensions = sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
-    const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
-
-    // Instance creation and optional debug utilities
-    const instance = vulkan_init.createInstance(std.heap.page_allocator, .{
-        .application_name = "VkGuide",
-        .application_version = vk.MAKE_VERSION(0, 1, 0),
-        .engine_name = "VkGuide",
-        .engine_version = vk.MAKE_VERSION(0, 1, 0),
-        .api_version = vk.MAKE_VERSION(1, 1, 0),
-        .debug = true,
-        .required_extensions = sdl_extension_slice,
-    }) catch |err| {
-        log.err("Failed to create vulkan instance with error: {s}", .{@errorName(err)});
-        unreachable;
-    };
-
-    self.instance = instance.handle;
-    self.debug_messenger = instance.debug_messenger;
 }
 
 fn createRenderPass(self: *Self) void {
@@ -546,6 +541,10 @@ fn createFramebuffers(self: *Self) void {
         };
         checkVk(vk.CreateFramebuffer(self.device.handle, &ci, null, &self.swapchain_framebuffers.items[i])) catch @panic("failed to create framebuffer");
     }
+}
+
+fn createDepthResources(self: *Self) void {
+    _ = self;
 }
 
 fn createTextureImage(self: *Self) void {
@@ -1003,39 +1002,4 @@ fn updateUniformBuffer(self: *Self) void {
 
     const aligned_data: *root.UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[self.current_frame]));
     aligned_data.* = ubo;
-}
-
-fn getMeshMatrix(self: *Self, mesh_index: usize) Mat4 {
-    const State = struct {
-        var start: i128 = 0;
-    };
-
-    if (State.start == 0) {
-        State.start = std.time.nanoTimestamp();
-    }
-
-    const now = std.time.nanoTimestamp();
-    const delta_ns = now - State.start;
-    const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
-
-    const fov = 45.0;
-    const near_plane = 0.1;
-    const far_plane = 10.0;
-
-    const aspect =
-        @as(f32, @floatFromInt(self.swapchain.extent.width)) /
-        @as(f32, @floatFromInt(self.swapchain.extent.height));
-
-    // Per-mesh offset
-    const offset = Vec3.make(@as(f32, @floatFromInt(mesh_index)) * 2.0, 0.0, 0.0); // spread meshes along x-axis
-
-    const model = Mat4.IDENTITY
-        .translate(offset) // mesh-specific position
-        .rotate(Vec3.make(0.0, 0.0, 1.0), time * 1.0); // rotation over time
-
-    const view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0));
-    var proj = Mat4.perspective(fov, aspect, near_plane, far_plane);
-    proj.j.y *= -1;
-
-    return proj.mul(view).mul(model);
 }
