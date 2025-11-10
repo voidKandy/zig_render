@@ -59,6 +59,7 @@ texture: texs.Texture = undefined,
 texture_sampler: vk.Sampler = undefined,
 
 // pretty sure this should live in frameData
+// don't need because push constatns?
 uniform_buffers: []vma_usage.AllocatedBuffer = undefined,
 uniform_buffers_mapped: []?*anyopaque = undefined,
 descriptor_pool: vk.DescriptorPool = undefined,
@@ -441,11 +442,19 @@ fn createGraphicsPipeline(self: *Self) void {
         .dynamicStateCount = @as(u32, @intCast(dynamic_states.len)),
         .pDynamicStates = &dynamic_states,
     };
+
+    // const push_constant = vk.PushConstantRange{
+    //     .offset = 0,
+    //     .size = @sizeOf(mesh_mod.Mesh3D.PushConstants),
+    //     .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+    // };
+
     const pipeline_layout_ci = vk.PipelineLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &self.descriptor_set_layout,
-        .pushConstantRangeCount = 0,
+        // .pushConstantRangeCount = 1,
+        // .pPushConstantRanges = &push_constant,
     };
 
     checkVk(vk.CreatePipelineLayout(self.device.handle, &pipeline_layout_ci, null, &self.pipeline_layout)) catch
@@ -652,7 +661,7 @@ fn createMeshes(self: *Self) void {
                     .uv = Vec2.make(0.0, 1.0),
                 },
             },
-            [_]u16{ 4, 5, 6, 6, 7, 4 },
+            [_]u16{ 0, 1, 2, 2, 3, 0 },
         },
     };
 
@@ -702,11 +711,11 @@ fn createDescriptorPool(self: *Self) void {
 }
 
 fn createDescriptorSets(self: *Self) void {
-    const layouts = self.allocator.alloc(vk.DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
-    defer self.allocator.free(layouts);
 
     // i just feel like this could be better
     // basically we need to initialize layouts with copies to self.descriptor_set_layout
+    const layouts = self.allocator.alloc(vk.DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
+    defer self.allocator.free(layouts);
     for (0..layouts.len) |i| {
         layouts[i] = self.descriptor_set_layout;
     }
@@ -818,11 +827,25 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         );
 
         for (0..self.meshes.len) |i| {
+            // const mesh_matrix = self.getMeshMatrix(i);
+            // const constants = mesh_mod.Mesh3D.PushConstants{ .render_matrix = mesh_matrix };
+
+            // //upload the matrix to the GPU via push constants
+            // vk.CmdPushConstants(
+            //     command_buffer,
+            //     self.pipeline_layout,
+            //     vk.SHADER_STAGE_VERTEX_BIT,
+            //     0,
+            //     @sizeOf(mesh_mod.Mesh3D.PushConstants),
+            //     &constants,
+            // );
+
             const mesh = self.meshes[i];
             const vertex_buffers = &[_]vk.Buffer{mesh.vertex_buffer.buffer};
             const offsets = &[_]u64{0};
             const first_binding: u32 = 0;
             const binding_count: u32 = @intCast(vertex_buffers.len);
+
             vk.CmdBindVertexBuffers(command_buffer, first_binding, binding_count, vertex_buffers, offsets);
             vk.CmdBindIndexBuffer(command_buffer, mesh.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT16);
             vk.CmdDrawIndexed(command_buffer, @as(u32, @intCast(mesh.indices.len)), 1, 0, 0, 0);
@@ -860,7 +883,7 @@ fn drawFrame(self: *Self) void {
     const current_frame =
         self.frames[self.current_frame];
 
-    self.updateUniformBuffer(self.current_frame);
+    self.updateUniformBuffer();
 
     const present_semaphore =
         current_frame.present_semaphore;
@@ -949,7 +972,7 @@ fn drawFrame(self: *Self) void {
 
 /// Not calling this will cause any meshes that require uniform buffer to not be drawn
 /// It is more than just an update function
-fn updateUniformBuffer(self: *Self, current_frame: usize) void {
+fn updateUniformBuffer(self: *Self) void {
     const State = struct {
         var start: i128 = 0;
     };
@@ -978,6 +1001,41 @@ fn updateUniformBuffer(self: *Self, current_frame: usize) void {
 
     ubo.proj.j.y *= -1;
 
-    const aligned_data: *root.UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[current_frame]));
+    const aligned_data: *root.UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[self.current_frame]));
     aligned_data.* = ubo;
+}
+
+fn getMeshMatrix(self: *Self, mesh_index: usize) Mat4 {
+    const State = struct {
+        var start: i128 = 0;
+    };
+
+    if (State.start == 0) {
+        State.start = std.time.nanoTimestamp();
+    }
+
+    const now = std.time.nanoTimestamp();
+    const delta_ns = now - State.start;
+    const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
+
+    const fov = 45.0;
+    const near_plane = 0.1;
+    const far_plane = 10.0;
+
+    const aspect =
+        @as(f32, @floatFromInt(self.swapchain.extent.width)) /
+        @as(f32, @floatFromInt(self.swapchain.extent.height));
+
+    // Per-mesh offset
+    const offset = Vec3.make(@as(f32, @floatFromInt(mesh_index)) * 2.0, 0.0, 0.0); // spread meshes along x-axis
+
+    const model = Mat4.IDENTITY
+        .translate(offset) // mesh-specific position
+        .rotate(Vec3.make(0.0, 0.0, 1.0), time * 1.0); // rotation over time
+
+    const view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0));
+    var proj = Mat4.perspective(fov, aspect, near_plane, far_plane);
+    proj.j.y *= -1;
+
+    return proj.mul(view).mul(model);
 }
