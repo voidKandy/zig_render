@@ -9,6 +9,7 @@ const vk = c.vk;
 
 const Vec2 = m3d.Vec2;
 const Vec3 = m3d.Vec3;
+const Vec4 = m3d.Vec4;
 
 pub const VertexInputDescription = struct {
     bindings: []const c.vk.VertexInputBindingDescription,
@@ -58,7 +59,12 @@ pub const Mesh2D = struct {
     indices: []u16,
     index_buffer: AllocatedBuffer = undefined,
 
-    pub fn upload(self: *@This(), vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.Device) void {
+    pub fn upload(
+        self: *@This(),
+        vma_a: c.vma.Allocator,
+        upload_ctx: *root.vulkan_init.UploadContext,
+        device: root.vulkan_init.LogicalDevice,
+    ) void {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex2D),
             self.indices.len * @sizeOf(u16),
@@ -206,7 +212,12 @@ pub const Mesh3D = struct {
     indices: []u16,
     index_buffer: AllocatedBuffer = undefined,
 
-    pub fn upload(self: *@This(), vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.Device) void {
+    pub const PushConstants = struct {
+        data: Vec4 = undefined,
+        render_matrix: m3d.Mat4,
+    };
+
+    pub fn upload(self: *@This(), vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.LogicalDevice) void {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex3D),
             self.indices.len * @sizeOf(u16),

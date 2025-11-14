@@ -12,7 +12,7 @@ pub const Texture = struct {
     image_view: vk.ImageView,
 };
 
-pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadContext, device: vk_init.Device, filepath: []const u8) !vma_usage.AllocatedImage {
+pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadContext, device: vk_init.LogicalDevice, filepath: []const u8) !vma_usage.AllocatedImage {
     var width: c_int = undefined;
     var height: c_int = undefined;
     var channels: c_int = undefined;
@@ -182,4 +182,102 @@ pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadCont
         .image = image,
         .allocation = allocation,
     };
+}
+
+fn hasStencilComponent(format: vk.Format) bool {
+    return format == vk.FORMAT_D32_SFLOAT_S8_UINT or format == vk.FORMAT_D24_UNORM_S8_UINT;
+}
+
+/// Implicitly calls `UploadContext.immediateSubmit`
+pub fn transitionImageLayout(
+    upload_ctx: *vk_init.UploadContext,
+    device: vk_init.LogicalDevice,
+    image: vk.Image,
+    format: vk.Format,
+    old_layout: vk.ImageLayout,
+    new_layout: vk.ImageLayout,
+) void {
+    upload_ctx.immediateSubmit(device, struct {
+        device: vk_init.LogicalDevice,
+        image: vk.Image,
+        format: vk.Format,
+        old_layout: vk.ImageLayout,
+        new_layout: vk.ImageLayout,
+
+        pub fn submit(self: @This(), cmd: vk.CommandBuffer) void {
+            const aspect_mask: vk.ImageAspectFlags = if (self.new_layout == vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                if (hasStencilComponent(self.format))
+                    vk.IMAGE_ASPECT_DEPTH_BIT | vk.IMAGE_ASPECT_STENCIL_BIT
+                else
+                    vk.IMAGE_ASPECT_DEPTH_BIT
+            else
+                vk.IMAGE_ASPECT_COLOR_BIT;
+
+            var barrier = vk.ImageMemoryBarrier{
+                .sType = vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .oldLayout = self.old_layout,
+                .newLayout = self.new_layout,
+                .srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+                .image = self.image,
+                .subresourceRange = .{
+                    .aspectMask = aspect_mask,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+            };
+
+            var source_stage: vk.PipelineStageFlags = undefined;
+            var destination_stage: vk.PipelineStageFlags = undefined;
+
+            if (self.old_layout == vk.IMAGE_LAYOUT_UNDEFINED and self.new_layout == vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = vk.ACCESS_TRANSFER_WRITE_BIT;
+
+                source_stage = vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                destination_stage = vk.PIPELINE_STAGE_TRANSFER_BIT;
+            } else if (self.old_layout == vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL and self.new_layout == vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+                barrier.srcAccessMask = vk.ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = vk.ACCESS_SHADER_READ_BIT;
+
+                source_stage = vk.PIPELINE_STAGE_TRANSFER_BIT;
+                destination_stage = vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            } else if (self.old_layout == vk.IMAGE_LAYOUT_UNDEFINED and self.new_layout == vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask =
+                    vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                    vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+                source_stage = vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                destination_stage = vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+            } else {
+                @panic("unsupported layout transition!");
+            }
+
+            const dep_flags: vk.DependencyFlags = 0;
+            const mem_barriers = &[_]vk.MemoryBarrier{};
+            const buf_mem_barriers = &[_]vk.BufferMemoryBarrier{};
+            const img_mem_barriers = &[_]vk.ImageMemoryBarrier{barrier};
+            vk.CmdPipelineBarrier(
+                cmd,
+                source_stage,
+                destination_stage,
+                dep_flags,
+                mem_barriers.len,
+                mem_barriers,
+                buf_mem_barriers.len,
+                buf_mem_barriers,
+                img_mem_barriers.len,
+                img_mem_barriers,
+            );
+        }
+    }{
+        .device = device,
+        .image = image,
+        .format = format,
+        .old_layout = old_layout,
+        .new_layout = new_layout,
+    });
 }

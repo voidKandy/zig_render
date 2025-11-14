@@ -33,7 +33,7 @@ instance: vulkan_init.Instance = undefined,
 surface: vk.SurfaceKHR = undefined,
 
 physical_device: vulkan_init.PhysicalDevice = undefined,
-device: vulkan_init.Device = undefined,
+logical_device: vulkan_init.LogicalDevice = undefined,
 
 deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
 buffer_deletion_queue: std.ArrayList(vma_usage.VmaBufferDeleter) = undefined,
@@ -57,9 +57,6 @@ texture: texs.Texture = undefined,
 
 texture_sampler: vk.Sampler = undefined,
 
-depth_image: vma_usage.AllocatedImage = undefined,
-depth_image_view: vk.ImageView = undefined,
-
 // pretty sure this should live in frameData
 uniform_buffers: []vma_usage.AllocatedBuffer = undefined,
 uniform_buffers_mapped: []?*anyopaque = undefined,
@@ -76,27 +73,23 @@ pub fn init(a: std.mem.Allocator) Self {
 }
 
 pub fn deinit(self: *Self) void {
-    checkVk(vk.DeviceWaitIdle(self.device.handle)) catch @panic("Failed to wait for device idle");
-    self.swapchain.deinit(self.allocator, self.device.handle, vk_alloc_cbs);
-
-    // not using VMA!! should
-    // vk.DestroyBuffer(self.device.handle, self.vertex_buffer, vk_alloc_cbs);
-    // vk.FreeMemory(self.device.handle, self.vertex_buffer_memory, vk_alloc_cbs);
+    checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
+    self.swapchain.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         c.vma.UnmapMemory(self.vma_allocator, self.uniform_buffers[i].allocation);
         c.vma.DestroyBuffer(self.vma_allocator, self.uniform_buffers[i].buffer, self.uniform_buffers[i].allocation);
-        self.frames[i].deinit(self.device.handle, vk_alloc_cbs);
+        self.frames[i].deinit(self.logical_device.handle, vk_alloc_cbs);
     }
     self.allocator.free(self.uniform_buffers);
     self.allocator.free(self.uniform_buffers_mapped);
 
-    vk.DestroyDescriptorPool(self.device.handle, self.descriptor_pool, vk_alloc_cbs);
-    vk.DestroyDescriptorSetLayout(self.device.handle, self.descriptor_set_layout, vk_alloc_cbs);
-    vk.DestroyPipeline(self.device.handle, self.pipeline, vk_alloc_cbs);
-    vk.DestroyPipelineLayout(self.device.handle, self.pipeline_layout, vk_alloc_cbs);
+    vk.DestroyDescriptorPool(self.logical_device.handle, self.descriptor_pool, vk_alloc_cbs);
+    vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.descriptor_set_layout, vk_alloc_cbs);
+    vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
+    vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
 
-    vk.DestroyRenderPass(self.device.handle, self.render_pass, vk_alloc_cbs);
+    vk.DestroyRenderPass(self.logical_device.handle, self.render_pass, vk_alloc_cbs);
 
     for (self.buffer_deletion_queue.items) |*entry| {
         entry.delete(self.vma_allocator);
@@ -109,16 +102,16 @@ pub fn deinit(self: *Self) void {
     self.image_deletion_queue.deinit(self.allocator);
 
     for (self.deletion_queue.items) |*entry| {
-        entry.delete(self.device.handle);
+        entry.delete(self.logical_device.handle);
     }
     self.deletion_queue.deinit(self.allocator);
 
     self.allocator.free(self.descriptor_sets);
 
-    vk.DestroySampler(self.device.handle, self.texture_sampler, vk_alloc_cbs);
+    vk.DestroySampler(self.logical_device.handle, self.texture_sampler, vk_alloc_cbs);
 
     // texture should have deinit?
-    vk.DestroyImageView(self.device.handle, self.texture.image_view, vk_alloc_cbs);
+    vk.DestroyImageView(self.logical_device.handle, self.texture.image_view, vk_alloc_cbs);
     c.vma.DestroyImage(self.vma_allocator, self.texture.image.image, self.texture.image.allocation);
 
     for (0..self.meshes.len) |i| {
@@ -131,7 +124,7 @@ pub fn deinit(self: *Self) void {
     self.allocator.free(self.meshes);
 
     c.vma.DestroyAllocator(self.vma_allocator);
-    vk.DestroyDevice(self.device.handle, vk_alloc_cbs);
+    vk.DestroyDevice(self.logical_device.handle, vk_alloc_cbs);
 
     if (self.instance.debug_messenger != null) {
         const destroy_fn = self.instance.getDestroyDebugUtilsMessengerFn() orelse @panic("Debug messenger present but there is no destroy function?")();
@@ -160,7 +153,7 @@ pub fn run(self: *Self) void {
         self.drawFrame();
     }
 
-    _ = vk.DeviceWaitIdle(self.device.handle);
+    _ = vk.DeviceWaitIdle(self.logical_device.handle);
 }
 
 fn initWindow(self: *Self) void {
@@ -193,7 +186,7 @@ fn initVulkan(self: *Self) void {
 
     // Physical device creation
     const required_device_extensions: []const [*c]const u8 = &.{vk.KHR_SWAPCHAIN_EXTENSION_NAME};
-    const physical_device = vulkan_init.selectPhysicalDevice(self.allocator, self.instance.handle, .{
+    const physical_device = vulkan_init.PhysicalDevice.select(self.allocator, self.instance.handle, .{
         .min_api_version = vk.MAKE_VERSION(1, 1, 0),
         .required_extensions = required_device_extensions,
         .surface = self.surface,
@@ -206,7 +199,7 @@ fn initVulkan(self: *Self) void {
         .sType = vk.STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
         .shaderDrawParameters = vk.TRUE,
     };
-    const logical_device = vulkan_init.createLogicalDevice(self.allocator, .{
+    const logical_device = vulkan_init.LogicalDevice.create(self.allocator, .{
         .physical_device = self.physical_device,
         .features = vk.PhysicalDeviceFeatures{
             .samplerAnisotropy = vk.TRUE,
@@ -214,12 +207,12 @@ fn initVulkan(self: *Self) void {
         .alloc_cb = vk_alloc_cbs,
         .pnext = &shader_draw_parameters_features,
     }) catch @panic("Failed to create logical device");
-    self.device = logical_device;
+    self.logical_device = logical_device;
 
     // vma allocator
     const allocator_ci = c.vma.AllocatorCreateInfo{
         .physicalDevice = self.physical_device.handle,
-        .device = self.device.handle,
+        .device = self.logical_device.handle,
         .instance = self.instance.handle,
     };
     checkVk(c.vma.CreateAllocator(&allocator_ci, &self.vma_allocator)) catch @panic("Failed to create VMA allocator");
@@ -228,28 +221,31 @@ fn initVulkan(self: *Self) void {
     var win_width: c_int, var win_height: c_int = .{ undefined, undefined };
     checkSdl(c.sdl.GetWindowSize(self.window, &win_width, &win_height));
 
-    self.swapchain = vulkan_init.Swapchain.create(self.allocator, .{
-        .physical_device = self.physical_device.handle,
-        .graphics_queue_family = self.physical_device.graphics_queue_family,
-        .present_queue_family = self.physical_device.present_queue_family,
-        .device = self.device.handle,
+    self.swapchain = vulkan_init.Swapchain.create(self.allocator, self.vma_allocator, .{
+        .physical_device = self.physical_device,
+        .logical_device = self.logical_device.handle,
         .surface = self.surface,
         .old_swapchain = null,
         .vsync = true,
         .window_width = @intCast(win_width),
         .window_height = @intCast(win_height),
         .alloc_cb = vk_alloc_cbs,
+        .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
 
+    self.createSyncObjects();
+    self.createCommands();
     self.createRenderPass();
     self.createDescriptorSetLayout();
     self.createGraphicsPipeline();
 
-    self.swapchain.createFramebuffers(self.allocator, self.device.handle, vk_alloc_cbs, self.render_pass) catch @panic("failed to create framebuffers");
+    self.swapchain.createFramebuffers(
+        self.allocator,
+        self.logical_device.handle,
+        self.render_pass,
+        vk_alloc_cbs,
+    ) catch @panic("failed to create framebuffers");
 
-    self.createCommands();
-    self.createSyncObjects();
-    self.createDepthResources();
     self.createTextureImage();
     self.createTextureSampler();
     self.createMeshes();
@@ -275,32 +271,51 @@ fn createRenderPass(self: *Self) void {
         .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     };
 
+    const depth_attachment = vk.AttachmentDescription{
+        .format = vulkan_init.DepthResource.findDepthFormat(self.physical_device),
+        .samples = vk.SAMPLE_COUNT_1_BIT,
+        .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
+
+    const depth_attachment_ref = vk.AttachmentReference{
+        .attachment = 1,
+        .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
+
     const subpass = vk.SubpassDescription{
         .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
         .colorAttachmentCount = 1,
         .pColorAttachments = &color_attachment_ref,
+        .pDepthStencilAttachment = &depth_attachment_ref,
     };
 
     const dependency = vk.SubpassDependency{
         .srcSubpass = vk.SUBPASS_EXTERNAL,
         .dstSubpass = 0,
-        .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask = 0,
-        .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT | vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
     };
+
+    const all_attachments = &[_]vk.AttachmentDescription{ color_attachment, depth_attachment };
 
     const ci = vk.RenderPassCreateInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = 1,
-        .pAttachments = &color_attachment,
+        .attachmentCount = all_attachments.len,
+        .pAttachments = all_attachments,
         .subpassCount = 1,
         .pSubpasses = &subpass,
         .dependencyCount = 1,
         .pDependencies = &dependency,
     };
 
-    checkVk(vk.CreateRenderPass(self.device.handle, &ci, vk_alloc_cbs, &self.render_pass)) catch @panic("failed to create render pass");
+    checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, vk_alloc_cbs, &self.render_pass)) catch @panic("failed to create render pass");
 }
 
 /// This being a better language than C/C++, means we don´t need to load
@@ -317,7 +332,7 @@ fn createShaderModule(self: *Self, code: []const u8) ?vk.ShaderModule {
     };
 
     var shader_module: vk.ShaderModule = undefined;
-    checkVk(vk.CreateShaderModule(self.device.handle, &shader_module_ci, vk_alloc_cbs, &shader_module)) catch |err| {
+    checkVk(vk.CreateShaderModule(self.logical_device.handle, &shader_module_ci, vk_alloc_cbs, &shader_module)) catch |err| {
         log.err("Failed to create shader module with error: {s}", .{@errorName(err)});
         return null;
     };
@@ -349,17 +364,17 @@ fn createDescriptorSetLayout(self: *Self) void {
         .pBindings = bindings,
     };
 
-    checkVk(vk.CreateDescriptorSetLayout(self.device.handle, &ci, vk_alloc_cbs, &self.descriptor_set_layout)) catch @panic("failed to create descriptor set layout");
+    checkVk(vk.CreateDescriptorSetLayout(self.logical_device.handle, &ci, vk_alloc_cbs, &self.descriptor_set_layout)) catch @panic("failed to create descriptor set layout");
 }
 
 fn createGraphicsPipeline(self: *Self) void {
     const vertex3D_description = mesh_mod.Vertex3D.vertex_input_description;
 
     // const vert_shader = root.shaders.createShaderModule("triangle.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
-    const vert_shader = root.shaders.createShaderModule("uniform_buffer.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
-    defer vk.DestroyShaderModule(self.device.handle, vert_shader, vk_alloc_cbs);
-    const frag_shader = root.shaders.createShaderModule("triangle.frag", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create frag shader module");
-    defer vk.DestroyShaderModule(self.device.handle, frag_shader, vk_alloc_cbs);
+    const vert_shader = root.shaders.createShaderModule("uniform_buffer.vert", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
+    defer vk.DestroyShaderModule(self.logical_device.handle, vert_shader, vk_alloc_cbs);
+    const frag_shader = root.shaders.createShaderModule("triangle.frag", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create frag shader module");
+    defer vk.DestroyShaderModule(self.logical_device.handle, frag_shader, vk_alloc_cbs);
 
     const vert_stage_ci = vk.PipelineShaderStageCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -452,8 +467,20 @@ fn createGraphicsPipeline(self: *Self) void {
         // .pPushConstantRanges = &push_constant,
     };
 
-    checkVk(vk.CreatePipelineLayout(self.device.handle, &pipeline_layout_ci, null, &self.pipeline_layout)) catch
+    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &pipeline_layout_ci, null, &self.pipeline_layout)) catch
         @panic("failed to create pipeline layout");
+
+    const depth_stencil = vk.PipelineDepthStencilStateCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .depthTestEnable = vk.TRUE,
+        .depthWriteEnable = vk.TRUE,
+        .depthCompareOp = vk.COMPARE_OP_LESS,
+        .depthBoundsTestEnable = vk.FALSE,
+        .minDepthBounds = 0.0,
+        .maxDepthBounds = 1.0,
+        .front = .{},
+        .back = .{},
+    };
 
     const pipeline_ci = vk.GraphicsPipelineCreateInfo{
         .sType = vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -465,6 +492,7 @@ fn createGraphicsPipeline(self: *Self) void {
         .pRasterizationState = &rasterizer,
         .pMultisampleState = &multisampling,
         .pColorBlendState = &color_blending,
+        .pDepthStencilState = &depth_stencil,
         .pDynamicState = &dynamic_state,
         .layout = self.pipeline_layout,
         .renderPass = self.render_pass,
@@ -472,7 +500,7 @@ fn createGraphicsPipeline(self: *Self) void {
         .basePipelineHandle = null,
     };
 
-    checkVk(vk.CreateGraphicsPipelines(self.device.handle, null, 1, &pipeline_ci, null, &self.pipeline)) catch
+    checkVk(vk.CreateGraphicsPipelines(self.logical_device.handle, null, 1, &pipeline_ci, null, &self.pipeline)) catch
         @panic("failed to create graphics pipeline");
 }
 
@@ -486,7 +514,7 @@ fn createCommands(self: *Self) void {
     };
 
     for (&self.frames) |*frame| {
-        checkVk(vk.CreateCommandPool(self.device.handle, &command_pool_ci, vk_alloc_cbs, &frame.command_pool)) catch log.err("Failed to create command pool", .{});
+        checkVk(vk.CreateCommandPool(self.logical_device.handle, &command_pool_ci, vk_alloc_cbs, &frame.command_pool)) catch log.err("Failed to create command pool", .{});
         // Allocate a command buffer from the command pool
         const command_buffer_ai = vk.CommandBufferAllocateInfo{
             .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -495,7 +523,7 @@ fn createCommands(self: *Self) void {
             .commandBufferCount = 1,
         };
 
-        checkVk(vk.AllocateCommandBuffers(self.device.handle, &command_buffer_ai, &frame.main_command_buffer)) catch @panic("Failed to allocate command buffer");
+        checkVk(vk.AllocateCommandBuffers(self.logical_device.handle, &command_buffer_ai, &frame.main_command_buffer)) catch @panic("Failed to allocate command buffer");
     }
 
     // =================================
@@ -509,7 +537,7 @@ fn createCommands(self: *Self) void {
         .queueFamilyIndex = self.physical_device.graphics_queue_family,
     };
 
-    checkVk(vk.CreateCommandPool(self.device.handle, &upload_command_pool_ci, vk_alloc_cbs, &self.upload_context.command_pool)) catch @panic("Failed to create upload command pool");
+    checkVk(vk.CreateCommandPool(self.logical_device.handle, &upload_command_pool_ci, vk_alloc_cbs, &self.upload_context.command_pool)) catch @panic("Failed to create upload command pool");
     self.deletion_queue.append(
         self.allocator,
         VulkanDeleter.make(self.upload_context.command_pool, vk.DestroyCommandPool, vk_alloc_cbs),
@@ -522,7 +550,7 @@ fn createCommands(self: *Self) void {
         .commandBufferCount = 1,
     };
 
-    checkVk(vk.AllocateCommandBuffers(self.device.handle, &upload_command_buffer_ai, &self.upload_context.command_buffer)) catch @panic("Failed to allocate upload command buffer");
+    checkVk(vk.AllocateCommandBuffers(self.logical_device.handle, &upload_command_buffer_ai, &self.upload_context.command_buffer)) catch @panic("Failed to allocate upload command buffer");
 }
 
 fn createFramebuffers(self: *Self) void {
@@ -539,21 +567,17 @@ fn createFramebuffers(self: *Self) void {
             .height = self.swapchain_extent.height,
             .layers = 1,
         };
-        checkVk(vk.CreateFramebuffer(self.device.handle, &ci, null, &self.swapchain_framebuffers.items[i])) catch @panic("failed to create framebuffer");
+        checkVk(vk.CreateFramebuffer(self.logical_device.handle, &ci, null, &self.swapchain_framebuffers.items[i])) catch @panic("failed to create framebuffer");
     }
 }
 
-fn createDepthResources(self: *Self) void {
-    _ = self;
-}
-
 fn createTextureImage(self: *Self) void {
-    const lost_empire_image = texs.loadImageFromFile(self.vma_allocator, &self.upload_context, self.device, "assets/test_img.jpg") catch @panic("Failed to load image");
+    const test_img = texs.loadImageFromFile(self.vma_allocator, &self.upload_context, self.logical_device, "assets/test_img.jpg") catch @panic("Failed to load image");
 
     const image_view_ci = vk.ImageViewCreateInfo{
         .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .viewType = vk.IMAGE_VIEW_TYPE_2D,
-        .image = lost_empire_image.image,
+        .image = test_img.image,
         .format = vk.FORMAT_R8G8B8A8_SRGB,
         .components = .{
             .r = vk.COMPONENT_SWIZZLE_IDENTITY,
@@ -571,11 +595,11 @@ fn createTextureImage(self: *Self) void {
     };
 
     var lost_empire = texs.Texture{
-        .image = lost_empire_image,
+        .image = test_img,
         .image_view = null,
     };
 
-    checkVk(vk.CreateImageView(self.device.handle, &image_view_ci, vk_alloc_cbs, &lost_empire.image_view)) catch @panic("Failed to create image view");
+    checkVk(vk.CreateImageView(self.logical_device.handle, &image_view_ci, vk_alloc_cbs, &lost_empire.image_view)) catch @panic("Failed to create image view");
     self.texture = lost_empire;
 }
 
@@ -599,7 +623,7 @@ fn createTextureSampler(self: *Self) void {
         .maxLod = 0.0,
     };
 
-    checkVk(vk.CreateSampler(self.device.handle, &ci, null, &self.texture_sampler)) catch @panic("failed to create sampler");
+    checkVk(vk.CreateSampler(self.logical_device.handle, &ci, null, &self.texture_sampler)) catch @panic("failed to create sampler");
 }
 
 fn createMeshes(self: *Self) void {
@@ -671,7 +695,7 @@ fn createMeshes(self: *Self) void {
             .indices = self.allocator.dupe(u16, vi.@"1"[0..]) catch @panic("out of memory"),
         };
 
-        mesh.upload(self.vma_allocator, &self.upload_context, self.device);
+        mesh.upload(self.vma_allocator, &self.upload_context, self.logical_device);
         self.meshes[i] = mesh;
     }
 }
@@ -706,7 +730,7 @@ fn createDescriptorPool(self: *Self) void {
         .maxSets = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
     };
 
-    checkVk(vk.CreateDescriptorPool(self.device.handle, &ci, vk_alloc_cbs, &self.descriptor_pool)) catch @panic("failed to create descriptor pool");
+    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, vk_alloc_cbs, &self.descriptor_pool)) catch @panic("failed to create descriptor pool");
 }
 
 fn createDescriptorSets(self: *Self) void {
@@ -728,7 +752,7 @@ fn createDescriptorSets(self: *Self) void {
 
     self.descriptor_sets = self.allocator.alloc(vk.DescriptorSet, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
 
-    checkVk(vk.AllocateDescriptorSets(self.device.handle, &ai, self.descriptor_sets.ptr)) catch @panic("failed to allocate descriptor sets");
+    checkVk(vk.AllocateDescriptorSets(self.logical_device.handle, &ai, self.descriptor_sets.ptr)) catch @panic("failed to allocate descriptor sets");
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         const ubo_info = vk.DescriptorBufferInfo{
@@ -765,7 +789,7 @@ fn createDescriptorSets(self: *Self) void {
 
         const writes = &[_]vk.WriteDescriptorSet{ ubo_write, img_write };
 
-        vk.UpdateDescriptorSets(self.device.handle, writes.len, writes, 0, null);
+        vk.UpdateDescriptorSets(self.logical_device.handle, writes.len, writes, 0, null);
     }
 }
 
@@ -785,12 +809,21 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
             .y = 0,
         }, .extent = self.swapchain.extent },
     };
-    const clear_color = vk.ClearValue{
-        .color = .{ .float32 = .{0} ** 4 },
+
+    // should be defined in the same order that attachments are defined in createRenderPass
+    const clear_values = &[_]vk.ClearValue{
+        .{
+            .color = .{
+                .float32 = .{0} ** 4,
+            },
+        },
+        .{
+            .depthStencil = .{ .depth = 1.0, .stencil = 0.0 },
+        },
     };
 
-    render_pass_info.clearValueCount = 1;
-    render_pass_info.pClearValues = &clear_color;
+    render_pass_info.clearValueCount = @as(u32, @intCast(clear_values.len));
+    render_pass_info.pClearValues = clear_values;
 
     {
         vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
@@ -858,7 +891,7 @@ fn createSyncObjects(self: *Self) void {
 
     // Frames
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        self.frames[i].init(self.device.handle, vk_alloc_cbs);
+        self.frames[i].init(self.logical_device.handle, vk_alloc_cbs);
         // checkVk(vk.CreateSemaphore(self.device.handle, &semaphore_ci, null, &self.image_available_semaphores.items[i])) catch
         //     @panic("failed to create image available semaphore");
         // checkVk(vk.CreateFence(self.device.handle, &fence_ci, null, &self.frame_fences.items[i])) catch
@@ -870,7 +903,7 @@ fn createSyncObjects(self: *Self) void {
         .sType = vk.STRUCTURE_TYPE_FENCE_CREATE_INFO,
     };
 
-    checkVk(vk.CreateFence(self.device.handle, &upload_fence_ci, vk_alloc_cbs, &self.upload_context.upload_fence)) catch @panic("Failed to create upload fence");
+    checkVk(vk.CreateFence(self.logical_device.handle, &upload_fence_ci, vk_alloc_cbs, &self.upload_context.upload_fence)) catch @panic("Failed to create upload fence");
 
     self.deletion_queue.append(
         self.allocator,
@@ -887,14 +920,12 @@ fn drawFrame(self: *Self) void {
     const present_semaphore =
         current_frame.present_semaphore;
 
-    checkVk(vk.WaitForFences(self.device.handle, 1, &current_frame.render_fence, vk.TRUE, std.math.maxInt(u64))) catch @panic("failed to wait for current fence");
+    checkVk(vk.WaitForFences(self.logical_device.handle, 1, &current_frame.render_fence, vk.TRUE, std.math.maxInt(u64))) catch @panic("failed to wait for current fence");
 
     const swapchain_recreation_opts =
         vulkan_init.SwapchainCreateOpts{
-            .physical_device = self.physical_device.handle,
-            .graphics_queue_family = self.physical_device.graphics_queue_family,
-            .present_queue_family = self.physical_device.present_queue_family,
-            .device = self.device.handle,
+            .physical_device = self.physical_device,
+            .logical_device = self.logical_device.handle,
             .surface = self.surface,
             .old_swapchain = self.swapchain.handle,
             .vsync = true,
@@ -902,13 +933,22 @@ fn drawFrame(self: *Self) void {
             .window_width = @intCast(window_extent.width),
             .window_height = @intCast(window_extent.height),
             .alloc_cb = vk_alloc_cbs,
+            .depth_buffer = true,
         };
 
     var image_idx: u32 = undefined;
-    checkVk(vk.AcquireNextImageKHR(self.device.handle, self.swapchain.handle, std.math.maxInt(u64), present_semaphore, null, &image_idx)) catch |e|
+    checkVk(vk.AcquireNextImageKHR(self.logical_device.handle, self.swapchain.handle, std.math.maxInt(u64), present_semaphore, null, &image_idx)) catch |e|
         switch (e) {
             VkError.ErrorOutOfDateKHR => {
-                self.swapchain.recreate(self.allocator, swapchain_recreation_opts, self.window, self.render_pass, vk_alloc_cbs);
+                self.swapchain.recreate(
+                    self.allocator,
+                    self.vma_allocator,
+                    swapchain_recreation_opts,
+                    self.window,
+                    self.render_pass,
+                    vk_alloc_cbs,
+                );
+                self.framebuffer_resized = false;
                 return;
             },
             VkError.SuboptimalKHR => {
@@ -923,7 +963,7 @@ fn drawFrame(self: *Self) void {
     const submit_semaphore =
         self.swapchain.render_semaphores[image_idx];
 
-    checkVk(vk.ResetFences(self.device.handle, 1, &current_frame.render_fence)) catch @panic("failed to reset fences");
+    checkVk(vk.ResetFences(self.logical_device.handle, 1, &current_frame.render_fence)) catch @panic("failed to reset fences");
     checkVk(vk.ResetCommandBuffer(current_frame.main_command_buffer, 0)) catch @panic("failed to reset command buffers");
     self.recordCommandBuffers(current_frame.main_command_buffer, image_idx);
 
@@ -942,7 +982,7 @@ fn drawFrame(self: *Self) void {
         .pCommandBuffers = &current_frame.main_command_buffer,
     };
 
-    checkVk(vk.QueueSubmit(self.device.graphics_queue, 1, &submit_info, current_frame.render_fence)) catch @panic("failed to submit draw command buffer");
+    checkVk(vk.QueueSubmit(self.logical_device.graphics_queue, 1, &submit_info, current_frame.render_fence)) catch @panic("failed to submit draw command buffer");
 
     const present_info = vk.PresentInfoKHR{
         .sType = vk.STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -953,13 +993,20 @@ fn drawFrame(self: *Self) void {
         .pImageIndices = &image_idx,
     };
 
-    checkVk(vk.QueuePresentKHR(self.device.present_queue, &present_info)) catch |e| {
+    checkVk(vk.QueuePresentKHR(self.logical_device.present_queue, &present_info)) catch |e| {
         if (e == VkError.ErrorOutOfDateKHR or
             e == VkError.SuboptimalKHR or
             self.framebuffer_resized)
         {
+            self.swapchain.recreate(
+                self.allocator,
+                self.vma_allocator,
+                swapchain_recreation_opts,
+                self.window,
+                self.render_pass,
+                vk_alloc_cbs,
+            );
             self.framebuffer_resized = false;
-            self.swapchain.recreate(self.allocator, swapchain_recreation_opts, self.window, self.render_pass, vk_alloc_cbs);
         } else {
             @panic("failed to present swapchain image");
         }
