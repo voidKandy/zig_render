@@ -75,6 +75,7 @@ pub fn init(a: std.mem.Allocator) Self {
 pub fn deinit(self: *Self) void {
     checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
     self.swapchain.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+    c.cimgui.impl_vulkan.Shutdown();
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         c.vma.UnmapMemory(self.vma_allocator, self.uniform_buffers[i].allocation);
@@ -148,7 +149,16 @@ pub fn run(self: *Self) void {
     while (!quit) {
         while (c.sdl.PollEvent(&event)) {
             if (event.type == c.sdl.EVENT_QUIT) quit = true;
+            _ = c.cimgui.impl_sdl3.ProcessEvent(&event);
         }
+
+        var open = true;
+        // Imgui frame
+        c.cimgui.impl_vulkan.NewFrame();
+        c.cimgui.impl_sdl3.NewFrame();
+        c.cimgui.NewFrame();
+        c.cimgui.ShowDemoWindow(&open);
+        c.cimgui.Render();
 
         self.drawFrame();
     }
@@ -252,6 +262,7 @@ fn initVulkan(self: *Self) void {
     self.createUniformBuffers();
     self.createDescriptorPool();
     self.createDescriptorSets();
+    self.initImgui();
 }
 
 fn createRenderPass(self: *Self) void {
@@ -882,6 +893,8 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
             vk.CmdBindIndexBuffer(command_buffer, mesh.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT16);
             vk.CmdDrawIndexed(command_buffer, @as(u32, @intCast(mesh.indices.len)), 1, 0, 0, 0);
         }
+
+        c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
     }
 
     checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
@@ -1049,4 +1062,87 @@ fn updateUniformBuffer(self: *Self) void {
 
     const aligned_data: *root.UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[self.current_frame]));
     aligned_data.* = ubo;
+}
+
+fn initImgui(self: *Self) void {
+    const pool_sizes = [_]vk.DescriptorPoolSize{
+        .{
+            .type = vk.DESCRIPTOR_TYPE_SAMPLER,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,
+            .descriptorCount = 1000,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+            .descriptorCount = 1000,
+        },
+    };
+
+    const pool_ci = vk.DescriptorPoolCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = 1000,
+        .poolSizeCount = @as(u32, @intCast(pool_sizes.len)),
+        .pPoolSizes = &pool_sizes[0],
+    };
+
+    var imgui_pool: vk.DescriptorPool = undefined;
+    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &pool_ci, vk_alloc_cbs, &imgui_pool)) catch @panic("Failed to create imgui descriptor pool");
+
+    _ = c.cimgui.CreateContext(null);
+    _ = c.cimgui.impl_sdl3.InitForVulkan(self.window);
+
+    var init_info = c.cimgui.impl_vulkan.InitInfo{
+        .Instance = self.instance.handle,
+        .PhysicalDevice = self.physical_device.handle,
+        .Device = self.logical_device.handle,
+        .QueueFamily = self.physical_device.graphics_queue_family,
+        .Queue = self.logical_device.graphics_queue,
+        .DescriptorPool = imgui_pool,
+        .MinImageCount = MAX_FRAMES_IN_FLIGHT,
+        .ImageCount = MAX_FRAMES_IN_FLIGHT,
+        .MSAASamples = vk.SAMPLE_COUNT_1_BIT,
+    };
+
+    _ = c.cimgui.impl_vulkan.Init(&init_info, self.render_pass);
+    _ = c.cimgui.impl_vulkan.CreateFontsTexture();
+
+    self.deletion_queue.append(
+        self.allocator,
+        VulkanDeleter.make(imgui_pool, vk.DestroyDescriptorPool, vk_alloc_cbs),
+    ) catch @panic("Out of memory");
 }

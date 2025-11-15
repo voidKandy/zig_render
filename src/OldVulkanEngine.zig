@@ -327,7 +327,7 @@ fn initSwapchain(self: *Self) void {
         .physical_device = self.physical_device,
         .graphics_queue_family = self.graphics_queue_family,
         .present_queue_family = self.graphics_queue_family,
-        .device = self.device,
+        .logical_device = self.device,
         .surface = self.surface,
         .old_swapchain = null,
         .vsync = true,
