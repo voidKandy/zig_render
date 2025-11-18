@@ -57,11 +57,7 @@ texture: texs.Texture = undefined,
 
 texture_sampler: vk.Sampler = undefined,
 
-// pretty sure this should live in frameData
-uniform_buffers: []vma_usage.AllocatedBuffer = undefined,
-uniform_buffers_mapped: []?*anyopaque = undefined,
 descriptor_pool: vk.DescriptorPool = undefined,
-descriptor_sets: []vk.DescriptorSet = undefined,
 
 pub fn init(a: std.mem.Allocator) Self {
     return .{
@@ -77,13 +73,9 @@ pub fn deinit(self: *Self) void {
     self.swapchain.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
     c.cimgui.impl_vulkan.Shutdown();
 
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        c.vma.UnmapMemory(self.vma_allocator, self.uniform_buffers[i].allocation);
-        c.vma.DestroyBuffer(self.vma_allocator, self.uniform_buffers[i].buffer, self.uniform_buffers[i].allocation);
-        self.frames[i].deinit(self.logical_device.handle, vk_alloc_cbs);
+    for (&self.frames) |*frame| {
+        frame.deinit(self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
     }
-    self.allocator.free(self.uniform_buffers);
-    self.allocator.free(self.uniform_buffers_mapped);
 
     vk.DestroyDescriptorPool(self.logical_device.handle, self.descriptor_pool, vk_alloc_cbs);
     vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.descriptor_set_layout, vk_alloc_cbs);
@@ -106,8 +98,6 @@ pub fn deinit(self: *Self) void {
         entry.delete(self.logical_device.handle);
     }
     self.deletion_queue.deinit(self.allocator);
-
-    self.allocator.free(self.descriptor_sets);
 
     vk.DestroySampler(self.logical_device.handle, self.texture_sampler, vk_alloc_cbs);
 
@@ -517,24 +507,8 @@ fn createGraphicsPipeline(self: *Self) void {
 
 /// creates command pools and buffer per frame in flight & for the singular upload context
 fn createCommands(self: *Self) void {
-    // Create a command pool
-    const command_pool_ci = vk.CommandPoolCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = vk.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = self.physical_device.graphics_queue_family,
-    };
-
     for (&self.frames) |*frame| {
-        checkVk(vk.CreateCommandPool(self.logical_device.handle, &command_pool_ci, vk_alloc_cbs, &frame.command_pool)) catch log.err("Failed to create command pool", .{});
-        // Allocate a command buffer from the command pool
-        const command_buffer_ai = vk.CommandBufferAllocateInfo{
-            .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = frame.command_pool,
-            .level = vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
-        };
-
-        checkVk(vk.AllocateCommandBuffers(self.logical_device.handle, &command_buffer_ai, &frame.main_command_buffer)) catch @panic("Failed to allocate command buffer");
+        frame.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
     }
 
     // =================================
@@ -712,13 +686,8 @@ fn createMeshes(self: *Self) void {
 }
 
 fn createUniformBuffers(self: *Self) void {
-    const buf_size = @sizeOf(root.UniformBufferObject);
-    self.uniform_buffers = self.allocator.alloc(vma_usage.AllocatedBuffer, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
-    self.uniform_buffers_mapped = self.allocator.alloc(?*anyopaque, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
-
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        self.uniform_buffers[i] = vma_usage.AllocatedBuffer.create(self.vma_allocator, buf_size, vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT, c.vma.MEMORY_USAGE_CPU_TO_GPU);
-        checkVk(c.vma.MapMemory(self.vma_allocator, self.uniform_buffers[i].allocation, &self.uniform_buffers_mapped[i])) catch @panic("failed to map uniform buffer");
+    for (&self.frames) |*frame| {
+        frame.initBuffers(self.vma_allocator);
     }
 }
 
@@ -745,62 +714,8 @@ fn createDescriptorPool(self: *Self) void {
 }
 
 fn createDescriptorSets(self: *Self) void {
-
-    // i just feel like this could be better
-    // basically we need to initialize layouts with copies to self.descriptor_set_layout
-    const layouts = self.allocator.alloc(vk.DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
-    defer self.allocator.free(layouts);
-    for (0..layouts.len) |i| {
-        layouts[i] = self.descriptor_set_layout;
-    }
-
-    const ai = vk.DescriptorSetAllocateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = self.descriptor_pool,
-        .descriptorSetCount = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
-        .pSetLayouts = layouts.ptr,
-    };
-
-    self.descriptor_sets = self.allocator.alloc(vk.DescriptorSet, MAX_FRAMES_IN_FLIGHT) catch @panic("out of memory");
-
-    checkVk(vk.AllocateDescriptorSets(self.logical_device.handle, &ai, self.descriptor_sets.ptr)) catch @panic("failed to allocate descriptor sets");
-
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        const ubo_info = vk.DescriptorBufferInfo{
-            .buffer = self.uniform_buffers[i].buffer,
-            .offset = 0,
-            .range = @sizeOf(root.UniformBufferObject),
-        };
-
-        const img_info = vk.DescriptorImageInfo{
-            .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            .imageView = self.texture.image_view,
-            .sampler = self.texture_sampler,
-        };
-
-        const ubo_write = vk.WriteDescriptorSet{
-            .dstBinding = 0,
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = self.descriptor_sets[i],
-            .dstArrayElement = 0,
-            .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .pBufferInfo = &ubo_info,
-        };
-
-        const img_write = vk.WriteDescriptorSet{
-            .dstBinding = 1,
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = self.descriptor_sets[i],
-            .dstArrayElement = 0,
-            .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = 1,
-            .pImageInfo = &img_info,
-        };
-
-        const writes = &[_]vk.WriteDescriptorSet{ ubo_write, img_write };
-
-        vk.UpdateDescriptorSets(self.logical_device.handle, writes.len, writes, 0, null);
+    for (&self.frames) |*frame| {
+        frame.initDescriptorSets(self.logical_device.handle, self.descriptor_pool, self.descriptor_set_layout, self.texture.image_view, self.texture_sampler);
     }
 }
 
@@ -864,7 +779,7 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
             self.pipeline_layout,
             0,
             1,
-            &self.descriptor_sets[self.current_frame],
+            &self.frames[self.current_frame].camera_data_descriptor_set,
             0,
             null,
         );
@@ -903,12 +818,8 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
 fn createSyncObjects(self: *Self) void {
 
     // Frames
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        self.frames[i].init(self.logical_device.handle, vk_alloc_cbs);
-        // checkVk(vk.CreateSemaphore(self.device.handle, &semaphore_ci, null, &self.image_available_semaphores.items[i])) catch
-        //     @panic("failed to create image available semaphore");
-        // checkVk(vk.CreateFence(self.device.handle, &fence_ci, null, &self.frame_fences.items[i])) catch
-        //     @panic("failed to create fence");
+    for (&self.frames) |*frame| {
+        frame.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
     }
 
     // Upload Context
@@ -1052,7 +963,7 @@ fn updateUniformBuffer(self: *Self) void {
     const aspect =
         @as(f32, @floatFromInt(self.swapchain.extent.width)) /
         @as(f32, @floatFromInt(self.swapchain.extent.height));
-    var ubo = root.UniformBufferObject{
+    var ubo = vulkan_init.GPUCameraData{
         .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 1.0),
         .view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0)),
         .proj = Mat4.perspective(fov, aspect, near_plane, far_plane),
@@ -1060,7 +971,7 @@ fn updateUniformBuffer(self: *Self) void {
 
     ubo.proj.j.y *= -1;
 
-    const aligned_data: *root.UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[self.current_frame]));
+    const aligned_data: *vulkan_init.GPUCameraData = @ptrCast(@alignCast(self.frames[self.current_frame].camera_data_mapped));
     aligned_data.* = ubo;
 }
 

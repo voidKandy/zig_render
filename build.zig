@@ -166,6 +166,7 @@ fn compileAllShaders(
     var file_it = shaders_dir.iterate();
     while (file_it.next() catch @panic("Failed to iterate shader directory")) |entry| {
         if (entry.kind == .file) {
+            if (entry.name[0] == '.') continue;
             const ext = std.fs.path.extension(entry.name);
             if (std.mem.eql(u8, ext, ".glsl")) {
                 const basename = std.fs.path.basename(entry.name);
@@ -180,8 +181,6 @@ fn compileAllShaders(
 
 fn addShader(
     b: *std.Build,
-    // exe: *std.Build.Step.Compile,
-
     lib: *std.Build.Module,
     name: []const u8,
 ) void {
