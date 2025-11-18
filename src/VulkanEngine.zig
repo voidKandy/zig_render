@@ -28,21 +28,19 @@ allocator: std.mem.Allocator,
 vma_allocator: c.vma.Allocator = undefined,
 
 window: *sdl.Window = undefined,
-
-instance: vulkan_init.Instance = undefined,
 surface: vk.SurfaceKHR = undefined,
+instance: vulkan_init.Instance = undefined,
 
 physical_device: vulkan_init.PhysicalDevice = undefined,
 logical_device: vulkan_init.LogicalDevice = undefined,
 
-deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
-buffer_deletion_queue: std.ArrayList(vma_usage.VmaBufferDeleter) = undefined,
-image_deletion_queue: std.ArrayList(vma_usage.VmaImageDeleter) = undefined,
-
 swapchain: vulkan_init.Swapchain = undefined,
 framebuffer_resized: bool = false,
 
+imgui_descriptor_pool: vk.DescriptorPool = undefined,
+
 render_pass: vk.RenderPass = undefined,
+descriptor_pool: vk.DescriptorPool = undefined,
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 pipeline: vk.Pipeline = undefined,
@@ -57,14 +55,9 @@ texture: texs.Texture = undefined,
 
 texture_sampler: vk.Sampler = undefined,
 
-descriptor_pool: vk.DescriptorPool = undefined,
-
 pub fn init(a: std.mem.Allocator) Self {
     return .{
         .allocator = a,
-        .deletion_queue = std.ArrayList(VulkanDeleter){},
-        .buffer_deletion_queue = std.ArrayList(vma_usage.VmaBufferDeleter){},
-        .image_deletion_queue = std.ArrayList(vma_usage.VmaImageDeleter){},
     };
 }
 
@@ -77,6 +70,7 @@ pub fn deinit(self: *Self) void {
         frame.deinit(self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
     }
 
+    vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, vk_alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.descriptor_pool, vk_alloc_cbs);
     vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.descriptor_set_layout, vk_alloc_cbs);
     vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
@@ -84,21 +78,7 @@ pub fn deinit(self: *Self) void {
 
     vk.DestroyRenderPass(self.logical_device.handle, self.render_pass, vk_alloc_cbs);
 
-    for (self.buffer_deletion_queue.items) |*entry| {
-        entry.delete(self.vma_allocator);
-    }
-    self.buffer_deletion_queue.deinit(self.allocator);
-
-    for (self.image_deletion_queue.items) |*entry| {
-        entry.delete(self.vma_allocator);
-    }
-    self.image_deletion_queue.deinit(self.allocator);
-
-    for (self.deletion_queue.items) |*entry| {
-        entry.delete(self.logical_device.handle);
-    }
-    self.deletion_queue.deinit(self.allocator);
-
+    self.upload_context.deinit(self.logical_device.handle, vk_alloc_cbs);
     vk.DestroySampler(self.logical_device.handle, self.texture_sampler, vk_alloc_cbs);
 
     // texture should have deinit?
@@ -511,31 +491,7 @@ fn createCommands(self: *Self) void {
         frame.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
     }
 
-    // =================================
-    // Upload context
-    //
-
-    // For the time being this is submitting on the graphics queue
-    const upload_command_pool_ci = vk.CommandPoolCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = 0,
-        .queueFamilyIndex = self.physical_device.graphics_queue_family,
-    };
-
-    checkVk(vk.CreateCommandPool(self.logical_device.handle, &upload_command_pool_ci, vk_alloc_cbs, &self.upload_context.command_pool)) catch @panic("Failed to create upload command pool");
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(self.upload_context.command_pool, vk.DestroyCommandPool, vk_alloc_cbs),
-    ) catch @panic("Out of memory");
-
-    const upload_command_buffer_ai = vk.CommandBufferAllocateInfo{
-        .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = self.upload_context.command_pool,
-        .level = vk.COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-
-    checkVk(vk.AllocateCommandBuffers(self.logical_device.handle, &upload_command_buffer_ai, &self.upload_context.command_buffer)) catch @panic("Failed to allocate upload command buffer");
+    self.upload_context.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
 }
 
 fn createFramebuffers(self: *Self) void {
@@ -816,23 +772,11 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
 }
 
 fn createSyncObjects(self: *Self) void {
-
-    // Frames
     for (&self.frames) |*frame| {
         frame.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
     }
 
-    // Upload Context
-    const upload_fence_ci = vk.FenceCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_FENCE_CREATE_INFO,
-    };
-
-    checkVk(vk.CreateFence(self.logical_device.handle, &upload_fence_ci, vk_alloc_cbs, &self.upload_context.upload_fence)) catch @panic("Failed to create upload fence");
-
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(self.upload_context.upload_fence, vk.DestroyFence, vk_alloc_cbs),
-    ) catch @panic("Out of memory");
+    self.upload_context.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
 }
 
 fn drawFrame(self: *Self) void {
@@ -1031,8 +975,7 @@ fn initImgui(self: *Self) void {
         .pPoolSizes = &pool_sizes[0],
     };
 
-    var imgui_pool: vk.DescriptorPool = undefined;
-    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &pool_ci, vk_alloc_cbs, &imgui_pool)) catch @panic("Failed to create imgui descriptor pool");
+    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &pool_ci, vk_alloc_cbs, &self.imgui_descriptor_pool)) catch @panic("Failed to create imgui descriptor pool");
 
     _ = c.cimgui.CreateContext(null);
     _ = c.cimgui.impl_sdl3.InitForVulkan(self.window);
@@ -1043,7 +986,7 @@ fn initImgui(self: *Self) void {
         .Device = self.logical_device.handle,
         .QueueFamily = self.physical_device.graphics_queue_family,
         .Queue = self.logical_device.graphics_queue,
-        .DescriptorPool = imgui_pool,
+        .DescriptorPool = self.imgui_descriptor_pool,
         .MinImageCount = MAX_FRAMES_IN_FLIGHT,
         .ImageCount = MAX_FRAMES_IN_FLIGHT,
         .MSAASamples = vk.SAMPLE_COUNT_1_BIT,
@@ -1051,9 +994,4 @@ fn initImgui(self: *Self) void {
 
     _ = c.cimgui.impl_vulkan.Init(&init_info, self.render_pass);
     _ = c.cimgui.impl_vulkan.CreateFontsTexture();
-
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(imgui_pool, vk.DestroyDescriptorPool, vk_alloc_cbs),
-    ) catch @panic("Out of memory");
 }

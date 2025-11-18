@@ -12,6 +12,40 @@ pub const UploadContext = struct {
     command_pool: c.vk.CommandPool = null,
     command_buffer: c.vk.CommandBuffer = null,
 
+    const Self = @This();
+
+    pub fn initCommands(self: *Self, device: vk.Device, phys_device: PhysicalDevice, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
+        const upload_command_pool_ci = vk.CommandPoolCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = 0,
+            .queueFamilyIndex = phys_device.graphics_queue_family,
+        };
+
+        checkVk(vk.CreateCommandPool(device, &upload_command_pool_ci, vk_alloc_cbs, &self.command_pool)) catch @panic("Failed to create upload command pool");
+
+        const upload_command_buffer_ai = vk.CommandBufferAllocateInfo{
+            .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = self.command_pool,
+            .level = vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+
+        checkVk(vk.AllocateCommandBuffers(device, &upload_command_buffer_ai, &self.command_buffer)) catch @panic("Failed to allocate upload command buffer");
+    }
+
+    pub fn initSyncObjects(self: *Self, device: vk.Device, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
+        const upload_fence_ci = vk.FenceCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        };
+
+        checkVk(vk.CreateFence(device, &upload_fence_ci, vk_alloc_cbs, &self.upload_fence)) catch @panic("Failed to create upload fence");
+    }
+
+    pub fn deinit(self: *Self, device: vk.Device, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
+        vk.DestroyCommandPool(device, self.command_pool, vk_alloc_cbs);
+        vk.DestroyFence(device, self.upload_fence, vk_alloc_cbs);
+    }
+
     pub fn immediateSubmit(self: *@This(), device: LogicalDevice, submit_ctx: anytype) void {
         // Check the context is good
         comptime {
