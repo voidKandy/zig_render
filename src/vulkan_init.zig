@@ -122,15 +122,25 @@ pub const GPUCameraData = struct {
     proj: Mat4,
 };
 
+pub const BoundDescriptor = struct {
+    data: root.vma_usage.AllocatedBuffer = .{ .buffer = null, .allocation = null },
+    mapped: ?*anyopaque = undefined,
+    descriptor_set: c.vk.DescriptorSet = null,
+
+    const Self = @This();
+
+    fn deinit(self: *Self, vma_a: c.vma.Allocator) void {
+        c.vma.UnmapMemory(vma_a, self.data.allocation);
+        c.vma.DestroyBuffer(vma_a, self.data.buffer, self.data.allocation);
+    }
+};
+
 pub const FrameData = struct {
     present_semaphore: c.vk.Semaphore = null,
     render_fence: c.vk.Fence = null,
     command_pool: c.vk.CommandPool = null,
     main_command_buffer: c.vk.CommandBuffer = null,
-
-    camera_data: root.vma_usage.AllocatedBuffer = .{ .buffer = null, .allocation = null },
-    camera_data_mapped: ?*anyopaque = undefined,
-    camera_data_descriptor_set: c.vk.DescriptorSet = null,
+    camera: BoundDescriptor = .{},
 
     const Self = @This();
 
@@ -138,9 +148,7 @@ pub const FrameData = struct {
         vk.DestroySemaphore(device, self.present_semaphore, vk_alloc_cbs);
         vk.DestroyFence(device, self.render_fence, vk_alloc_cbs);
         vk.DestroyCommandPool(device, self.command_pool, vk_alloc_cbs);
-
-        c.vma.UnmapMemory(vma_a, self.camera_data.allocation);
-        c.vma.DestroyBuffer(vma_a, self.camera_data.buffer, self.camera_data.allocation);
+        self.camera.deinit(vma_a);
     }
 
     pub fn initSyncObjects(self: *Self, device: c.vk.Device, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
@@ -160,13 +168,13 @@ pub const FrameData = struct {
 
     pub fn initBuffers(self: *Self, vma_a: c.vma.Allocator) void {
         const buf_size = @sizeOf(GPUCameraData);
-        self.camera_data = vma_usage.AllocatedBuffer.create(
+        self.camera.data = vma_usage.AllocatedBuffer.create(
             vma_a,
             buf_size,
             vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             c.vma.MEMORY_USAGE_CPU_TO_GPU,
         );
-        checkVk(c.vma.MapMemory(vma_a, self.camera_data.allocation, &self.camera_data_mapped)) catch @panic("failed to map uniform buffer");
+        checkVk(c.vma.MapMemory(vma_a, self.camera.data.allocation, &self.camera.mapped)) catch @panic("failed to map uniform buffer");
     }
 
     pub fn initCommands(self: *Self, device: vk.Device, phys_device: PhysicalDevice, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
@@ -202,10 +210,10 @@ pub const FrameData = struct {
             .descriptorSetCount = 1,
             .pSetLayouts = &layout,
         };
-        checkVk(vk.AllocateDescriptorSets(device, &ai, &self.camera_data_descriptor_set)) catch @panic("failed to allocate descriptor sets");
+        checkVk(vk.AllocateDescriptorSets(device, &ai, &self.camera.descriptor_set)) catch @panic("failed to allocate descriptor sets");
 
         const camera_data_info = vk.DescriptorBufferInfo{
-            .buffer = self.camera_data.buffer,
+            .buffer = self.camera.data.buffer,
             .offset = 0,
             .range = @sizeOf(GPUCameraData),
         };
@@ -213,7 +221,7 @@ pub const FrameData = struct {
         const camera_data_write = vk.WriteDescriptorSet{
             .dstBinding = 0,
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = self.camera_data_descriptor_set,
+            .dstSet = self.camera.descriptor_set,
             .dstArrayElement = 0,
             .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             .descriptorCount = 1,
@@ -229,7 +237,7 @@ pub const FrameData = struct {
         const img_write = vk.WriteDescriptorSet{
             .dstBinding = 1,
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = self.camera_data_descriptor_set,
+            .dstSet = self.camera.descriptor_set,
             .dstArrayElement = 0,
             .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             .descriptorCount = 1,

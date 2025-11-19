@@ -735,7 +735,7 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
             self.pipeline_layout,
             0,
             1,
-            &self.frames[self.current_frame].camera_data_descriptor_set,
+            &self.frames[self.current_frame].camera.descriptor_set,
             0,
             null,
         );
@@ -915,7 +915,7 @@ fn updateUniformBuffer(self: *Self) void {
 
     ubo.proj.j.y *= -1;
 
-    const aligned_data: *vulkan_init.GPUCameraData = @ptrCast(@alignCast(self.frames[self.current_frame].camera_data_mapped));
+    const aligned_data: *vulkan_init.GPUCameraData = @ptrCast(@alignCast(self.frames[self.current_frame].camera.mapped));
     aligned_data.* = ubo;
 }
 

@@ -23,3 +23,7 @@ pub const UniformBufferObject = struct {
     view: math.Mat4,
     proj: math.Mat4,
 };
+
+test {
+    std.testing.refAllDecls(@This());
+}
