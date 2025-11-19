@@ -2,17 +2,18 @@ const std = @import("std");
 const log = std.log.scoped(.vulkan_engine);
 const root = @import("root.zig");
 const texs = @import("textures.zig");
-const vulkan_init = root.vulkan_init;
-const vma_usage = root.vma_usage;
-const mesh_mod = root.mesh;
-const c = root.clibs;
+const vki = @import("vulkan_init.zig");
+const frames_mod = @import("frames.zig");
+const vma_usage = @import("vma_usage.zig");
+const mesh_mod = @import("mesh.zig");
+const c = @import("clibs.zig");
 const vk = c.vk;
-const checkVk = vulkan_init.checkVk;
+const checkVk = vki.checkVk;
 const sdl = c.sdl;
 const checkSdl = root.checkSdl;
-const VkError = root.vulkan_init.VkError;
-const UploadContext = root.vulkan_init.UploadContext;
-const FrameData = root.vulkan_init.FrameData;
+const VkError = vki.VkError;
+const UploadContext = vki.UploadContext;
+const FrameData = frames_mod.FrameData;
 const VulkanDeleter = vma_usage.VulkanDeleter;
 const Vec2 = root.math.Vec2;
 const Vec3 = root.math.Vec3;
@@ -29,12 +30,12 @@ vma_allocator: c.vma.Allocator = undefined,
 
 window: *sdl.Window = undefined,
 surface: vk.SurfaceKHR = undefined,
-instance: vulkan_init.Instance = undefined,
+instance: vki.Instance = undefined,
 
-physical_device: vulkan_init.PhysicalDevice = undefined,
-logical_device: vulkan_init.LogicalDevice = undefined,
+physical_device: vki.PhysicalDevice = undefined,
+logical_device: vki.LogicalDevice = undefined,
 
-swapchain: vulkan_init.Swapchain = undefined,
+swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
@@ -45,7 +46,7 @@ descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 pipeline: vk.Pipeline = undefined,
 
-upload_context: vulkan_init.UploadContext = .{},
+upload_context: vki.UploadContext = .{},
 frames: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT,
 current_frame: u32 = 0,
 
@@ -148,7 +149,7 @@ fn initVulkan(self: *Self) void {
     const sdl_extensions = sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
     const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
 
-    self.instance = vulkan_init.Instance.create(std.heap.page_allocator, .{
+    self.instance = vki.Instance.create(std.heap.page_allocator, .{
         .application_name = "VkGuide",
         .application_version = vk.MAKE_VERSION(0, 1, 0),
         .engine_name = "VkGuide",
@@ -166,7 +167,7 @@ fn initVulkan(self: *Self) void {
 
     // Physical device creation
     const required_device_extensions: []const [*c]const u8 = &.{vk.KHR_SWAPCHAIN_EXTENSION_NAME};
-    const physical_device = vulkan_init.PhysicalDevice.select(self.allocator, self.instance.handle, .{
+    const physical_device = vki.PhysicalDevice.select(self.allocator, self.instance.handle, .{
         .min_api_version = vk.MAKE_VERSION(1, 1, 0),
         .required_extensions = required_device_extensions,
         .surface = self.surface,
@@ -179,7 +180,7 @@ fn initVulkan(self: *Self) void {
         .sType = vk.STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
         .shaderDrawParameters = vk.TRUE,
     };
-    const logical_device = vulkan_init.LogicalDevice.create(self.allocator, .{
+    const logical_device = vki.LogicalDevice.create(self.allocator, .{
         .physical_device = self.physical_device,
         .features = vk.PhysicalDeviceFeatures{
             .samplerAnisotropy = vk.TRUE,
@@ -201,7 +202,7 @@ fn initVulkan(self: *Self) void {
     var win_width: c_int, var win_height: c_int = .{ undefined, undefined };
     checkSdl(c.sdl.GetWindowSize(self.window, &win_width, &win_height));
 
-    self.swapchain = vulkan_init.Swapchain.create(self.allocator, self.vma_allocator, .{
+    self.swapchain = vki.Swapchain.create(self.allocator, self.vma_allocator, .{
         .physical_device = self.physical_device,
         .logical_device = self.logical_device.handle,
         .surface = self.surface,
@@ -253,7 +254,7 @@ fn createRenderPass(self: *Self) void {
     };
 
     const depth_attachment = vk.AttachmentDescription{
-        .format = vulkan_init.DepthResource.findDepthFormat(self.physical_device),
+        .format = vki.DepthResource.findDepthFormat(self.physical_device),
         .samples = vk.SAMPLE_COUNT_1_BIT,
         .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
@@ -791,7 +792,7 @@ fn drawFrame(self: *Self) void {
     checkVk(vk.WaitForFences(self.logical_device.handle, 1, &current_frame.render_fence, vk.TRUE, std.math.maxInt(u64))) catch @panic("failed to wait for current fence");
 
     const swapchain_recreation_opts =
-        vulkan_init.SwapchainCreateOpts{
+        vki.SwapchainCreateOpts{
             .physical_device = self.physical_device,
             .logical_device = self.logical_device.handle,
             .surface = self.surface,
@@ -884,8 +885,7 @@ fn drawFrame(self: *Self) void {
     std.debug.assert(self.current_frame < @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)));
 }
 
-/// Not calling this will cause any meshes that require uniform buffer to not be drawn
-/// It is more than just an update function
+/// If this function isn't called no uniform buffer will be passed to the shader, causing nothing to be drawn
 fn updateUniformBuffer(self: *Self) void {
     const State = struct {
         var start: i128 = 0;
@@ -907,7 +907,7 @@ fn updateUniformBuffer(self: *Self) void {
     const aspect =
         @as(f32, @floatFromInt(self.swapchain.extent.width)) /
         @as(f32, @floatFromInt(self.swapchain.extent.height));
-    var ubo = vulkan_init.GPUCameraData{
+    var ubo = frames_mod.GPUCameraData{
         .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 1.0),
         .view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0)),
         .proj = Mat4.perspective(fov, aspect, near_plane, far_plane),
@@ -915,7 +915,7 @@ fn updateUniformBuffer(self: *Self) void {
 
     ubo.proj.j.y *= -1;
 
-    const aligned_data: *vulkan_init.GPUCameraData = @ptrCast(@alignCast(self.frames[self.current_frame].camera.mapped));
+    const aligned_data: *frames_mod.GPUCameraData = @ptrCast(@alignCast(self.frames[self.current_frame].camera.mapped));
     aligned_data.* = ubo;
 }
 
