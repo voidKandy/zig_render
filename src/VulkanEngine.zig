@@ -42,13 +42,13 @@ imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
 render_pass: vk.RenderPass = undefined,
 descriptor_pool: vk.DescriptorPool = undefined,
-descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+
 pipeline_layout: vk.PipelineLayout = undefined,
 pipeline: vk.Pipeline = undefined,
 
 upload_context: vki.UploadContext = .{},
-frames: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT,
-current_frame: u32 = 0,
+
+frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
 /// eventually these should be string hash maps
 meshes: []mesh_mod.Mesh3D = undefined,
@@ -67,13 +67,9 @@ pub fn deinit(self: *Self) void {
     self.swapchain.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
     c.cimgui.impl_vulkan.Shutdown();
 
-    for (&self.frames) |*frame| {
-        frame.deinit(self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
-    }
-
+    self.frames.deinit(self.logical_device.handle, self.vma_allocator, vk_alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, vk_alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.descriptor_pool, vk_alloc_cbs);
-    vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.descriptor_set_layout, vk_alloc_cbs);
     vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
     vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
 
@@ -214,10 +210,13 @@ fn initVulkan(self: *Self) void {
         .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
 
-    self.createSyncObjects();
-    self.createCommands();
+    self.frames.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
+    self.upload_context.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
+    self.frames.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
+    self.upload_context.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
+
     self.createRenderPass();
-    self.createDescriptorSetLayout();
+    self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
     self.createGraphicsPipeline();
 
     self.swapchain.createFramebuffers(
@@ -230,9 +229,10 @@ fn initVulkan(self: *Self) void {
     self.createTextureImage();
     self.createTextureSampler();
     self.createMeshes();
-    self.createUniformBuffers();
     self.createDescriptorPool();
-    self.createDescriptorSets();
+    self.frames.initBuffers(self.vma_allocator);
+    self.frames.allocateDescriptorSets(self.logical_device.handle, self.descriptor_pool);
+    self.frames.updateDescriptorSets(self.logical_device.handle, self.texture.image_view, self.texture_sampler);
     self.initImgui();
 }
 
@@ -320,33 +320,6 @@ fn createShaderModule(self: *Self, code: []const u8) ?vk.ShaderModule {
     };
 
     return shader_module;
-}
-
-fn createDescriptorSetLayout(self: *Self) void {
-    const ubo_layout_binding = vk.DescriptorSetLayoutBinding{
-        .binding = 0,
-        .descriptorCount = 1,
-        .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-        .pImmutableSamplers = null,
-    };
-    const sampler_layout_binding = vk.DescriptorSetLayoutBinding{
-        .binding = 1,
-        .descriptorCount = 1,
-        .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
-        .pImmutableSamplers = null,
-    };
-
-    const bindings = &[_]vk.DescriptorSetLayoutBinding{ ubo_layout_binding, sampler_layout_binding };
-
-    const ci = vk.DescriptorSetLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = bindings.len,
-        .pBindings = bindings,
-    };
-
-    checkVk(vk.CreateDescriptorSetLayout(self.logical_device.handle, &ci, vk_alloc_cbs, &self.descriptor_set_layout)) catch @panic("failed to create descriptor set layout");
 }
 
 fn createGraphicsPipeline(self: *Self) void {
@@ -444,7 +417,7 @@ fn createGraphicsPipeline(self: *Self) void {
     const pipeline_layout_ci = vk.PipelineLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
-        .pSetLayouts = &self.descriptor_set_layout,
+        .pSetLayouts = &self.frames.global_descriptor_set_layout,
         // .pushConstantRangeCount = 1,
         // .pPushConstantRanges = &push_constant,
     };
@@ -484,33 +457,6 @@ fn createGraphicsPipeline(self: *Self) void {
 
     checkVk(vk.CreateGraphicsPipelines(self.logical_device.handle, null, 1, &pipeline_ci, null, &self.pipeline)) catch
         @panic("failed to create graphics pipeline");
-}
-
-/// creates command pools and buffer per frame in flight & for the singular upload context
-fn createCommands(self: *Self) void {
-    for (&self.frames) |*frame| {
-        frame.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
-    }
-
-    self.upload_context.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
-}
-
-fn createFramebuffers(self: *Self) void {
-    self.swapchain_framebuffers.resize(self.allocator, self.swapchain_image_views.items.len) catch @panic("out of memory");
-
-    for (0..self.swapchain_image_views.items.len) |i| {
-        const attachments = [_]vk.ImageView{self.swapchain_image_views.items[i]};
-        const ci = vk.FramebufferCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-            .renderPass = self.render_pass,
-            .attachmentCount = 1,
-            .pAttachments = &attachments[0],
-            .width = self.swapchain_extent.width,
-            .height = self.swapchain_extent.height,
-            .layers = 1,
-        };
-        checkVk(vk.CreateFramebuffer(self.logical_device.handle, &ci, null, &self.swapchain_framebuffers.items[i])) catch @panic("failed to create framebuffer");
-    }
 }
 
 fn createTextureImage(self: *Self) void {
@@ -642,12 +588,6 @@ fn createMeshes(self: *Self) void {
     }
 }
 
-fn createUniformBuffers(self: *Self) void {
-    for (&self.frames) |*frame| {
-        frame.initBuffers(self.vma_allocator);
-    }
-}
-
 fn createDescriptorPool(self: *Self) void {
     const ubo_size = vk.DescriptorPoolSize{
         .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -668,12 +608,6 @@ fn createDescriptorPool(self: *Self) void {
     };
 
     checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, vk_alloc_cbs, &self.descriptor_pool)) catch @panic("failed to create descriptor pool");
-}
-
-fn createDescriptorSets(self: *Self) void {
-    for (&self.frames) |*frame| {
-        frame.initDescriptorSets(self.logical_device.handle, self.descriptor_pool, self.descriptor_set_layout, self.texture.image_view, self.texture_sampler);
-    }
 }
 
 fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
@@ -736,7 +670,7 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
             self.pipeline_layout,
             0,
             1,
-            &self.frames[self.current_frame].camera.descriptor_set,
+            &self.frames.currentFrame().global.descriptor_set,
             0,
             null,
         );
@@ -772,17 +706,8 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
     checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
 }
 
-fn createSyncObjects(self: *Self) void {
-    for (&self.frames) |*frame| {
-        frame.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
-    }
-
-    self.upload_context.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
-}
-
 fn drawFrame(self: *Self) void {
-    const current_frame =
-        self.frames[self.current_frame];
+    const current_frame = self.frames.currentFrame();
 
     self.updateUniformBuffer();
 
@@ -881,8 +806,7 @@ fn drawFrame(self: *Self) void {
         }
     };
 
-    self.current_frame = (self.current_frame + 1) % @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT));
-    std.debug.assert(self.current_frame < @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)));
+    self.frames.incrementFrame();
 }
 
 /// If this function isn't called no uniform buffer will be passed to the shader, causing nothing to be drawn
@@ -915,7 +839,7 @@ fn updateUniformBuffer(self: *Self) void {
 
     ubo.proj.j.y *= -1;
 
-    const aligned_data: *frames_mod.GPUCameraData = @ptrCast(@alignCast(self.frames[self.current_frame].camera.mapped));
+    const aligned_data: *frames_mod.GPUCameraData = @ptrCast(@alignCast(self.frames.currentFrame().global.mapped));
     aligned_data.* = ubo;
 }
 
