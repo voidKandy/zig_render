@@ -214,9 +214,9 @@ fn initVulkan(self: *Self) void {
     self.upload_context.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
     self.frames.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
     self.upload_context.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
+    self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
 
     self.createRenderPass();
-    self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
     self.createGraphicsPipeline();
 
     self.swapchain.createFramebuffers(
@@ -298,28 +298,6 @@ fn createRenderPass(self: *Self) void {
     };
 
     checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, vk_alloc_cbs, &self.render_pass)) catch @panic("failed to create render pass");
-}
-
-/// This being a better language than C/C++, means we don´t need to load
-/// the SPIR-V code from a file, we can just embed it as an array of bytes.
-fn createShaderModule(self: *Self, code: []const u8) ?vk.ShaderModule {
-    std.debug.assert(code.len % 4 == 0);
-
-    const data: *const u32 = @ptrCast(@alignCast(code.ptr));
-
-    const shader_module_ci = vk.ShaderModuleCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = code.len,
-        .pCode = data,
-    };
-
-    var shader_module: vk.ShaderModule = undefined;
-    checkVk(vk.CreateShaderModule(self.logical_device.handle, &shader_module_ci, vk_alloc_cbs, &shader_module)) catch |err| {
-        log.err("Failed to create shader module with error: {s}", .{@errorName(err)});
-        return null;
-    };
-
-    return shader_module;
 }
 
 fn createGraphicsPipeline(self: *Self) void {
