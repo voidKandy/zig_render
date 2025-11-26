@@ -57,8 +57,7 @@ descriptor_pool: vk.DescriptorPool = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 pipeline: vk.Pipeline = undefined,
 
-gradient_pipeline_layout: vk.PipelineLayout = undefined,
-gradient_pipeline: vk.Pipeline = undefined,
+compute_effect_pipeline_layout: vk.PipelineLayout = undefined,
 
 upload_context: vki.UploadContext = .{},
 
@@ -109,6 +108,7 @@ pub fn deinit(self: *Self) void {
     self.global_descriptor_allocator.deinit(self.logical_device.handle);
     vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.draw_image_descriptor_layout, vk_alloc_cbs);
 
+    vk.DestroyPipelineLayout(self.logical_device.handle, self.compute_effect_pipeline_layout, vk_alloc_cbs);
     for (self.background_effects.items) |*effect| {
         vk.DestroyPipeline(self.logical_device.handle, effect.pipeline, vk_alloc_cbs);
     }
@@ -117,9 +117,6 @@ pub fn deinit(self: *Self) void {
 
     vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
     vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
-
-    vk.DestroyPipeline(self.logical_device.handle, self.gradient_pipeline, vk_alloc_cbs);
-    vk.DestroyPipelineLayout(self.logical_device.handle, self.gradient_pipeline_layout, vk_alloc_cbs);
 
     vk.DestroyRenderPass(self.logical_device.handle, self.render_pass, vk_alloc_cbs);
 
@@ -406,7 +403,7 @@ fn initBackgroundPipelines(self: *Self) void {
         .pushConstantRangeCount = 1,
     };
 
-    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &compute_layout, vk_alloc_cbs, &self.gradient_pipeline_layout)) catch
+    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &compute_layout, vk_alloc_cbs, &self.compute_effect_pipeline_layout)) catch
         @panic("failed to create compute pipeline layout");
 
     const gradient_shader = root.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create compute shader module");
@@ -426,12 +423,12 @@ fn initBackgroundPipelines(self: *Self) void {
         vk.ComputePipelineCreateInfo{
             .sType = vk.STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
             .pNext = null,
-            .layout = self.gradient_pipeline_layout,
+            .layout = self.compute_effect_pipeline_layout,
             .stage = stage_info,
         };
 
     var gradient = ComputeEffect{
-        .layout = self.gradient_pipeline_layout,
+        .layout = self.compute_effect_pipeline_layout,
         .name = "gradient",
         .data = .{
             .data1 = Vec4.make(1.0, 0.0, 0.0, 1.0),
@@ -445,7 +442,7 @@ fn initBackgroundPipelines(self: *Self) void {
     ci.stage.module = sky_shader;
 
     var sky = ComputeEffect{
-        .layout = self.gradient_pipeline_layout,
+        .layout = self.compute_effect_pipeline_layout,
         .name = "sky",
         .data = .{
             .data1 = Vec4.make(0.1, 0.2, 0.4, 0.97),
@@ -1000,7 +997,7 @@ fn drawBackground(self: *Self, cmd: vk.CommandBuffer) void {
     //     .data1 = Vec4.make(1.0, 0.0, 0.0, 1.0),
     //     .data2 = Vec4.make(0.0, 0.0, 1.0, 1.0),
     // };
-    vk.CmdPushConstants(cmd, self.gradient_pipeline_layout, vk.SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(ComputePushConstants), &effect.data);
+    vk.CmdPushConstants(cmd, self.compute_effect_pipeline_layout, vk.SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(ComputePushConstants), &effect.data);
 
     // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
     const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.width)) / 16.0));
