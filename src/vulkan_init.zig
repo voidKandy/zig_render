@@ -7,6 +7,39 @@ const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.vulkan_init);
 const Mat4 = @import("math3d.zig").Mat4;
 
+pub fn renderingInfo(render_extent: vk.Extent2D, color_attachment: ?vk.RenderingAttachmentInfo, depth_attachment: ?vk.RenderingAttachmentInfo) vk.RenderingInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_RENDERING_INFO,
+        .pNext = null,
+
+        .renderArea = vk.Rect2D{
+            .offset = vk.Offset2D{
+                .x = 0,
+                .y = 0,
+            },
+            .extent = render_extent,
+        },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = if (color_attachment) |a| &a else &std.mem.zeroes(vk.RenderingAttachmentInfo),
+        .pDepthAttachment = if (depth_attachment) |a| &a else &std.mem.zeroes(vk.RenderingAttachmentInfo),
+        .pStencilAttachment = null,
+    };
+}
+
+pub fn renderingAttachmentInfo(view: vk.ImageView, clear: ?vk.ClearValue, layout: vk.ImageLayout) vk.RenderingAttachmentInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .pNext = null,
+
+        .imageView = view,
+        .imageLayout = layout,
+        .loadOp = if (clear) |_| vk.ATTACHMENT_LOAD_OP_CLEAR else vk.ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
+        .clearValue = if (clear) |cl| cl else std.mem.zeroes(vk.ClearValue),
+    };
+}
+
 pub fn imageSubresourceRange(aspect_mask: vk.ImageAspectFlags) vk.ImageSubresourceRange {
     return .{
         .aspectMask = aspect_mask,
@@ -783,6 +816,7 @@ pub const Swapchain = struct {
     depth_resource: ?DepthResource = null,
 
     pub fn create(a: Allocator, vma_a: c.vma.Allocator, opts: SwapchainCreateOpts) !@This() {
+        _ = vma_a;
         const support_info = try SwapchainSupportInfo.init(a, opts.physical_device.handle, opts.surface);
         defer support_info.deinit(a);
 
@@ -855,10 +889,10 @@ pub const Swapchain = struct {
             checkVk(c.vk.CreateSemaphore(opts.logical_device, &semaphore_ci, opts.alloc_cb, &semaphores[i])) catch @panic("failed to create semaphore");
         }
 
-        const depth_resource = if (opts.depth_buffer)
-            DepthResource.init(vma_a, opts.physical_device, opts.logical_device, extent, opts.alloc_cb)
-        else
-            null;
+        // const depth_resource = if (opts.depth_buffer)
+        //     DepthResource.init(vma_a, opts.physical_device, opts.logical_device, extent, opts.alloc_cb)
+        // else
+        //     null;
 
         return .{
             .handle = swapchain,
@@ -867,7 +901,7 @@ pub const Swapchain = struct {
             .image_views = swapchain_image_views,
             .format = format,
             .extent = extent,
-            .depth_resource = depth_resource,
+            // .depth_resource = depth_resource,
         };
     }
 

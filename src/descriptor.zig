@@ -21,8 +21,13 @@ pub const Allocator = struct {
         return .{ .allocator = a, .vk_alloc_cbs = vk_alloc_cbs };
     }
 
+    pub fn deinit(self: *Self, device: vk.Device) void {
+        vk.DestroyDescriptorPool(device, self.pool, self.vk_alloc_cbs);
+    }
+
     pub fn initPool(self: *Self, device: vk.Device, max_sets: u32, ratios: []const PoolSizeRatio) void {
         const sizes = self.allocator.alloc(vk.DescriptorPoolSize, ratios.len) catch @panic("out of memory");
+        defer self.allocator.free(sizes);
 
         for (sizes, 0..) |*s, i| {
             s.* = vk.DescriptorPoolSize{ .type = ratios[i].typ, .descriptorCount = @as(u32, @intFromFloat(ratios[i].ratio * @as(f32, @floatFromInt(max_sets)))) };
@@ -30,7 +35,6 @@ pub const Allocator = struct {
 
         const ci = vk.DescriptorPoolCreateInfo{
             .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-
             .flags = 0,
             .maxSets = max_sets,
             .poolSizeCount = @intCast(sizes.len),
@@ -41,9 +45,6 @@ pub const Allocator = struct {
     }
     pub fn clearDescriptors(self: *Self, device: vk.Device) void {
         checkVk(vk.ResetDescriptorPool(device, self.pool, 0)) catch @panic("failed to reset descriptor pool");
-    }
-    pub fn destroyPool(self: *Self, device: vk.Device) void {
-        vk.DestroyDescriptorPool(device, self.device, self.vk_alloc_cbs);
     }
 
     pub fn allocate(self: *Self, device: vk.Device, layout: vk.DescriptorSetLayout) vk.DescriptorSet {
