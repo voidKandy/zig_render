@@ -93,7 +93,7 @@ pub const Vec3 = struct {
     }
 };
 
-pub const Vec4 = struct {
+pub const Vec4 = packed struct {
     x: f32,
     y: f32,
     z: f32,
@@ -115,6 +115,10 @@ pub const Vec4 = struct {
 
     pub inline fn make(x: f32, y: f32, z: f32, w: f32) Self {
         return .{ .x = x, .y = y, .z = z, .w = w };
+    }
+
+    pub fn ptr(self: *Vec4) [*c]f32 {
+        return @as([*]f32, @ptrCast(self));
     }
 
     pub fn add(self: Self, other: Self) Self {

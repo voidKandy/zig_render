@@ -612,6 +612,12 @@ pub const cimgui = struct {
     pub const EndFrame = c.ImGui_EndFrame;
     pub const ShowDemoWindow = c.ImGui_ShowDemoWindow;
     pub const NewFrame = c.ImGui_NewFrame;
+    pub const Begin = c.ImGui_Begin;
+    pub const End = c.ImGui_End;
+    pub const Text = c.ImGui_Text;
+    pub const SliderInt = c.ImGui_SliderInt;
+    pub const InputFloat4 = c.ImGui_InputFloat4;
+    pub const SliderFloat4 = c.ImGui_SliderFloat4;
 
     pub const impl_vulkan = struct {
         pub const Init = c.cImGui_ImplVulkan_Init;
