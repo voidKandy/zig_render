@@ -7,6 +7,27 @@ const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.vulkan_init);
 const Mat4 = @import("math3d.zig").Mat4;
 
+pub fn defaultColorBlendAttachmentState() vk.PipelineColorBlendAttachmentState {
+    return .{
+        .colorWriteMask = vk.COLOR_COMPONENT_R_BIT | vk.COLOR_COMPONENT_G_BIT |
+            vk.COLOR_COMPONENT_B_BIT | vk.COLOR_COMPONENT_A_BIT,
+        .blendEnable = vk.FALSE,
+    };
+}
+
+pub fn pipelineLayoutCreateInfo() vk.PipelineLayoutCreateInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = null,
+
+        .flags = 0,
+        .setLayoutCount = 0,
+        .pSetLayouts = null,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = null,
+    };
+}
+
 pub fn renderingInfo(render_extent: vk.Extent2D, color_attachment: ?vk.RenderingAttachmentInfo, depth_attachment: ?vk.RenderingAttachmentInfo) vk.RenderingInfo {
     return .{
         .sType = vk.STRUCTURE_TYPE_RENDERING_INFO,
@@ -27,7 +48,7 @@ pub fn renderingInfo(render_extent: vk.Extent2D, color_attachment: ?vk.Rendering
     };
 }
 
-pub fn renderingAttachmentInfo(view: vk.ImageView, clear: ?vk.ClearValue, layout: vk.ImageLayout) vk.RenderingAttachmentInfo {
+pub fn colorAttachmentInfo(view: vk.ImageView, clear: ?vk.ClearValue, layout: vk.ImageLayout) vk.RenderingAttachmentInfo {
     return .{
         .sType = vk.STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .pNext = null,
@@ -40,6 +61,20 @@ pub fn renderingAttachmentInfo(view: vk.ImageView, clear: ?vk.ClearValue, layout
     };
 }
 
+pub fn depthAttachmentInfo(view: vk.ImageView, layout: vk.ImageLayout) vk.RenderingAttachmentInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .pNext = null,
+
+        .imageView = view,
+        .imageLayout = layout,
+        .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
+        .clearValue = .{ .depthStencil = .{
+            .depth = 0.0,
+        } },
+    };
+}
 pub fn imageSubresourceRange(aspect_mask: vk.ImageAspectFlags) vk.ImageSubresourceRange {
     return .{
         .aspectMask = aspect_mask,
@@ -82,6 +117,16 @@ pub fn imageViewCreateInfo(format: vk.Format, image: vk.Image, aspect_flags: vk.
             .layerCount = 1,
             .aspectMask = aspect_flags,
         },
+    };
+}
+
+pub fn pipelineShaderStageCreateInfo(stage: vk.ShaderStageFlagBits, shader_module: vk.ShaderModule, entry: [:0]const u8) vk.PipelineShaderStageCreateInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = null,
+        .stage = stage,
+        .module = shader_module,
+        .pName = entry,
     };
 }
 
@@ -810,6 +855,7 @@ pub const Swapchain = struct {
     /// one finish semaphore per swapchain image
     render_semaphores: []c.vk.Semaphore = &.{},
     image_views: []vk.ImageView = &.{},
+    // removed
     framebuffers: []vk.Framebuffer = &.{},
     format: vk.Format = undefined,
     extent: vk.Extent2D = undefined,
@@ -945,12 +991,13 @@ pub const Swapchain = struct {
         const new_swapchain = Swapchain.create(a, vma_a, opts) catch @panic("failed to create swapchain in recreate fn!");
         self.deinit(a, vma_a, opts.logical_device, vk_alloc_cbs);
         self.* = new_swapchain;
-        self.createFramebuffers(
-            a,
-            opts.logical_device,
-            render_pass,
-            opts.alloc_cb,
-        ) catch @panic("Failed to create framebuffers");
+        _ = render_pass;
+        // self.createFramebuffers(
+        //     a,
+        //     opts.logical_device,
+        //     render_pass,
+        //     opts.alloc_cb,
+        // ) catch @panic("Failed to create framebuffers");
     }
 
     pub fn createFramebuffers(

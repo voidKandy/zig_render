@@ -9,6 +9,7 @@ const descriptor = @import("descriptor.zig");
 const vma_usage = @import("vma_usage.zig");
 const mesh_mod = @import("mesh.zig");
 const c = @import("clibs.zig");
+const PipelineBuilder = @import("PipelineBuilder.zig");
 const vk = c.vk;
 const checkVk = vki.checkVk;
 const sdl = c.sdl;
@@ -58,6 +59,9 @@ pipeline_layout: vk.PipelineLayout = undefined,
 pipeline: vk.Pipeline = undefined,
 
 compute_effect_pipeline_layout: vk.PipelineLayout = undefined,
+
+triangle_pipeline_layout: vk.PipelineLayout = undefined,
+triangle_pipeline: vk.Pipeline = undefined,
 
 upload_context: vki.UploadContext = .{},
 
@@ -229,6 +233,9 @@ fn initVulkan(self: *Self) void {
     const required_device_extensions: []const [*c]const u8 = &.{
         vk.KHR_SWAPCHAIN_EXTENSION_NAME,
         vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+        vk.KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
+        vk.KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
         vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
     };
     const physical_device = vki.PhysicalDevice.select(self.allocator, self.instance.handle, .{
@@ -295,12 +302,12 @@ fn initVulkan(self: *Self) void {
     self.createRenderPass();
     self.initPipelines();
 
-    self.swapchain.createFramebuffers(
-        self.allocator,
-        self.logical_device.handle,
-        self.render_pass,
-        vk_alloc_cbs,
-    ) catch @panic("failed to create framebuffers");
+    // self.swapchain.createFramebuffers(
+    //     self.allocator,
+    //     self.logical_device.handle,
+    //     self.render_pass,
+    //     vk_alloc_cbs,
+    // ) catch @panic("failed to create framebuffers");
 
     self.createTextureImage();
     self.createTextureSampler();
@@ -312,8 +319,51 @@ fn initVulkan(self: *Self) void {
     self.initImgui();
 }
 
+fn initTrianglePipeline(self: *Self) void {
+    const vert_shader = root.shaders.createShaderModule("colored_triangle.vert", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
+    defer vk.DestroyShaderModule(self.logical_device.handle, vert_shader, vk_alloc_cbs);
+    const frag_shader = root.shaders.createShaderModule("colored_triangle.frag", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create frag shader module");
+    defer vk.DestroyShaderModule(self.logical_device.handle, frag_shader, vk_alloc_cbs);
+
+    const ci = vki.pipelineLayoutCreateInfo();
+    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &ci, vk_alloc_cbs, &self.triangle_pipeline_layout)) catch
+        @panic("failed to create triangle pipeline layout");
+
+    var builder = PipelineBuilder.init(self.allocator, vk_alloc_cbs);
+    defer builder.deinit();
+
+    builder.layout = self.triangle_pipeline_layout;
+    builder.setShaders(vert_shader, frag_shader);
+    builder.setInputTopology(vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+    builder.viewport = .{
+        .x = 0.0,
+        .y = 0.0,
+        .width = @as(f32, @floatFromInt(self.swapchain.extent.width)),
+        .height = @as(f32, @floatFromInt(self.swapchain.extent.height)),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    };
+
+    builder.scissor = .{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = self.swapchain.extent,
+    };
+
+    builder.setPolygonMode(vk.POLYGON_MODE_FILL);
+    builder.setCullMode(vk.CULL_MODE_NONE, vk.FRONT_FACE_CLOCKWISE);
+    builder.setMultisamplingNone();
+    builder.color_blend_attachment = vki.defaultColorBlendAttachmentState();
+    builder.disableBlending();
+
+    // builder.setColorAttachmentFormat(self.draw_image.format);
+    // builder.setDepthFormat(vk.FORMAT_UNDEFINED);
+
+    self.triangle_pipeline = builder.build(self.logical_device.handle, self.render_pass);
+}
 fn initPipelines(self: *Self) void {
-    self.initGraphicsPipeline();
+    // self.initGraphicsPipeline();
+    self.initTrianglePipeline();
     self.initBackgroundPipelines();
 }
 
@@ -456,14 +506,15 @@ fn initBackgroundPipelines(self: *Self) void {
 
 fn createRenderPass(self: *Self) void {
     const color_attachment = vk.AttachmentDescription{
-        .format = self.swapchain.format,
+        .format = self.draw_image.format,
         .samples = vk.SAMPLE_COUNT_1_BIT,
         .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
         .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
         .initialLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        // .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
     };
 
     const color_attachment_ref = vk.AttachmentReference{
@@ -815,24 +866,53 @@ fn createDescriptorPool(self: *Self) void {
     checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, vk_alloc_cbs, &self.descriptor_pool)) catch @panic("failed to create descriptor pool");
 }
 
-fn drawImgui(self: *Self, cmd: vk.CommandBuffer, target_image_view: vk.ImageView) void {
-    const color_attachment = vki.renderingAttachmentInfo(target_image_view, null, vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    const render_info = vki.renderingInfo(
-        self.swapchain.extent,
-        color_attachment,
-        null,
-    );
-    log.warn("try begin\n", .{});
-    vk.CmdBeginRendering(cmd, &render_info);
+// fn drawImgui(self: *Self, cmd: vk.CommandBuffer, target_image_view: vk.ImageView) void {
+//     const color_attachment = vki.colorAttachmentInfo(target_image_view, null, vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+//     const render_info = vki.renderingInfo(
+//         self.swapchain.extent,
+//         color_attachment,
+//         null,
+//     );
+//     log.warn("try begin\n", .{});
+//     vk.CmdBeginRendering(cmd, &render_info);
 
-    log.warn("try draw\n", .{});
-    c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), cmd);
+//     log.warn("try draw\n", .{});
+//     c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), cmd);
 
-    log.warn("try end\n", .{});
-    vk.CmdEndRendering(cmd);
-}
+//     log.warn("try end\n", .{});
+//     vk.CmdEndRendering(cmd);
+// }
 
 fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
+    const attachments =
+        // &if (self.depth_resource) |r|
+        //     [_]vk.ImageView{ self.draw_image.view, r.view }
+        // else
+        &[_]vk.ImageView{self.draw_image.view};
+    const ci = vk.FramebufferCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = self.render_pass,
+        .attachmentCount = @as(u32, @intCast(attachments.len)),
+        .pAttachments = attachments.ptr,
+        .width = self.draw_image.extent.width,
+        .height = self.draw_image.extent.height,
+        .layers = 1,
+    };
+    var fb: vk.Framebuffer = undefined;
+    checkVk(vk.CreateFramebuffer(self.logical_device.handle, &ci, vk_alloc_cbs, &fb)) catch @panic("failed to create framebuffer");
+    var render_pass_info = vk.RenderPassBeginInfo{
+        .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = self.render_pass,
+        .framebuffer = fb,
+        .renderArea = .{ .offset = .{
+            .x = 0,
+            .y = 0,
+        }, .extent = vk.Extent2D{
+            .height = self.draw_image.extent.height,
+            .width = self.draw_image.extent.width,
+        } },
+    };
+
     var begin_info = vk.CommandBufferBeginInfo{
         .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     };
@@ -852,6 +932,18 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         command_buffer,
         self.draw_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
+        vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    );
+
+    vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
+    self.drawGeometry(command_buffer);
+    c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
+    vk.CmdEndRenderPass(command_buffer);
+
+    util.transitionImageLayout(
+        command_buffer,
+        self.draw_image.image,
+        vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
     );
 
@@ -875,22 +967,18 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
 
     // self.drawImgui(command_buffer, self.swapchain.image_views[image_idx]);
 
+    // util.transitionImageLayout(
+    //     command_buffer,
+    //     self.swapchain.images[image_idx],
+    //     vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    //     vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    // );
     util.transitionImageLayout(
         command_buffer,
         self.swapchain.images[image_idx],
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
     );
-
-    var render_pass_info = vk.RenderPassBeginInfo{
-        .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = self.render_pass,
-        .framebuffer = self.swapchain.framebuffers[image_idx],
-        .renderArea = .{ .offset = .{
-            .x = 0,
-            .y = 0,
-        }, .extent = self.swapchain.extent },
-    };
 
     // should be defined in the same order that attachments are defined in createRenderPass
     // const clear_values = &[_]vk.ClearValue{
@@ -908,26 +996,23 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
     // render_pass_info.pClearValues = clear_values;
 
     {
-        vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
-        defer vk.CmdEndRenderPass(command_buffer);
+        // vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
 
-        vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
+        // const viewport = vk.Viewport{
+        //     .x = 0.0,
+        //     .y = 0.0,
+        //     .width = @floatFromInt(self.swapchain.extent.width),
+        //     .height = @floatFromInt(self.swapchain.extent.height),
+        //     .minDepth = 0.0,
+        //     .maxDepth = 1.0,
+        // };
+        // vk.CmdSetViewport(command_buffer, 0, 1, &viewport);
 
-        const viewport = vk.Viewport{
-            .x = 0.0,
-            .y = 0.0,
-            .width = @floatFromInt(self.swapchain.extent.width),
-            .height = @floatFromInt(self.swapchain.extent.height),
-            .minDepth = 0.0,
-            .maxDepth = 1.0,
-        };
-        vk.CmdSetViewport(command_buffer, 0, 1, &viewport);
-
-        const scissor = vk.Rect2D{
-            .offset = .{ .x = 0, .y = 0 },
-            .extent = self.swapchain.extent,
-        };
-        vk.CmdSetScissor(command_buffer, 0, 1, &scissor);
+        // const scissor = vk.Rect2D{
+        //     .offset = .{ .x = 0, .y = 0 },
+        //     .extent = self.swapchain.extent,
+        // };
+        // vk.CmdSetScissor(command_buffer, 0, 1, &scissor);
 
         // vk.CmdBindDescriptorSets(
         //     command_buffer,
@@ -965,17 +1050,51 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         // vk.CmdDrawIndexed(command_buffer, @as(u32, @intCast(mesh.indices.len)), 1, 0, 0, 0);
         // }
 
-        c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
     }
 
-    // util.transitionImageLayout(
-    //     command_buffer,
-    //     self.swapchain.images[image_idx],
-    //     vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    //     vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
-    // );
-
     checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
+}
+
+fn drawGeometry(self: *Self, cmd: vk.CommandBuffer) void {
+    // vk.CmdBeginRenderPass(cmd, &rpInfo, vk.SUBPASS_CONTENTS_INLINE);
+    //begin a render pass  connected to our draw image
+    // const color_attachment = vki.colorAttachmentInfo(self.draw_image.view, null, vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    // const render_info = vki.renderingInfo(vk.Extent2D{
+    //     .width = self.draw_image.extent.width,
+    //     .height = self.draw_image.extent.height,
+    // }, color_attachment, null);
+
+    // vk.CmdBeginRendering(cmd, &render_info);
+
+    vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
+
+    // //set dynamic viewport and scissor
+    const viewport = vk.Viewport{
+        .x = 0,
+        .y = 0,
+        .width = @as(f32, (@floatFromInt(self.draw_image.extent.width))),
+        .height = @as(f32, (@floatFromInt(self.draw_image.extent.height))),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    };
+    vk.CmdSetViewport(cmd, 0, 1, &viewport);
+
+    const scissor = vk.Rect2D{
+        .offset = .{
+            .x = 0,
+            .y = 0,
+        },
+        .extent = .{
+            .width = self.draw_image.extent.width,
+            .height = self.draw_image.extent.height,
+        },
+    };
+
+    vk.CmdSetScissor(cmd, 0, 1, &scissor);
+
+    vk.CmdDraw(cmd, 3, 1, 0, 0);
+
+    // vk.CmdEndRenderPass(cmd);
 }
 
 fn drawBackground(self: *Self, cmd: vk.CommandBuffer) void {

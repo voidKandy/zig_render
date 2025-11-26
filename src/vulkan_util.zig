@@ -62,27 +62,11 @@ pub fn transitionImageLayout(
     new_layout: vk.ImageLayout,
 ) void {
     const aspect_mask: vk.ImageAspectFlags = if (new_layout == vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) vk.IMAGE_ASPECT_DEPTH_BIT else vk.IMAGE_ASPECT_COLOR_BIT;
-    // const barrier = vk.ImageMemoryBarrier2{
-    //     .sType = vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-    //     .pNext = null,
-
-    //     // NOT OPTIMAL
-    //     // https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples
-    //     .srcStageMask = vk.PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-    //     .srcAccessMask = vk.ACCESS_2_MEMORY_WRITE_BIT,
-    //     // NOT OPTIMAL
-    //     .dstStageMask = vk.PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-    //     .dstAccessMask = vk.ACCESS_2_MEMORY_WRITE_BIT | vk.ACCESS_2_MEMORY_READ_BIT,
-    //     .oldLayout = old_layout,
-    //     .newLayout = new_layout,
-    //     .subresourceRange = vki.imageSubresourceRange(aspect_mask),
-    //     .image = image,
-    // };
 
     const barrier = vk.ImageMemoryBarrier{
         .sType = vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = vk.ACCESS_SHADER_WRITE_BIT,
-        .dstAccessMask = vk.ACCESS_SHADER_WRITE_BIT | vk.ACCESS_SHADER_READ_BIT,
+        .srcAccessMask = vk.ACCESS_MEMORY_WRITE_BIT,
+        .dstAccessMask = vk.ACCESS_MEMORY_WRITE_BIT | vk.ACCESS_MEMORY_READ_BIT,
         .oldLayout = old_layout,
         .newLayout = new_layout,
         .srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
@@ -93,8 +77,10 @@ pub fn transitionImageLayout(
 
     vk.CmdPipelineBarrier(
         cmd,
-        vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        // NOT OPTIMAL
+        // https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
         0,
         0,
         null,
@@ -103,18 +89,4 @@ pub fn transitionImageLayout(
         1,
         &barrier,
     );
-
-    // const dep_info = vk.DependencyInfo{
-    //     .sType = vk.STRUCTURE_TYPE_DEPENDENCY_INFO,
-    //     .pNext = null,
-
-    //     .imageMemoryBarrierCount = 1,
-    //     .pImageMemoryBarriers = &barrier,
-    // };
-
-    // const pVkCmdPipelineBarrier2KHR: vk.PFN_vkVoidFunction = vk.GetDeviceProcAddr(device, "vkCmdPipelineBarrier2KHR");
-    // const ptr: vk.PFN_vkCmdPipelineBarrier2KHR = @ptrCast(pVkCmdPipelineBarrier2KHR.?);
-    // ptr.?(cmd, &dep_info);
-
-    // vk.CmdPipelineBarrier2(cmd, &dep_info);
 }
