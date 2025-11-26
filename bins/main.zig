@@ -13,7 +13,16 @@ pub fn main() void {
     defer if (gpa.deinit() == .leak) {
         @panic("Leaked memory");
     };
-
+    var api_version: u32 = undefined;
+    _ = vk.EnumerateInstanceVersion(&api_version);
+    std.debug.print(
+        "Runtime Vulkan version = {}.{}.{}\n",
+        .{
+            vk.API_VERSION_MAJOR(api_version),
+            vk.API_VERSION_MINOR(api_version),
+            vk.API_VERSION_PATCH(api_version),
+        },
+    );
     var cwd_buff: [1024]u8 = undefined;
     const cwd = std.process.getCwd(cwd_buff[0..]) catch @panic("cwd_buff too small");
     std.log.info("Running from: {s}", .{cwd});

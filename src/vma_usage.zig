@@ -8,16 +8,23 @@ pub const AllocatedBuffer = struct {
     buffer: vk.Buffer,
     allocation: c.vma.Allocation,
 
-    pub fn create(vma_a: c.vma.Allocator, alloc_size: usize, usage: c.vk.BufferUsageFlags, memory_usage: c.vma.MemoryUsage) AllocatedBuffer {
-        const buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+    pub fn create(
+        vma_a: c.vma.Allocator,
+        alloc_size: usize,
+        usage: c.vk.BufferUsageFlags,
+        memory_usage: c.vma.MemoryUsage,
+        flags: c.vma.AllocationCreateFlags,
+    ) AllocatedBuffer {
+        const buffer_ci = c.vk.BufferCreateInfo{
             .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = alloc_size,
             .usage = usage,
-        });
+        };
 
-        const vma_alloc_info = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
+        const vma_alloc_info = c.vma.AllocationCreateInfo{
             .usage = memory_usage,
-        });
+            .requiredFlags = flags,
+        };
 
         var buffer: AllocatedBuffer = undefined;
         checkVk(c.vma.CreateBuffer(vma_a, &buffer_ci, &vma_alloc_info, &buffer.buffer, &buffer.allocation, null)) catch @panic("Failed to create buffer");
@@ -27,8 +34,11 @@ pub const AllocatedBuffer = struct {
 };
 
 pub const AllocatedImage = struct {
-    image: vk.Image,
     allocation: c.vma.Allocation,
+    image: vk.Image,
+    view: vk.ImageView,
+    extent: vk.Extent3D,
+    format: vk.Format,
 };
 
 pub fn findMemoryType(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) u32 {
@@ -51,6 +61,12 @@ pub const VulkanDeleter = struct {
 
     pub fn delete(self: *VulkanDeleter, device: vk.Device) void {
         self.deleteFn(self, device, self.callbacks);
+    }
+
+    pub fn flushList(list: std.ArrayList(@This()), device: vk.Device) void {
+        for (list.items) |*entry| {
+            entry.delete(device);
+        }
     }
 
     pub fn make(
@@ -92,12 +108,30 @@ pub const VmaBufferDeleter = struct {
     pub fn delete(self: *VmaBufferDeleter, allocator: c.vma.Allocator) void {
         c.vma.DestroyBuffer(allocator, self.buffer.buffer, self.buffer.allocation);
     }
+
+    pub fn flushList(list: std.ArrayList(@This()), vma_a: c.vma.Allocator) void {
+        for (list.items) |*entry| {
+            entry.delete(vma_a);
+        }
+    }
 };
 
 pub const VmaImageDeleter = struct {
     image: AllocatedImage,
+    callbacks: ?*vk.AllocationCallbacks,
 
-    pub fn delete(self: *VmaImageDeleter, allocator: c.vma.Allocator) void {
+    pub fn delete(
+        self: *VmaImageDeleter,
+        allocator: c.vma.Allocator,
+        device: vk.Device,
+    ) void {
         c.vma.DestroyImage(allocator, self.image.image, self.image.allocation);
+        vk.DestroyImageView(device, self.image.view, self.callbacks);
+    }
+
+    pub fn flushList(list: std.ArrayList(@This()), vma_a: c.vma.Allocator, device: vk.Device) void {
+        for (list.items) |*entry| {
+            entry.delete(vma_a, device);
+        }
     }
 };
