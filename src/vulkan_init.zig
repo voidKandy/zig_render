@@ -991,13 +991,12 @@ pub const Swapchain = struct {
         const new_swapchain = Swapchain.create(a, vma_a, opts) catch @panic("failed to create swapchain in recreate fn!");
         self.deinit(a, vma_a, opts.logical_device, vk_alloc_cbs);
         self.* = new_swapchain;
-        _ = render_pass;
-        // self.createFramebuffers(
-        //     a,
-        //     opts.logical_device,
-        //     render_pass,
-        //     opts.alloc_cb,
-        // ) catch @panic("Failed to create framebuffers");
+        self.createFramebuffers(
+            a,
+            opts.logical_device,
+            render_pass,
+            opts.alloc_cb,
+        ) catch @panic("Failed to create framebuffers");
     }
 
     pub fn createFramebuffers(
@@ -1095,7 +1094,10 @@ const SwapchainSupportInfo = struct {
         // TODO: Add support for specifying desired format.
         _ = opts;
         for (self.formats) |format| {
-            if (format.format == vk.FORMAT_B8G8R8A8_SRGB and
+            if (format.format ==
+                vk.FORMAT_R16G16B16A16_SFLOAT
+                    // vk.FORMAT_B8G8R8A8_SRGB
+            and
                 format.colorSpace == vk.COLOR_SPACE_SRGB_NONLINEAR_KHR)
             {
                 return format.format;

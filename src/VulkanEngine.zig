@@ -302,12 +302,12 @@ fn initVulkan(self: *Self) void {
     self.createRenderPass();
     self.initPipelines();
 
-    // self.swapchain.createFramebuffers(
-    //     self.allocator,
-    //     self.logical_device.handle,
-    //     self.render_pass,
-    //     vk_alloc_cbs,
-    // ) catch @panic("failed to create framebuffers");
+    self.swapchain.createFramebuffers(
+        self.allocator,
+        self.logical_device.handle,
+        self.render_pass,
+        vk_alloc_cbs,
+    ) catch @panic("failed to create framebuffers");
 
     self.createTextureImage();
     self.createTextureSampler();
@@ -884,26 +884,10 @@ fn createDescriptorPool(self: *Self) void {
 // }
 
 fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
-    const attachments =
-        // &if (self.depth_resource) |r|
-        //     [_]vk.ImageView{ self.draw_image.view, r.view }
-        // else
-        &[_]vk.ImageView{self.draw_image.view};
-    const ci = vk.FramebufferCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-        .renderPass = self.render_pass,
-        .attachmentCount = @as(u32, @intCast(attachments.len)),
-        .pAttachments = attachments.ptr,
-        .width = self.draw_image.extent.width,
-        .height = self.draw_image.extent.height,
-        .layers = 1,
-    };
-    var fb: vk.Framebuffer = undefined;
-    checkVk(vk.CreateFramebuffer(self.logical_device.handle, &ci, vk_alloc_cbs, &fb)) catch @panic("failed to create framebuffer");
     var render_pass_info = vk.RenderPassBeginInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = self.render_pass,
-        .framebuffer = fb,
+        .framebuffer = self.swapchain.framebuffers[image_idx],
         .renderArea = .{ .offset = .{
             .x = 0,
             .y = 0,
