@@ -943,24 +943,12 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
 
         // vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
         self.drawGeometry(command_buffer);
-        // c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
+        c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
     }
 }
 
 fn drawGeometry(self: *Self, cmd: vk.CommandBuffer) void {
-    // vk.CmdBeginRenderPass(cmd, &rpInfo, vk.SUBPASS_CONTENTS_INLINE);
-    //begin a render pass  connected to our draw image
-    // const color_attachment = vki.colorAttachmentInfo(self.draw_image.view, null, vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    // const render_info = vki.renderingInfo(vk.Extent2D{
-    //     .width = self.draw_image.extent.width,
-    //     .height = self.draw_image.extent.height,
-    // }, color_attachment, null);
-
-    // vk.CmdBeginRendering(cmd, &render_info);
-
     vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
-
-    // //set dynamic viewport and scissor
     const viewport = vk.Viewport{
         .x = 0,
         .y = 0,
@@ -985,8 +973,6 @@ fn drawGeometry(self: *Self, cmd: vk.CommandBuffer) void {
     vk.CmdSetScissor(cmd, 0, 1, &scissor);
 
     vk.CmdDraw(cmd, 3, 1, 0, 0);
-
-    // vk.CmdEndRenderPass(cmd);
 }
 
 fn drawBackground(self: *Self, cmd: vk.CommandBuffer) void {
