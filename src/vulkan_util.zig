@@ -55,18 +55,21 @@ pub fn copyImageToImage(cmd: vk.CommandBuffer, source: vk.Image, destination: vk
     );
 }
 
+/// THis is not good enough, src & dst masks are bad
 pub fn transitionImageLayout(
     cmd: vk.CommandBuffer,
     image: vk.Image,
     old_layout: vk.ImageLayout,
     new_layout: vk.ImageLayout,
+    src_access_mask: vk.AccessFlags,
+    dst_access_mask: vk.AccessFlags,
 ) void {
     const aspect_mask: vk.ImageAspectFlags = if (new_layout == vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) vk.IMAGE_ASPECT_DEPTH_BIT else vk.IMAGE_ASPECT_COLOR_BIT;
 
     const barrier = vk.ImageMemoryBarrier{
         .sType = vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = vk.ACCESS_MEMORY_WRITE_BIT,
-        .dstAccessMask = vk.ACCESS_MEMORY_WRITE_BIT | vk.ACCESS_MEMORY_READ_BIT,
+        .srcAccessMask = src_access_mask,
+        .dstAccessMask = dst_access_mask,
         .oldLayout = old_layout,
         .newLayout = new_layout,
         .srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,

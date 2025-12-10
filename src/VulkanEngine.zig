@@ -119,7 +119,10 @@ pub fn deinit(self: *Self) void {
 
     self.background_effects.deinit(self.allocator);
 
-    vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
+    vk.DestroyPipeline(self.logical_device.handle, self.triangle_pipeline, vk_alloc_cbs);
+    vk.DestroyPipelineLayout(self.logical_device.handle, self.triangle_pipeline_layout, vk_alloc_cbs);
+    // currently not created
+    // vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
     vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
 
     vk.DestroyRenderPass(self.logical_device.handle, self.render_pass, vk_alloc_cbs);
@@ -513,8 +516,7 @@ fn createRenderPass(self: *Self) void {
         .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
         .initialLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        // .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
     };
 
     const color_attachment_ref = vk.AttachmentReference{
@@ -866,24 +868,7 @@ fn createDescriptorPool(self: *Self) void {
     checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, vk_alloc_cbs, &self.descriptor_pool)) catch @panic("failed to create descriptor pool");
 }
 
-// fn drawImgui(self: *Self, cmd: vk.CommandBuffer, target_image_view: vk.ImageView) void {
-//     const color_attachment = vki.colorAttachmentInfo(target_image_view, null, vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-//     const render_info = vki.renderingInfo(
-//         self.swapchain.extent,
-//         color_attachment,
-//         null,
-//     );
-//     log.warn("try begin\n", .{});
-//     vk.CmdBeginRendering(cmd, &render_info);
-
-//     log.warn("try draw\n", .{});
-//     c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), cmd);
-
-//     log.warn("try end\n", .{});
-//     vk.CmdEndRendering(cmd);
-// }
-
-fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
+fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
     var render_pass_info = vk.RenderPassBeginInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = self.render_pass,
@@ -892,8 +877,8 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
             .x = 0,
             .y = 0,
         }, .extent = vk.Extent2D{
-            .height = self.draw_image.extent.height,
-            .width = self.draw_image.extent.width,
+            .height = self.swapchain.extent.height,
+            .width = self.swapchain.extent.width,
         } },
     };
 
@@ -908,34 +893,46 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         self.draw_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
         vk.IMAGE_LAYOUT_GENERAL,
+        vk.ACCESS_MEMORY_WRITE_BIT,
+        vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
     );
 
     self.drawBackground(command_buffer);
 
     util.transitionImageLayout(
         command_buffer,
-        self.draw_image.image,
-        vk.IMAGE_LAYOUT_GENERAL,
+        self.swapchain.images[image_idx],
+        vk.IMAGE_LAYOUT_UNDEFINED,
         vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        vk.ACCESS_MEMORY_WRITE_BIT,
+        vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
     );
 
-    vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
-    self.drawGeometry(command_buffer);
-    c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
-    vk.CmdEndRenderPass(command_buffer);
+    {
+        vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
+        defer vk.CmdEndRenderPass(command_buffer);
+
+        self.drawGeometry(command_buffer);
+        c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
+    }
 
     util.transitionImageLayout(
         command_buffer,
         self.draw_image.image,
-        vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        vk.IMAGE_LAYOUT_GENERAL,
         vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        vk.ACCESS_TRANSFER_WRITE_BIT | vk.ACCESS_TRANSFER_READ_BIT,
     );
 
     util.transitionImageLayout(
         command_buffer,
         self.swapchain.images[image_idx],
-        vk.IMAGE_LAYOUT_UNDEFINED,
+        vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        vk.PIPELINE_STAGE_TRANSFER_BIT,
+        // vk.ACCESS_TRANSFER_WRITE_BIT | vk.ACCESS_TRANSFER_READ_BIT,
+        vk.ACCESS_MEMORY_READ_BIT,
     );
 
     util.copyImageToImage(
@@ -949,19 +946,13 @@ fn recordCommandBuffers(self: *Self, command_buffer: vk.CommandBuffer, image_idx
         self.swapchain.extent,
     );
 
-    // self.drawImgui(command_buffer, self.swapchain.image_views[image_idx]);
-
-    // util.transitionImageLayout(
-    //     command_buffer,
-    //     self.swapchain.images[image_idx],
-    //     vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-    //     vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    // );
     util.transitionImageLayout(
         command_buffer,
         self.swapchain.images[image_idx],
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        vk.ACCESS_MEMORY_READ_BIT,
+        vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
     );
 
     // should be defined in the same order that attachments are defined in createRenderPass
@@ -1141,7 +1132,7 @@ fn drawFrame(self: *Self) void {
 
     checkVk(vk.ResetFences(self.logical_device.handle, 1, &current_frame.render_fence)) catch @panic("failed to reset fences");
     checkVk(vk.ResetCommandBuffer(current_frame.main_command_buffer, 0)) catch @panic("failed to reset command buffers");
-    self.recordCommandBuffers(current_frame.main_command_buffer, image_idx);
+    self.recordCommandBuffer(current_frame.main_command_buffer, image_idx);
 
     const wait_semaphores = &[_]vk.Semaphore{present_semaphore};
     const wait_stages = &[_]vk.PipelineStageFlags{vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};

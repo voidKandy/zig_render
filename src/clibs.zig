@@ -9,7 +9,6 @@ const c = @cImport({
     @cInclude("cimgui_impl_vulkan.h");
     @cInclude("cimgui_impl_sdl3.h");
 });
-
 /// SDL3
 pub const sdl = struct {
     pub const Window = c.SDL_Window;
@@ -462,6 +461,7 @@ pub const vk = struct {
     pub const ACCESS_SHADER_READ_BIT = c.VK_ACCESS_SHADER_READ_BIT;
     pub const ACCESS_SHADER_WRITE_BIT = c.VK_ACCESS_SHADER_WRITE_BIT;
     pub const PIPELINE_STAGE_TOP_OF_PIPE_BIT = c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    pub const PIPELINE_STAGE_DRAW_INDIRECT_BIT = c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
     pub const PIPELINE_STAGE_ALL_COMMANDS_BIT = c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     pub const PIPELINE_STAGE_COMPUTE_SHADER_BIT = c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     pub const PIPELINE_STAGE_TRANSFER_BIT = c.VK_PIPELINE_STAGE_TRANSFER_BIT;
