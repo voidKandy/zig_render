@@ -323,9 +323,18 @@ fn initVulkan(self: *Self) void {
 }
 
 fn initTrianglePipeline(self: *Self) void {
-    const vert_shader = root.shaders.createShaderModule("colored_triangle.vert", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
+    const vert_shader = root.shaders.createShaderModule(
+        "colored_triangle.vert",
+        self.logical_device.handle,
+        vk_alloc_cbs,
+    ) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, vert_shader, vk_alloc_cbs);
-    const frag_shader = root.shaders.createShaderModule("colored_triangle.frag", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create frag shader module");
+
+    const frag_shader = root.shaders.createShaderModule(
+        "colored_triangle.frag",
+        self.logical_device.handle,
+        vk_alloc_cbs,
+    ) orelse @panic("failed to create frag shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, frag_shader, vk_alloc_cbs);
 
     const ci = vki.pipelineLayoutCreateInfo();
@@ -336,8 +345,18 @@ fn initTrianglePipeline(self: *Self) void {
     defer builder.deinit();
 
     builder.layout = self.triangle_pipeline_layout;
-    builder.setShaders(vert_shader, frag_shader);
+    builder.shader_stages.clearRetainingCapacity();
+    builder.shader_stages.append(builder.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_VERTEX_BIT, vert_shader, "main")) catch @panic("out of memory");
+    builder.shader_stages.append(builder.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_FRAGMENT_BIT, frag_shader, "main")) catch @panic("out of memory");
+
     builder.setInputTopology(vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+    const vertex_description = mesh_mod.Vertex3D.vertex_input_description;
+    builder.vertex_input_info.pVertexAttributeDescriptions = vertex_description.attributes.ptr;
+    builder.vertex_input_info.vertexAttributeDescriptionCount = vertex_description.attributes.len;
+
+    builder.vertex_input_info.pVertexBindingDescriptions = vertex_description.bindings.ptr;
+    builder.vertex_input_info.vertexBindingDescriptionCount = vertex_description.bindings.len;
 
     builder.viewport = .{
         .x = 0.0,
@@ -772,10 +791,34 @@ fn createTextureSampler(self: *Self) void {
     checkVk(vk.CreateSampler(self.logical_device.handle, &ci, null, &self.texture_sampler)) catch @panic("failed to create sampler");
 }
 
+// this function is like a meta staging zone for meshes
 fn createMeshes(self: *Self) void {
-    const vertices_indices = [_]struct { [4]mesh_mod.Vertex3D, [6]u16 }{
+    const vertices_indices = [_]struct { []const mesh_mod.Vertex3D, []const u16 }{
         .{
-            [_]mesh_mod.Vertex3D{
+            &[_]mesh_mod.Vertex3D{
+                .{
+                    .position = Vec3.make(-1.0, 1.0, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 0.0, 0.0),
+                    .uv = Vec2.make(1.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(1.0, 1.0, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 0.0, 1.0),
+                    .uv = Vec2.make(0.0, 1.0),
+                },
+                .{
+                    .position = Vec3.make(0.0, -1.0, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 1.0, 1.0),
+                    .uv = Vec2.make(1.0, 1.0),
+                },
+            },
+            &[_]u16{ 0, 1, 2 },
+        },
+        .{
+            &[_]mesh_mod.Vertex3D{
                 .{
                     .position = Vec3.make(-0.5, -0.5, 0.0),
                     .normal = Vec3.ZERO,
@@ -801,10 +844,10 @@ fn createMeshes(self: *Self) void {
                     .uv = Vec2.make(1.0, 1.0),
                 },
             },
-            [_]u16{ 0, 1, 2, 2, 3, 0 },
+            &[_]u16{ 0, 1, 2, 2, 3, 0 },
         },
         .{
-            [_]mesh_mod.Vertex3D{
+            &[_]mesh_mod.Vertex3D{
                 .{
                     .position = Vec3.make(-0.5, -0.5, -0.5),
                     .normal = Vec3.ZERO,
@@ -830,7 +873,7 @@ fn createMeshes(self: *Self) void {
                     .uv = Vec2.make(0.0, 1.0),
                 },
             },
-            [_]u16{ 0, 1, 2, 2, 3, 0 },
+            &[_]u16{ 0, 1, 2, 2, 3, 0 },
         },
     };
 
@@ -941,7 +984,6 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
         vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
         defer vk.CmdEndRenderPass(command_buffer);
 
-        // vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
         self.drawGeometry(command_buffer);
         c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
     }
@@ -969,10 +1011,16 @@ fn drawGeometry(self: *Self, cmd: vk.CommandBuffer) void {
             .height = self.swapchain.extent.height,
         },
     };
+    // BAD
+    const mesh = self.meshes[0];
+
+    const offset: u64 = 0;
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh.vertex_buffer.buffer, &offset);
 
     vk.CmdSetScissor(cmd, 0, 1, &scissor);
 
-    vk.CmdDraw(cmd, 3, 1, 0, 0);
+    // vk.CmdDrawIndexed(cmd, @as(u32, @intCast(mesh.indices.len), 1, mesh, vertexOffset: i32, firstInstance: u32)
+    vk.CmdDraw(cmd, @as(u32, @intCast(mesh.vertices.len)), 1, 0, 0);
 }
 
 fn drawBackground(self: *Self, cmd: vk.CommandBuffer) void {
@@ -990,18 +1038,12 @@ fn drawBackground(self: *Self, cmd: vk.CommandBuffer) void {
         null,
     );
 
-    // const pc = ComputePushConstants{
-    //     .data1 = Vec4.make(1.0, 0.0, 0.0, 1.0),
-    //     .data2 = Vec4.make(0.0, 0.0, 1.0, 1.0),
-    // };
     vk.CmdPushConstants(cmd, self.compute_effect_pipeline_layout, vk.SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(ComputePushConstants), &effect.data);
 
     // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
     const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.width)) / 16.0));
     const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.height)) / 16.0));
     vk.CmdDispatch(cmd, w, h, 1);
-
-    // vk.CmdClearColorImage(cmd, self.draw_image.image, vk.IMAGE_LAYOUT_GENERAL, &clear_value, 1, &clear_range);
 }
 
 fn drawFrame(self: *Self) void {

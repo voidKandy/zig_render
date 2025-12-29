@@ -178,30 +178,30 @@ pub const Vertex3D = struct {
             },
         },
         .attributes = &.{
-            std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
+            c.vk.VertexInputAttributeDescription{
                 .location = 0,
                 .binding = 0,
                 .format = c.vk.FORMAT_R32G32B32_SFLOAT,
                 .offset = @offsetOf(Vertex3D, "position"),
-            }),
-            std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
+            },
+            c.vk.VertexInputAttributeDescription{
                 .location = 1,
                 .binding = 0,
                 .format = c.vk.FORMAT_R32G32B32_SFLOAT,
                 .offset = @offsetOf(Vertex3D, "normal"),
-            }),
-            std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
+            },
+            c.vk.VertexInputAttributeDescription{
                 .location = 2,
                 .binding = 0,
                 .format = c.vk.FORMAT_R32G32B32_SFLOAT,
                 .offset = @offsetOf(Vertex3D, "color"),
-            }),
-            std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
+            },
+            c.vk.VertexInputAttributeDescription{
                 .location = 3,
                 .binding = 0,
                 .format = c.vk.FORMAT_R32G32_SFLOAT,
                 .offset = @offsetOf(Vertex3D, "uv"),
-            }),
+            },
         },
     };
 };

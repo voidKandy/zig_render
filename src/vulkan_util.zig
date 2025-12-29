@@ -80,7 +80,7 @@ pub fn transitionImageLayout(
 
     vk.CmdPipelineBarrier(
         cmd,
-        // NOT OPTIMAL
+        // BAD, NOT OPTIMAL
         // https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
