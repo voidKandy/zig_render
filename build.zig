@@ -9,10 +9,10 @@ const std = @import("std");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const mod = b.addModule("zig_render", .{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-    });
+    // const mod = b.addModule("zig_render", .{
+    //     .root_source_file = b.path("src/root.zig"),
+    //     .target = target,
+    // });
 
     // const exe = b.addExecutable(.{
     //     .name = "zig_render",
@@ -45,7 +45,9 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/vma/"));
     core_lib.addIncludePath(b.path("libs/stb/"));
     core_lib.addIncludePath(b.path("libs/imgui/"));
+    core_lib.addIncludePath(b.path("libs/tinyobjloader/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/stb_image.c"), .flags = &.{""} });
+    core_lib.addCSourceFile(.{ .file = b.path("src/tiny_obj_loader.c"), .flags = &.{""} });
 
     compileAllShaders(b, core_lib);
     // core_lib.linkLibCpp();
@@ -96,11 +98,11 @@ pub fn build(b: *std.Build) !void {
     //     run_cmd.addArgs(args);
     // }
 
-    const mod_tests = b.addTest(.{
-        .root_module = mod,
-    });
+    // const mod_tests = b.addTest(.{
+    //     .root_module = mod,
+    // });
 
-    const run_mod_tests = b.addRunArtifact(mod_tests);
+    // const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const exe_tests = b.addTest(.{
         .root_module = core_lib,
@@ -109,7 +111,7 @@ pub fn build(b: *std.Build) !void {
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&run_mod_tests.step);
+    // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
     buildBinaries(b, target, optimize, core_lib);

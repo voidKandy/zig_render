@@ -795,6 +795,7 @@ fn createTextureSampler(self: *Self) void {
 fn createMeshes(self: *Self) void {
     const vertices_indices = [_]struct { []const mesh_mod.Vertex3D, []const u16 }{
         .{
+            // this is a triangle
             &[_]mesh_mod.Vertex3D{
                 .{
                     .position = Vec3.make(-1.0, 1.0, 0.0),
@@ -879,10 +880,7 @@ fn createMeshes(self: *Self) void {
 
     self.meshes = self.allocator.alloc(mesh_mod.Mesh3D, vertices_indices.len) catch @panic("out of memory");
     for (vertices_indices, 0..) |vi, i| {
-        var mesh = mesh_mod.Mesh3D{
-            .vertices = self.allocator.dupe(mesh_mod.Vertex3D, vi.@"0"[0..]) catch @panic("out of memory"),
-            .indices = self.allocator.dupe(u16, vi.@"1"[0..]) catch @panic("out of memory"),
-        };
+        var mesh = mesh_mod.Mesh3D.init(self.allocator, vi.@"0", vi.@"1") catch @panic("OOM");
 
         mesh.upload(self.vma_allocator, &self.upload_context, self.logical_device);
         self.meshes[i] = mesh;

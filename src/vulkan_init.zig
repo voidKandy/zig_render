@@ -204,7 +204,7 @@ pub const UploadContext = struct {
             }
 
             if (submit_fn_info.@"fn".params[0].type != Context) {
-                @compileError("Context submit method first parameter should be of type: " ++ @typeName(Context));
+                @compileError("Context submit method first parameter should be of type: " ++ @typeName(Context) ++ " instead got: " ++ @typeName(submit_fn_info.@"fn".params[0].type.?));
             }
 
             if (submit_fn_info.@"fn".params[1].type != c.vk.CommandBuffer) {

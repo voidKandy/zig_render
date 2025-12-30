@@ -8,7 +8,23 @@ const c = @cImport({
     @cInclude("cimgui.h");
     @cInclude("cimgui_impl_vulkan.h");
     @cInclude("cimgui_impl_sdl3.h");
+    @cInclude("tiny_obj_loader_c.h");
 });
+
+pub const tol = struct {
+    pub const parseObject = c.tinyobj_parse_obj;
+    pub const FileReaderCallback = c.file_reader_callback;
+    pub const Shape = c.tinyobj_shape_t;
+    pub const Attributes = c.tinyobj_attrib_t;
+    pub const Material = c.tinyobj_material_t;
+    pub const VertexIndex = c.tinyobj_vertex_index_t;
+
+    pub const SUCCESS = c.TINYOBJ_SUCCESS;
+    pub const ERROR_EMPTY = c.TINYOBJ_ERROR_EMPTY;
+    pub const ERROR_INVALID_PARAMETER = c.TINYOBJ_ERROR_INVALID_PARAMETER;
+    pub const ERROR_FILE_OPERATION = c.TINYOBJ_ERROR_FILE_OPERATION;
+};
+
 /// SDL3
 pub const sdl = struct {
     pub const Window = c.SDL_Window;

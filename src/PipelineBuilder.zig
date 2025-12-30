@@ -52,11 +52,11 @@ pub fn clear(self: *Self) void {
     self.shader_stages.clearRetainingCapacity();
 }
 
-pub fn setShaders(self: *Self, vertex_shader: vk.ShaderModule, fragment_shader: vk.ShaderModule) void {
-    self.shader_stages.clearRetainingCapacity();
-    self.shader_stages.append(self.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_VERTEX_BIT, vertex_shader, "main")) catch @panic("out of memory");
-    self.shader_stages.append(self.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_FRAGMENT_BIT, fragment_shader, "main")) catch @panic("out of memory");
-}
+// pub fn setShaders(self: *Self, vertex_shader: vk.ShaderModule, fragment_shader: vk.ShaderModule) void {
+//     self.shader_stages.clearRetainingCapacity();
+//     self.shader_stages.append(self.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_VERTEX_BIT, vertex_shader, "main")) catch @panic("out of memory");
+//     self.shader_stages.append(self.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_FRAGMENT_BIT, fragment_shader, "main")) catch @panic("out of memory");
+// }
 
 pub fn setInputTopology(self: *Self, topology: vk.PrimitiveTopology) void {
     self.input_assembly.topology = topology;
