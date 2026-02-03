@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.vulkan_engine);
+const log = std.log.scoped(.VulkanEngine);
 const root = @import("root.zig");
 const texs = @import("textures.zig");
 const vki = @import("vulkan_init.zig");
@@ -10,6 +10,7 @@ const vma_usage = @import("vma_usage.zig");
 const mesh_mod = @import("mesh.zig");
 const c = @import("clibs.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
+const Pipelines = @import("Pipelines.zig");
 const vk = c.vk;
 const checkVk = vki.checkVk;
 const sdl = c.sdl;
@@ -60,8 +61,7 @@ pipeline: vk.Pipeline = undefined,
 
 compute_effect_pipeline_layout: vk.PipelineLayout = undefined,
 
-triangle_pipeline_layout: vk.PipelineLayout = undefined,
-triangle_pipeline: vk.Pipeline = undefined,
+pipelines: Pipelines = undefined,
 
 upload_context: vki.UploadContext = .{},
 
@@ -119,11 +119,10 @@ pub fn deinit(self: *Self) void {
 
     self.background_effects.deinit(self.allocator);
 
-    vk.DestroyPipeline(self.logical_device.handle, self.triangle_pipeline, vk_alloc_cbs);
-    vk.DestroyPipelineLayout(self.logical_device.handle, self.triangle_pipeline_layout, vk_alloc_cbs);
+    self.pipelines.deinit(self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
     // currently not created
     // vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
-    vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
+    // vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
 
     vk.DestroyRenderPass(self.logical_device.handle, self.render_pass, vk_alloc_cbs);
 
@@ -134,13 +133,9 @@ pub fn deinit(self: *Self) void {
     vk.DestroyImageView(self.logical_device.handle, self.texture.image_view, vk_alloc_cbs);
     c.vma.DestroyImage(self.vma_allocator, self.texture.image.image, self.texture.image.allocation);
 
-    for (0..self.meshes.len) |i| {
-        // mesh should have deinit?
-        c.vma.DestroyBuffer(self.vma_allocator, self.meshes[i].index_buffer.buffer, self.meshes[i].index_buffer.allocation);
-        c.vma.DestroyBuffer(self.vma_allocator, self.meshes[i].vertex_buffer.buffer, self.meshes[i].vertex_buffer.allocation);
-        self.allocator.free(self.meshes[i].indices);
-        self.allocator.free(self.meshes[i].vertices);
-    }
+    for (0..self.meshes.len) |i|
+        self.meshes[i].deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+
     self.allocator.free(self.meshes);
 
     c.vma.DestroyAllocator(self.vma_allocator);
@@ -323,6 +318,65 @@ fn initVulkan(self: *Self) void {
 }
 
 fn initTrianglePipeline(self: *Self) void {
+    const vertices = &[_]mesh_mod.Vertex3D{
+        .{
+            .position = Vec3.make(-1.0, 1.0, 0.0),
+            .normal = Vec3.ZERO,
+            .color = Vec3.make(1.0, 0.0, 0.0),
+            .uv = Vec2.make(1.0, 0.0),
+        },
+        .{
+            .position = Vec3.make(1.0, 1.0, 0.0),
+            .normal = Vec3.ZERO,
+            .color = Vec3.make(0.0, 0.0, 1.0),
+            .uv = Vec2.make(0.0, 1.0),
+        },
+        .{
+            .position = Vec3.make(0.0, -1.0, 0.0),
+            .normal = Vec3.ZERO,
+            .color = Vec3.make(1.0, 1.0, 1.0),
+            .uv = Vec2.make(1.0, 1.0),
+        },
+    };
+    const indices = &[_]u16{ 0, 1, 2 };
+
+    const drawFunc = &struct {
+        fn draw(mesh: mesh_mod.Mesh3D, draw_data: Pipelines.DrawData, cmd: vk.CommandBuffer) void {
+            // vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
+            const viewport = vk.Viewport{
+                .x = 0,
+                .y = 0,
+                .width = @as(f32, (@floatFromInt(draw_data.swapchain_extent.width))),
+                .height = @as(f32, (@floatFromInt(draw_data.swapchain_extent.height))),
+                .minDepth = 0.0,
+                .maxDepth = 1.0,
+            };
+            vk.CmdSetViewport(cmd, 0, 1, &viewport);
+
+            const scissor = vk.Rect2D{
+                .offset = .{
+                    .x = 0,
+                    .y = 0,
+                },
+                .extent = .{
+                    .width = draw_data.swapchain_extent.width,
+                    .height = draw_data.swapchain_extent.height,
+                },
+            };
+
+            const offset: u64 = 0;
+            vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh.vertex_buffer.buffer, &offset);
+            vk.CmdSetScissor(cmd, 0, 1, &scissor);
+            // vk.CmdDrawIndexed(cmd, @as(u32, @intCast(mesh.indices.len), 1, mesh, vertexOffset: i32, firstInstance: u32)
+            vk.CmdDraw(cmd, @as(u32, @intCast(mesh.vertices.len)), 1, 0, 0);
+        }
+    }.draw;
+
+    const mesh = self.allocator.create(mesh_mod.Mesh3D) catch @panic("OOM");
+    mesh.* = mesh_mod.Mesh3D.init(self.allocator, vertices, indices) catch @panic("OOM");
+    mesh.upload(self.vma_allocator, &self.upload_context, self.logical_device);
+
+    var entry: Pipelines.Entry = .init(mesh_mod.Mesh3D, mesh, drawFunc);
     const vert_shader = root.shaders.createShaderModule(
         "colored_triangle.vert",
         self.logical_device.handle,
@@ -338,13 +392,13 @@ fn initTrianglePipeline(self: *Self) void {
     defer vk.DestroyShaderModule(self.logical_device.handle, frag_shader, vk_alloc_cbs);
 
     const ci = vki.pipelineLayoutCreateInfo();
-    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &ci, vk_alloc_cbs, &self.triangle_pipeline_layout)) catch
+    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &ci, vk_alloc_cbs, &entry.layout)) catch
         @panic("failed to create triangle pipeline layout");
 
     var builder = PipelineBuilder.init(self.allocator, vk_alloc_cbs);
     defer builder.deinit();
 
-    builder.layout = self.triangle_pipeline_layout;
+    builder.layout = entry.layout;
     builder.shader_stages.clearRetainingCapacity();
     builder.shader_stages.append(builder.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_VERTEX_BIT, vert_shader, "main")) catch @panic("out of memory");
     builder.shader_stages.append(builder.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_FRAGMENT_BIT, frag_shader, "main")) catch @panic("out of memory");
@@ -381,9 +435,13 @@ fn initTrianglePipeline(self: *Self) void {
     // builder.setColorAttachmentFormat(self.draw_image.format);
     // builder.setDepthFormat(vk.FORMAT_UNDEFINED);
 
-    self.triangle_pipeline = builder.build(self.logical_device.handle, self.render_pass);
+    entry.pipeline = builder.build(self.logical_device.handle, self.render_pass);
+
+    self.pipelines.insert("triangle", entry) catch @panic("OOM");
 }
+
 fn initPipelines(self: *Self) void {
+    self.pipelines = .init(self.allocator);
     // self.initGraphicsPipeline();
     self.initTrianglePipeline();
     self.initBackgroundPipelines();
@@ -982,43 +1040,16 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
         vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
         defer vk.CmdEndRenderPass(command_buffer);
 
-        self.drawGeometry(command_buffer);
+        const draw_data = Pipelines.DrawData{
+            .swapchain_extent = self.swapchain.extent,
+        };
+        for (self.pipelines.entries.items) |entry| {
+            vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
+            entry.callDraw(draw_data, command_buffer);
+        }
+        // self.drawTriangle(command_buffer);
         c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
     }
-}
-
-fn drawGeometry(self: *Self, cmd: vk.CommandBuffer) void {
-    vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
-    const viewport = vk.Viewport{
-        .x = 0,
-        .y = 0,
-        .width = @as(f32, (@floatFromInt(self.swapchain.extent.width))),
-        .height = @as(f32, (@floatFromInt(self.swapchain.extent.height))),
-        .minDepth = 0.0,
-        .maxDepth = 1.0,
-    };
-    vk.CmdSetViewport(cmd, 0, 1, &viewport);
-
-    const scissor = vk.Rect2D{
-        .offset = .{
-            .x = 0,
-            .y = 0,
-        },
-        .extent = .{
-            .width = self.swapchain.extent.width,
-            .height = self.swapchain.extent.height,
-        },
-    };
-    // BAD
-    const mesh = self.meshes[0];
-
-    const offset: u64 = 0;
-    vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh.vertex_buffer.buffer, &offset);
-
-    vk.CmdSetScissor(cmd, 0, 1, &scissor);
-
-    // vk.CmdDrawIndexed(cmd, @as(u32, @intCast(mesh.indices.len), 1, mesh, vertexOffset: i32, firstInstance: u32)
-    vk.CmdDraw(cmd, @as(u32, @intCast(mesh.vertices.len)), 1, 0, 0);
 }
 
 fn drawBackground(self: *Self, cmd: vk.CommandBuffer) void {

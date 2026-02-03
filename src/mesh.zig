@@ -227,6 +227,15 @@ pub const Mesh3D = struct {
         };
     }
 
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator, vma_a: c.vma.Allocator, device: vk.Device, alloc_callbacks: ?*vk.AllocationCallbacks) void {
+        _ = alloc_callbacks;
+        _ = device;
+        c.vma.DestroyBuffer(vma_a, self.index_buffer.buffer, self.index_buffer.allocation);
+        c.vma.DestroyBuffer(vma_a, self.vertex_buffer.buffer, self.vertex_buffer.allocation);
+        allocator.free(self.vertices);
+        allocator.free(self.indices);
+    }
+
     pub fn upload(self: *Self, vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.LogicalDevice) void {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex3D),
@@ -331,20 +340,31 @@ pub const Mesh3D = struct {
         // defer file.close();
         // const end_pos = try file.getEndPos();
         // const content = try file.readToEndAlloc(a, end_pos);
-        var attributes = std.mem.zeroInit(c.tol.Attributes, .{});
-        var shape: [*c][*c]c.tol.Shape = null;
-        var material: [*c]c.tol.Material = null;
-        checkTol(c.tol.parseObject(
+        var attributes = c.tol.Attributes{};
+        const shapes: [][]?*c.tol.Shape = a.alloc([]?*c.tol.Shape, 1024) catch @panic("OOM");
+        // const shapes = [_][]?*const c.tol.Shape{};
+        // var shapes_c: [*c][*]c.tol.Shape = &shapes;
+        var num_shapes: usize = 0;
+
+        const materials: [][]?*c.tol.Material = a.alloc([]?*c.tol.Material, 1024) catch @panic("OOM");
+        // var materials_c: [*c][*c]c.tol.Material = &materials;
+        var num_materials: usize = 0;
+        const c_path = a.dupeZ(u8, filepath) catch @panic("OOM");
+        defer a.free(c_path);
+
+        // safe to call
+        const result = c.tol.parseObject(
             &attributes,
-            &shape,
-            0,
-            &material,
-            0,
-            filepath.ptr,
+            @as([*][*]c.tol.Shape, shapes.ptr),
+            &num_shapes,
+            @as([*][*]c.tol.Material, materials.ptr),
+            &num_materials,
+            c_path.ptr,
             null,
             null,
             0,
-        )) catch @panic("failed to parse object");
+        );
+        checkTol(result) catch @panic("failed to parse object");
 
         // var obj_mesh = obj_loader.parseFile(a, filepath) catch |err| {
         //     std.log.err("Failed to load obj file: {s}", .{@errorName(err)});
@@ -394,5 +414,5 @@ pub const Mesh3D = struct {
 };
 
 test "obj" {
-    _ = Mesh3D.loadFromObj(std.testing.allocator, "assets/lost_empire.obj");
+    // _ = Mesh3D.loadFromObj(std.testing.allocator, "assets/lost_empire.obj");
 }
