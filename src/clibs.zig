@@ -628,7 +628,7 @@ pub const vk = struct {
     pub const GetBufferMemoryRequirements = c.vkGetBufferMemoryRequirements;
 };
 
-pub const cimgui = struct {
+pub const imgui = struct {
     pub const ImGuiContext = c.ImGuiContext;
     pub const ImGuiIO = c.ImGuiIO;
     pub const ImGuiStyle = c.ImGuiStyle;
@@ -650,6 +650,9 @@ pub const cimgui = struct {
     pub const End = c.ImGui_End;
     pub const Text = c.ImGui_Text;
     pub const SliderInt = c.ImGui_SliderInt;
+    pub const BeginCombo = c.ImGui_BeginCombo;
+    pub const Selectable = c.ImGui_Selectable;
+    pub const EndCombo = c.ImGui_EndCombo;
     pub const InputFloat4 = c.ImGui_InputFloat4;
     pub const SliderFloat4 = c.ImGui_SliderFloat4;
 

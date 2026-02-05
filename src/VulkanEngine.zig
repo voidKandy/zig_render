@@ -10,7 +10,8 @@ const vma_usage = @import("vma_usage.zig");
 const mesh_mod = @import("mesh.zig");
 const c = @import("clibs.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
-const Pipelines = @import("Pipelines.zig");
+const PipelineManager = @import("PipelineManager.zig");
+const BackgroundEffects = @import("pipelines/BackgroundEffects.zig");
 const vk = c.vk;
 const checkVk = vki.checkVk;
 const sdl = c.sdl;
@@ -43,10 +44,10 @@ logical_device: vki.LogicalDevice = undefined,
 image_deletion_queue: std.ArrayList(vma_usage.VmaImageDeleter),
 
 global_descriptor_allocator: descriptor.Allocator = undefined,
-draw_image_descriptors: vk.DescriptorSet = undefined,
-draw_image_descriptor_layout: vk.DescriptorSetLayout = undefined,
+// draw_image_descriptors: vk.DescriptorSet = undefined,
+// draw_image_descriptor_layout: vk.DescriptorSetLayout = undefined,
 
-draw_image: vma_usage.AllocatedImage = undefined,
+// draw_image: vma_usage.AllocatedImage = undefined,
 
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
@@ -56,12 +57,10 @@ imgui_descriptor_pool: vk.DescriptorPool = undefined,
 render_pass: vk.RenderPass = undefined,
 descriptor_pool: vk.DescriptorPool = undefined,
 
-pipeline_layout: vk.PipelineLayout = undefined,
-pipeline: vk.Pipeline = undefined,
-
 compute_effect_pipeline_layout: vk.PipelineLayout = undefined,
 
-pipelines: Pipelines = undefined,
+graphics_pipelines: PipelineManager = undefined,
+background_effects: PipelineManager.Entry = undefined,
 
 upload_context: vki.UploadContext = .{},
 
@@ -73,7 +72,7 @@ texture: texs.Texture = undefined,
 
 texture_sampler: vk.Sampler = undefined,
 
-background_effects: std.ArrayList(ComputeEffect) = undefined,
+// background_effects: std.ArrayList(ComputeEffect) = undefined,
 current_background_effect: usize = 0,
 
 const ComputePushConstants = struct {
@@ -94,7 +93,6 @@ pub fn init(a: std.mem.Allocator) Self {
     return .{
         .allocator = a,
         .image_deletion_queue = std.ArrayList(vma_usage.VmaImageDeleter).initCapacity(a, 64) catch @panic("out of memory"),
-        .background_effects = std.ArrayList(ComputeEffect).initCapacity(a, 16) catch @panic("out of memory"),
     };
 }
 
@@ -104,22 +102,23 @@ pub fn deinit(self: *Self) void {
     vma_usage.VmaImageDeleter.flushList(self.image_deletion_queue, self.vma_allocator, self.logical_device.handle);
     self.image_deletion_queue.deinit(self.allocator);
     self.swapchain.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
-    c.cimgui.impl_vulkan.Shutdown();
+    c.imgui.impl_vulkan.Shutdown();
 
     self.frames.deinit(self.logical_device.handle, self.vma_allocator, vk_alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, vk_alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.descriptor_pool, vk_alloc_cbs);
     self.global_descriptor_allocator.deinit(self.logical_device.handle);
-    vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.draw_image_descriptor_layout, vk_alloc_cbs);
+    // vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.draw_image_descriptor_layout, vk_alloc_cbs);
 
     vk.DestroyPipelineLayout(self.logical_device.handle, self.compute_effect_pipeline_layout, vk_alloc_cbs);
-    for (self.background_effects.items) |*effect| {
-        vk.DestroyPipeline(self.logical_device.handle, effect.pipeline, vk_alloc_cbs);
-    }
+    // for (self.background_effects.items) |*effect| {
+    //     vk.DestroyPipeline(self.logical_device.handle, effect.pipeline, vk_alloc_cbs);
+    // }
 
-    self.background_effects.deinit(self.allocator);
+    // self.background_effects.deinit(self.allocator);
 
-    self.pipelines.deinit(self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+    self.graphics_pipelines.deinit(self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+    self.background_effects.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
     // currently not created
     // vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
     // vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
@@ -134,7 +133,7 @@ pub fn deinit(self: *Self) void {
     c.vma.DestroyImage(self.vma_allocator, self.texture.image.image, self.texture.image.allocation);
 
     for (0..self.meshes.len) |i|
-        self.meshes[i].deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+        self.meshes[i].deinit(self.allocator, self.vma_allocator);
 
     self.allocator.free(self.meshes);
 
@@ -163,36 +162,10 @@ pub fn run(self: *Self) void {
     while (!quit) {
         while (c.sdl.PollEvent(&event)) {
             if (event.type == c.sdl.EVENT_QUIT) quit = true;
-            _ = c.cimgui.impl_sdl3.ProcessEvent(&event);
+            _ = c.imgui.impl_sdl3.ProcessEvent(&event);
         }
 
-        var open = true;
-        // Imgui frame
-        c.cimgui.impl_vulkan.NewFrame();
-        c.cimgui.impl_sdl3.NewFrame();
-        c.cimgui.NewFrame();
-        {
-            if (c.cimgui.Begin("background", &open, 0)) {
-                var selected = &self.background_effects.items[self.current_background_effect];
-
-                c.cimgui.Text("Selected effect: ", selected.name.ptr);
-
-                _ = c.cimgui.SliderInt(
-                    "Effect Index",
-                    @ptrCast(&self.current_background_effect),
-                    0,
-                    @as(c_int, @intCast(self.background_effects.items.len)) - 1,
-                );
-
-                _ = c.cimgui.SliderFloat4("data1", &selected.data.data1.x, 0.0, 1.0);
-                _ = c.cimgui.SliderFloat4("data2", &selected.data.data2.x, 0.0, 1.0);
-                _ = c.cimgui.SliderFloat4("data3", &selected.data.data3.x, 0.0, 1.0);
-                _ = c.cimgui.SliderFloat4("data4", &selected.data.data4.x, 0.0, 1.0);
-            }
-        }
-        c.cimgui.End();
-        c.cimgui.Render();
-
+        self.drawImgui();
         self.drawFrame();
     }
 
@@ -286,16 +259,12 @@ fn initVulkan(self: *Self) void {
         .depth_buffer = false,
     }) catch @panic("failed to create swapchain");
 
-    self.initDrawImage();
-
     self.frames.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
     self.upload_context.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
     self.frames.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
     self.upload_context.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
     // self.frames.initDescriptors(self.allocator, self.logical_device.handle, vk_alloc_cbs);
     self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
-
-    self.initDescriptors();
 
     self.createRenderPass();
     self.initPipelines();
@@ -317,276 +286,45 @@ fn initVulkan(self: *Self) void {
     self.initImgui();
 }
 
-fn initTrianglePipeline(self: *Self) void {
-    const vertices = &[_]mesh_mod.Vertex3D{
-        .{
-            .position = Vec3.make(-1.0, 1.0, 0.0),
-            .normal = Vec3.ZERO,
-            .color = Vec3.make(1.0, 0.0, 0.0),
-            .uv = Vec2.make(1.0, 0.0),
-        },
-        .{
-            .position = Vec3.make(1.0, 1.0, 0.0),
-            .normal = Vec3.ZERO,
-            .color = Vec3.make(0.0, 0.0, 1.0),
-            .uv = Vec2.make(0.0, 1.0),
-        },
-        .{
-            .position = Vec3.make(0.0, -1.0, 0.0),
-            .normal = Vec3.ZERO,
-            .color = Vec3.make(1.0, 1.0, 1.0),
-            .uv = Vec2.make(1.0, 1.0),
-        },
-    };
-    const indices = &[_]u16{ 0, 1, 2 };
-
-    const drawFunc = &struct {
-        fn draw(mesh: mesh_mod.Mesh3D, draw_data: Pipelines.DrawData, cmd: vk.CommandBuffer) void {
-            // vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
-            const viewport = vk.Viewport{
-                .x = 0,
-                .y = 0,
-                .width = @as(f32, (@floatFromInt(draw_data.swapchain_extent.width))),
-                .height = @as(f32, (@floatFromInt(draw_data.swapchain_extent.height))),
-                .minDepth = 0.0,
-                .maxDepth = 1.0,
-            };
-            vk.CmdSetViewport(cmd, 0, 1, &viewport);
-
-            const scissor = vk.Rect2D{
-                .offset = .{
-                    .x = 0,
-                    .y = 0,
-                },
-                .extent = .{
-                    .width = draw_data.swapchain_extent.width,
-                    .height = draw_data.swapchain_extent.height,
-                },
-            };
-
-            const offset: u64 = 0;
-            vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh.vertex_buffer.buffer, &offset);
-            vk.CmdSetScissor(cmd, 0, 1, &scissor);
-            // vk.CmdDrawIndexed(cmd, @as(u32, @intCast(mesh.indices.len), 1, mesh, vertexOffset: i32, firstInstance: u32)
-            vk.CmdDraw(cmd, @as(u32, @intCast(mesh.vertices.len)), 1, 0, 0);
-        }
-    }.draw;
-
-    const mesh = self.allocator.create(mesh_mod.Mesh3D) catch @panic("OOM");
-    mesh.* = mesh_mod.Mesh3D.init(self.allocator, vertices, indices) catch @panic("OOM");
-    mesh.upload(self.vma_allocator, &self.upload_context, self.logical_device);
-
-    var entry: Pipelines.Entry = .init(mesh_mod.Mesh3D, mesh, drawFunc);
-    const vert_shader = root.shaders.createShaderModule(
-        "colored_triangle.vert",
-        self.logical_device.handle,
-        vk_alloc_cbs,
-    ) orelse @panic("failed to create vert shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, vert_shader, vk_alloc_cbs);
-
-    const frag_shader = root.shaders.createShaderModule(
-        "colored_triangle.frag",
-        self.logical_device.handle,
-        vk_alloc_cbs,
-    ) orelse @panic("failed to create frag shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, frag_shader, vk_alloc_cbs);
-
-    const ci = vki.pipelineLayoutCreateInfo();
-    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &ci, vk_alloc_cbs, &entry.layout)) catch
-        @panic("failed to create triangle pipeline layout");
-
-    var builder = PipelineBuilder.init(self.allocator, vk_alloc_cbs);
-    defer builder.deinit();
-
-    builder.layout = entry.layout;
-    builder.shader_stages.clearRetainingCapacity();
-    builder.shader_stages.append(builder.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_VERTEX_BIT, vert_shader, "main")) catch @panic("out of memory");
-    builder.shader_stages.append(builder.allocator, vki.pipelineShaderStageCreateInfo(vk.SHADER_STAGE_FRAGMENT_BIT, frag_shader, "main")) catch @panic("out of memory");
-
-    builder.setInputTopology(vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-
-    const vertex_description = mesh_mod.Vertex3D.vertex_input_description;
-    builder.vertex_input_info.pVertexAttributeDescriptions = vertex_description.attributes.ptr;
-    builder.vertex_input_info.vertexAttributeDescriptionCount = vertex_description.attributes.len;
-
-    builder.vertex_input_info.pVertexBindingDescriptions = vertex_description.bindings.ptr;
-    builder.vertex_input_info.vertexBindingDescriptionCount = vertex_description.bindings.len;
-
-    builder.viewport = .{
-        .x = 0.0,
-        .y = 0.0,
-        .width = @as(f32, @floatFromInt(self.swapchain.extent.width)),
-        .height = @as(f32, @floatFromInt(self.swapchain.extent.height)),
-        .minDepth = 0.0,
-        .maxDepth = 1.0,
-    };
-
-    builder.scissor = .{
-        .offset = .{ .x = 0, .y = 0 },
-        .extent = self.swapchain.extent,
-    };
-
-    builder.setPolygonMode(vk.POLYGON_MODE_FILL);
-    builder.setCullMode(vk.CULL_MODE_NONE, vk.FRONT_FACE_CLOCKWISE);
-    builder.setMultisamplingNone();
-    builder.color_blend_attachment = vki.defaultColorBlendAttachmentState();
-    builder.disableBlending();
-
-    // builder.setColorAttachmentFormat(self.draw_image.format);
-    // builder.setDepthFormat(vk.FORMAT_UNDEFINED);
-
-    entry.pipeline = builder.build(self.logical_device.handle, self.render_pass);
-
-    self.pipelines.insert("triangle", entry) catch @panic("OOM");
-}
-
 fn initPipelines(self: *Self) void {
-    self.pipelines = .init(self.allocator);
-    // self.initGraphicsPipeline();
-    self.initTrianglePipeline();
-    self.initBackgroundPipelines();
-}
-
-fn initDrawImage(self: *Self) void {
-
-    //hardcoding the draw format to 32 bit float
-    self.draw_image.format = vk.FORMAT_R16G16B16A16_SFLOAT;
-    self.draw_image.extent =
-        vk.Extent3D{ .width = window_extent.width, .height = window_extent.height, .depth = 1 };
-
-    const usages: vk.ImageUsageFlags =
-        vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
-        vk.IMAGE_USAGE_TRANSFER_DST_BIT |
-        vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-    const ci = vki.imageCreateInfo(self.draw_image.format, usages, self.draw_image.extent);
-
-    //for the draw image, we want to allocate it from gpu local memory
-    const ai = c.vma.AllocationCreateInfo{
-        .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-        .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    const init_data: PipelineManager.InitData = .{
+        .swapchain_extent = self.swapchain.extent,
     };
+    self.graphics_pipelines = .init(self.allocator);
 
-    checkVk(c.vma.CreateImage(self.vma_allocator, &ci, &ai, &self.draw_image.image, &self.draw_image.allocation, null)) catch
-        @panic("failed to create draw image");
-    //allocate and create the image
-
-    //build a image-view for the draw image to use for rendering
-    const render_view_info = vki.imageViewCreateInfo(self.draw_image.format, self.draw_image.image, vk.IMAGE_ASPECT_COLOR_BIT);
-
-    checkVk(vk.CreateImageView(self.logical_device.handle, &render_view_info, vk_alloc_cbs, &self.draw_image.view)) catch @panic("failed to create image view");
-
-    self.image_deletion_queue.append(self.allocator, vma_usage.VmaImageDeleter{
-        .callbacks = vk_alloc_cbs,
-        .image = self.draw_image,
-    }) catch @panic("out of memory");
-}
-
-fn initDescriptors(self: *Self) void {
-    // maybe should be initted elsewhere?
-    self.global_descriptor_allocator = descriptor.Allocator.init(self.allocator, vk_alloc_cbs);
-    //create a descriptor pool that will hold 10 sets with 1 image each
-
-    const sizes = [_]descriptor.PoolSizeRatio{.{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 1.0 }};
-    self.global_descriptor_allocator.initPool(self.logical_device.handle, 10, &sizes);
-    {
-        var builder = descriptor.LayoutBuilder.init(self.allocator);
-        defer builder.deinit(self.allocator);
-        builder.addBinding(self.allocator, 0, vk.DESCRIPTOR_TYPE_STORAGE_IMAGE);
-        self.draw_image_descriptor_layout = builder.build(self.logical_device.handle, vk.SHADER_STAGE_COMPUTE_BIT, null, 0, vk_alloc_cbs);
+    inline for ([_]struct { []const u8, type }{
+        .{ "triangle", @import("pipelines/Triangle.zig") },
+    }) |v| {
+        var entry = PipelineManager.Entry.create(v.@"1", self.allocator) catch @panic("OOM");
+        entry.init(
+            self.allocator,
+            self.vma_allocator,
+            init_data,
+            &self.upload_context,
+            self.logical_device,
+            self.render_pass,
+            vk_alloc_cbs,
+        );
+        self.graphics_pipelines.insert(v.@"0", entry) catch @panic("OOM");
     }
 
-    self.draw_image_descriptors = self.global_descriptor_allocator.allocate(self.logical_device.handle, self.draw_image_descriptor_layout);
-
-    const draw_img_info = vk.DescriptorImageInfo{
-        .imageLayout = vk.IMAGE_LAYOUT_GENERAL,
-        .imageView = self.draw_image.view,
-    };
-
-    const draw_img_write = vk.WriteDescriptorSet{
-        .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .pNext = null,
-
-        .dstBinding = 0,
-        .dstSet = self.draw_image_descriptors,
-        .descriptorCount = 1,
-        .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        .pImageInfo = &draw_img_info,
-    };
-
-    vk.UpdateDescriptorSets(self.logical_device.handle, 1, &draw_img_write, 0, null);
-}
-
-fn initBackgroundPipelines(self: *Self) void {
-    const push_constant = vk.PushConstantRange{
-        .offset = 0,
-        .size = @sizeOf(ComputePushConstants),
-        .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
-    };
-
-    const compute_layout = vk.PipelineLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .pNext = null,
-        .pSetLayouts = &self.draw_image_descriptor_layout,
-        .setLayoutCount = 1,
-        .pPushConstantRanges = &push_constant,
-        .pushConstantRangeCount = 1,
-    };
-
-    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &compute_layout, vk_alloc_cbs, &self.compute_effect_pipeline_layout)) catch
-        @panic("failed to create compute pipeline layout");
-
-    const gradient_shader = root.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create compute shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, gradient_shader, vk_alloc_cbs);
-    const sky_shader = root.shaders.createShaderModule("sky.comp", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create compute shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, sky_shader, vk_alloc_cbs);
-
-    const stage_info = vk.PipelineShaderStageCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .pNext = null,
-        .stage = vk.SHADER_STAGE_COMPUTE_BIT,
-        .module = gradient_shader,
-        .pName = "main",
-    };
-
-    var ci =
-        vk.ComputePipelineCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-            .pNext = null,
-            .layout = self.compute_effect_pipeline_layout,
-            .stage = stage_info,
-        };
-
-    var gradient = ComputeEffect{
-        .layout = self.compute_effect_pipeline_layout,
-        .name = "gradient",
-        .data = .{
-            .data1 = Vec4.make(1.0, 0.0, 0.0, 1.0),
-            .data2 = Vec4.make(0.0, 0.0, 1.0, 1.0),
-        },
-    };
-
-    checkVk(vk.CreateComputePipelines(self.logical_device.handle, null, 1, &ci, vk_alloc_cbs, &gradient.pipeline)) catch @panic("failed to create compute pipeline");
-
-    //change the shader module only to create the sky shader
-    ci.stage.module = sky_shader;
-
-    var sky = ComputeEffect{
-        .layout = self.compute_effect_pipeline_layout,
-        .name = "sky",
-        .data = .{
-            .data1 = Vec4.make(0.1, 0.2, 0.4, 0.97),
-        },
-    };
-    checkVk(vk.CreateComputePipelines(self.logical_device.handle, null, 1, &ci, vk_alloc_cbs, &sky.pipeline)) catch @panic("failed to create compute pipeline");
-
-    self.background_effects.append(self.allocator, gradient) catch @panic("out of memory");
-    self.background_effects.append(self.allocator, sky) catch @panic("out of memory");
+    {
+        self.background_effects = PipelineManager.Entry.create(BackgroundEffects, self.allocator) catch @panic("OOM");
+        self.background_effects.init(
+            self.allocator,
+            self.vma_allocator,
+            init_data,
+            &self.upload_context,
+            self.logical_device,
+            self.render_pass,
+            vk_alloc_cbs,
+        );
+    }
 }
 
 fn createRenderPass(self: *Self) void {
     const color_attachment = vk.AttachmentDescription{
-        .format = self.draw_image.format,
+        .format = BackgroundEffects.DRAW_IMAGE_FORMAT,
         .samples = vk.SAMPLE_COUNT_1_BIT,
         .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
@@ -652,143 +390,6 @@ fn createRenderPass(self: *Self) void {
     };
 
     checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, vk_alloc_cbs, &self.render_pass)) catch @panic("failed to create render pass");
-}
-
-fn initGraphicsPipeline(self: *Self) void {
-    const vertex3D_description = mesh_mod.Vertex3D.vertex_input_description;
-
-    // const vert_shader = root.shaders.createShaderModule("triangle.vert", self.device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
-    const vert_shader = root.shaders.createShaderModule("uniform_buffer.vert", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create vert shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, vert_shader, vk_alloc_cbs);
-    const frag_shader = root.shaders.createShaderModule("triangle.frag", self.logical_device.handle, vk_alloc_cbs) orelse @panic("failed to create frag shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, frag_shader, vk_alloc_cbs);
-
-    const vert_stage_ci = vk.PipelineShaderStageCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = vk.SHADER_STAGE_VERTEX_BIT,
-        .module = vert_shader,
-        .pName = "main",
-    };
-    const frag_stage_ci = vk.PipelineShaderStageCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
-        .module = frag_shader,
-        .pName = "main",
-    };
-
-    const shader_stages = [_]vk.PipelineShaderStageCreateInfo{ vert_stage_ci, frag_stage_ci };
-
-    const vertex_input_info = vk.PipelineVertexInputStateCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = @as(u32, @intCast(vertex3D_description.bindings.len)),
-        .pVertexBindingDescriptions = vertex3D_description.bindings.ptr,
-        .vertexAttributeDescriptionCount = @as(u32, @intCast(vertex3D_description.attributes.len)),
-        .pVertexAttributeDescriptions = vertex3D_description.attributes.ptr,
-    };
-
-    const input_assembly = vk.PipelineInputAssemblyStateCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-        .topology = vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-        .primitiveRestartEnable = vk.FALSE,
-    };
-
-    const viewport_state = vk.PipelineViewportStateCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-        .viewportCount = 1,
-        .scissorCount = 1,
-    };
-
-    const rasterizer = vk.PipelineRasterizationStateCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-        .depthClampEnable = vk.FALSE,
-        .rasterizerDiscardEnable = vk.FALSE,
-        .polygonMode = vk.POLYGON_MODE_FILL,
-        .lineWidth = 1.0,
-        .cullMode = vk.CULL_MODE_BACK_BIT,
-        .frontFace = vk.FRONT_FACE_COUNTER_CLOCKWISE,
-        .depthBiasEnable = vk.FALSE,
-    };
-
-    const multisampling = vk.PipelineMultisampleStateCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-        .sampleShadingEnable = vk.FALSE,
-        .rasterizationSamples = vk.SAMPLE_COUNT_1_BIT,
-    };
-
-    const color_blend_attachment = vk.PipelineColorBlendAttachmentState{
-        .colorWriteMask = vk.COLOR_COMPONENT_R_BIT | vk.COLOR_COMPONENT_G_BIT | vk.COLOR_COMPONENT_B_BIT | vk.COLOR_COMPONENT_A_BIT,
-        .blendEnable = vk.FALSE,
-    };
-
-    const color_blending = vk.PipelineColorBlendStateCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-        .logicOpEnable = vk.FALSE,
-        .logicOp = vk.LOGIC_OP_COPY,
-        .attachmentCount = 1,
-        .pAttachments = &color_blend_attachment,
-        .blendConstants = [4]f32{ 0.0, 0.0, 0.0, 0.0 },
-    };
-
-    const dynamic_states = [_]vk.DynamicState{
-        vk.DYNAMIC_STATE_VIEWPORT,
-        vk.DYNAMIC_STATE_SCISSOR,
-    };
-
-    const dynamic_state = vk.PipelineDynamicStateCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .dynamicStateCount = @as(u32, @intCast(dynamic_states.len)),
-        .pDynamicStates = &dynamic_states,
-    };
-
-    // const push_constant = vk.PushConstantRange{
-    //     .offset = 0,
-    //     .size = @sizeOf(mesh_mod.Mesh3D.PushConstants),
-    //     .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-    // };
-
-    const pipeline_layout_ci = vk.PipelineLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &self.frames.global_descriptor_set_layout,
-        // .pushConstantRangeCount = 1,
-        // .pPushConstantRanges = &push_constant,
-    };
-
-    checkVk(vk.CreatePipelineLayout(self.logical_device.handle, &pipeline_layout_ci, null, &self.pipeline_layout)) catch
-        @panic("failed to create pipeline layout");
-
-    // const depth_stencil = vk.PipelineDepthStencilStateCreateInfo{
-    //     .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-    //     .depthTestEnable = vk.TRUE,
-    //     .depthWriteEnable = vk.TRUE,
-    //     .depthCompareOp = vk.COMPARE_OP_LESS,
-    //     .depthBoundsTestEnable = vk.FALSE,
-    //     .minDepthBounds = 0.0,
-    //     .maxDepthBounds = 1.0,
-    //     .front = .{},
-    //     .back = .{},
-    // };
-
-    const pipeline_ci = vk.GraphicsPipelineCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-        .stageCount = 2,
-        .pStages = &shader_stages,
-        .pVertexInputState = &vertex_input_info,
-        .pInputAssemblyState = &input_assembly,
-        .pViewportState = &viewport_state,
-        .pRasterizationState = &rasterizer,
-        .pMultisampleState = &multisampling,
-        .pColorBlendState = &color_blending,
-        // .pDepthStencilState = &depth_stencil,
-        .pDynamicState = &dynamic_state,
-        .layout = self.pipeline_layout,
-        .renderPass = self.render_pass,
-        .subpass = 0,
-        .basePipelineHandle = null,
-    };
-
-    checkVk(vk.CreateGraphicsPipelines(self.logical_device.handle, null, 1, &pipeline_ci, null, &self.pipeline)) catch
-        @panic("failed to create graphics pipeline");
 }
 
 fn createTextureImage(self: *Self) void {
@@ -975,54 +576,13 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
     checkVk(vk.BeginCommandBuffer(command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
 
-    util.transitionImageLayout(
-        command_buffer,
-        self.draw_image.image,
-        vk.IMAGE_LAYOUT_UNDEFINED,
-        vk.IMAGE_LAYOUT_GENERAL,
-        vk.ACCESS_MEMORY_WRITE_BIT,
-        vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
-    );
+    const draw_data = PipelineManager.DrawData{
+        .swapchain = self.swapchain,
+        .image_index = image_idx,
+    };
 
-    self.drawBackground(command_buffer);
+    self.background_effects.draw(draw_data, command_buffer);
 
-    util.transitionImageLayout(
-        command_buffer,
-        self.draw_image.image,
-        vk.IMAGE_LAYOUT_GENERAL,
-        vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        vk.ACCESS_TRANSFER_WRITE_BIT | vk.ACCESS_TRANSFER_READ_BIT,
-    );
-
-    util.transitionImageLayout(
-        command_buffer,
-        self.swapchain.images[image_idx],
-        vk.IMAGE_LAYOUT_UNDEFINED,
-        vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        vk.ACCESS_TRANSFER_READ_BIT,
-        vk.ACCESS_MEMORY_READ_BIT,
-    );
-
-    util.copyImageToImage(
-        command_buffer,
-        self.draw_image.image,
-        self.swapchain.images[image_idx],
-        vk.Extent2D{
-            .height = self.draw_image.extent.height,
-            .width = self.draw_image.extent.width,
-        },
-        self.swapchain.extent,
-    );
-
-    util.transitionImageLayout(
-        command_buffer,
-        self.swapchain.images[image_idx],
-        vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        vk.ACCESS_MEMORY_WRITE_BIT,
-        vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
-    );
     {
         var render_pass_info = vk.RenderPassBeginInfo{
             .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -1040,15 +600,12 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
         vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
         defer vk.CmdEndRenderPass(command_buffer);
 
-        const draw_data = Pipelines.DrawData{
-            .swapchain_extent = self.swapchain.extent,
-        };
-        for (self.pipelines.entries.items) |entry| {
-            vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
-            entry.callDraw(draw_data, command_buffer);
+        for (self.graphics_pipelines.entries.items) |entry| {
+            // vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
+            entry.draw(draw_data, command_buffer);
         }
         // self.drawTriangle(command_buffer);
-        c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), command_buffer);
+        c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), command_buffer);
     }
 }
 
@@ -1075,13 +632,22 @@ fn drawBackground(self: *Self, cmd: vk.CommandBuffer) void {
     vk.CmdDispatch(cmd, w, h, 1);
 }
 
+fn drawImgui(self: *Self) void {
+    // Imgui frame
+    c.imgui.impl_vulkan.NewFrame();
+    c.imgui.impl_sdl3.NewFrame();
+    c.imgui.NewFrame();
+    self.background_effects.drawImgui();
+    c.imgui.End();
+    c.imgui.Render();
+}
+
 fn drawFrame(self: *Self) void {
     var current_frame = self.frames.currentFrame();
 
     // self.updateUniformBuffer();
 
-    const present_semaphore =
-        current_frame.render_semaphore;
+    const present_semaphore = current_frame.render_semaphore;
 
     checkVk(vk.WaitForFences(self.logical_device.handle, 1, &current_frame.render_fence, vk.TRUE, std.math.maxInt(u64))) catch @panic("failed to wait for current fence");
     // current_frame.reset(self.logical_device.handle);
@@ -1258,10 +824,10 @@ fn initImgui(self: *Self) void {
 
     checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &pool_ci, vk_alloc_cbs, &self.imgui_descriptor_pool)) catch @panic("Failed to create imgui descriptor pool");
 
-    _ = c.cimgui.CreateContext(null);
-    _ = c.cimgui.impl_sdl3.InitForVulkan(self.window);
+    _ = c.imgui.CreateContext(null);
+    _ = c.imgui.impl_sdl3.InitForVulkan(self.window);
 
-    var init_info = c.cimgui.impl_vulkan.InitInfo{
+    var init_info = c.imgui.impl_vulkan.InitInfo{
         .Instance = self.instance.handle,
         .PhysicalDevice = self.physical_device.handle,
         .Device = self.logical_device.handle,
@@ -1273,6 +839,6 @@ fn initImgui(self: *Self) void {
         .MSAASamples = vk.SAMPLE_COUNT_1_BIT,
     };
 
-    _ = c.cimgui.impl_vulkan.Init(&init_info, self.render_pass);
-    _ = c.cimgui.impl_vulkan.CreateFontsTexture();
+    _ = c.imgui.impl_vulkan.Init(&init_info, self.render_pass);
+    _ = c.imgui.impl_vulkan.CreateFontsTexture();
 }

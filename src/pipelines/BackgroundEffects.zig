@@ -1,0 +1,328 @@
+const std = @import("std");
+const log = std.log.scoped(.BackgroundEffects);
+const root = @import("../root.zig");
+const util = @import("../vulkan_util.zig");
+const mesh_mod = @import("../mesh.zig");
+const c = @import("../clibs.zig");
+const PipelineManager = @import("../PipelineManager.zig");
+const descriptor = @import("../descriptor.zig");
+const PipelineBuilder = @import("../PipelineBuilder.zig");
+const vki = @import("../vulkan_init.zig");
+const vma_usage = @import("../vma_usage.zig");
+const vk = c.vk;
+const vma = c.vma;
+const checkVk = vki.checkVk;
+const Allocator = std.mem.Allocator;
+const Vec4 = root.math.Vec4;
+
+/// potentially bad that this is managed externally
+pub const DRAW_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
+const ComputePushConstants = struct {
+    data1: Vec4 = Vec4.ZERO,
+    data2: Vec4 = Vec4.ZERO,
+    data3: Vec4 = Vec4.ZERO,
+    data4: Vec4 = Vec4.ZERO,
+};
+
+const EffectData = struct {
+    pipeline: vk.Pipeline = undefined,
+    constants: ComputePushConstants = .{},
+};
+
+current_effect: []const u8 = undefined,
+all_effects: std.StringHashMap(EffectData) = undefined,
+draw_image: vma_usage.AllocatedImage = undefined,
+pipeline_layout: vk.PipelineLayout = undefined,
+descriptor_allocator: descriptor.Allocator = undefined,
+descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+descriptor_set: vk.DescriptorSet = undefined,
+
+pub fn initialize(
+    self: *@This(),
+    a: Allocator,
+    vma_a: vma.Allocator,
+    init_data: PipelineManager.InitData,
+    _: *vki.UploadContext,
+    device: vki.LogicalDevice,
+    _: vk.RenderPass,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) anyerror!void {
+    self.all_effects = .init(a);
+    self.initDrawImage(vma_a, init_data.swapchain_extent, device.handle, alloc_cbs);
+    self.initDescriptorSet(a, device.handle, alloc_cbs);
+    self.initPipeline(device.handle, alloc_cbs);
+}
+
+pub fn drawImgui(self: *@This()) void {
+    var open = true;
+    if (c.imgui.Begin("background", &open, 0)) {
+        var selected = self.all_effects.get(self.current_effect) orelse @panic("Invalid current effect");
+
+        c.imgui.Text("Selected effect: ", self.current_effect.ptr);
+        if (c.imgui.BeginCombo("Background Effects", self.current_effect.ptr, 0)) {
+            defer c.imgui.EndCombo();
+            var iter = self.all_effects.keyIterator();
+            while (iter.next()) |key| {
+                // const is_selected = (std.mem.eql(u8, self.current_effect, key));
+                if (c.imgui.Selectable(key.ptr))
+                    self.current_effect = key.*;
+            }
+        }
+        // _ = c.cimgui.SliderInt(
+        //     "Effect Index",
+        //     @ptrCast(&self.current_background_effect),
+        //     0,
+        //     @as(c_int, @intCast(self.background_effects.items.len)) - 1,
+        // );
+
+        _ = c.imgui.SliderFloat4("data1", &selected.constants.data1.x, 0.0, 1.0);
+        _ = c.imgui.SliderFloat4("data2", &selected.constants.data2.x, 0.0, 1.0);
+        _ = c.imgui.SliderFloat4("data3", &selected.constants.data3.x, 0.0, 1.0);
+        _ = c.imgui.SliderFloat4("data4", &selected.constants.data4.x, 0.0, 1.0);
+    }
+}
+
+pub fn deinit(
+    self: *@This(),
+    _: Allocator,
+    vma_a: vma.Allocator,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    c.vma.DestroyImage(vma_a, self.draw_image.image, self.draw_image.allocation);
+    vk.DestroyImageView(device, self.draw_image.view, alloc_cbs);
+
+    self.descriptor_allocator.deinit(device);
+
+    vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
+
+    vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
+
+    var iter = self.all_effects.valueIterator();
+    while (iter.next()) |effect| {
+        vk.DestroyPipeline(device, effect.pipeline, alloc_cbs);
+    }
+    self.all_effects.deinit();
+}
+
+pub fn draw(self: @This(), dd: PipelineManager.DrawData, cmd: vk.CommandBuffer) void {
+    util.transitionImageLayout(
+        cmd,
+        self.draw_image.image,
+        vk.IMAGE_LAYOUT_UNDEFINED,
+        vk.IMAGE_LAYOUT_GENERAL,
+        vk.ACCESS_MEMORY_WRITE_BIT,
+        vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
+    );
+
+    {
+        const effect = self.all_effects.get(self.current_effect) orelse {
+            log.err(
+                \\ Attempted to get effect with name '{s}', but no effect was found
+            , .{self.current_effect});
+            return;
+        };
+
+        vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_COMPUTE, effect.pipeline);
+
+        vk.CmdBindDescriptorSets(
+            cmd,
+            vk.PIPELINE_BIND_POINT_COMPUTE,
+            self.pipeline_layout,
+            0,
+            1,
+            &self.descriptor_set,
+            0,
+            null,
+        );
+
+        vk.CmdPushConstants(cmd, self.pipeline_layout, vk.SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(ComputePushConstants), &effect.constants);
+
+        // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
+        const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.width)) / 16.0));
+        const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.height)) / 16.0));
+        vk.CmdDispatch(cmd, w, h, 1);
+    }
+
+    util.transitionImageLayout(
+        cmd,
+        self.draw_image.image,
+        vk.IMAGE_LAYOUT_GENERAL,
+        vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        vk.ACCESS_TRANSFER_WRITE_BIT | vk.ACCESS_TRANSFER_READ_BIT,
+    );
+
+    util.transitionImageLayout(
+        cmd,
+        dd.swapchain.images[dd.image_index],
+        vk.IMAGE_LAYOUT_UNDEFINED,
+        vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        vk.ACCESS_TRANSFER_READ_BIT,
+        vk.ACCESS_MEMORY_READ_BIT,
+    );
+
+    util.copyImageToImage(
+        cmd,
+        self.draw_image.image,
+        dd.swapchain.images[dd.image_index],
+        vk.Extent2D{
+            .height = self.draw_image.extent.height,
+            .width = self.draw_image.extent.width,
+        },
+        dd.swapchain.extent,
+    );
+
+    util.transitionImageLayout(
+        cmd,
+        dd.swapchain.images[dd.image_index],
+        vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        vk.ACCESS_MEMORY_WRITE_BIT,
+        vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
+    );
+}
+
+fn initDrawImage(
+    self: *@This(),
+    vma_a: vma.Allocator,
+    extent: vk.Extent2D,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    //hardcoding the draw format to 32 bit float
+    self.draw_image.format = DRAW_IMAGE_FORMAT;
+    self.draw_image.extent = vk.Extent3D{
+        .width = extent.width,
+        .height = extent.height,
+        .depth = 1,
+    };
+
+    const usages: vk.ImageUsageFlags =
+        vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
+        vk.IMAGE_USAGE_TRANSFER_DST_BIT |
+        vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    const ci = vki.imageCreateInfo(self.draw_image.format, usages, self.draw_image.extent);
+
+    const ai = c.vma.AllocationCreateInfo{
+        .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
+        .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    checkVk(c.vma.CreateImage(vma_a, &ci, &ai, &self.draw_image.image, &self.draw_image.allocation, null)) catch
+        @panic("failed to create draw image");
+
+    //build a image-view for the draw image to use for rendering
+    const render_view_info = vki.imageViewCreateInfo(self.draw_image.format, self.draw_image.image, vk.IMAGE_ASPECT_COLOR_BIT);
+
+    checkVk(vk.CreateImageView(device, &render_view_info, alloc_cbs, &self.draw_image.view)) catch @panic("failed to create image view");
+}
+
+const GRADIENT_EFFECT_NAME = "gradient";
+const SKY_EFFECT_NAME = "sky";
+fn initDescriptorSet(
+    self: *@This(),
+    a: Allocator,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    self.descriptor_allocator = descriptor.Allocator.init(a, alloc_cbs);
+    const sizes = [_]descriptor.PoolSizeRatio{.{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 1.0 }};
+    self.descriptor_allocator.initPool(device, 10, &sizes);
+    {
+        var builder = descriptor.LayoutBuilder.init(a);
+        defer builder.deinit(a);
+        builder.addBinding(a, 0, vk.DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        self.descriptor_set_layout = builder.build(device, vk.SHADER_STAGE_COMPUTE_BIT, null, 0, alloc_cbs);
+    }
+    self.descriptor_set = self.descriptor_allocator.allocate(device, self.descriptor_set_layout);
+
+    const draw_img_info = vk.DescriptorImageInfo{
+        .imageLayout = vk.IMAGE_LAYOUT_GENERAL,
+        .imageView = self.draw_image.view,
+    };
+
+    const draw_img_write = vk.WriteDescriptorSet{
+        .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = null,
+
+        .dstBinding = 0,
+        .dstSet = self.descriptor_set,
+        .descriptorCount = 1,
+        .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .pImageInfo = &draw_img_info,
+    };
+
+    vk.UpdateDescriptorSets(device, 1, &draw_img_write, 0, null);
+}
+
+fn initPipeline(
+    self: *@This(),
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    const push_constant = vk.PushConstantRange{
+        .offset = 0,
+        .size = @sizeOf(ComputePushConstants),
+        .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
+    };
+
+    const compute_layout = vk.PipelineLayoutCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = null,
+        .pSetLayouts = &self.descriptor_set_layout,
+        .setLayoutCount = 1,
+        .pPushConstantRanges = &push_constant,
+        .pushConstantRangeCount = 1,
+    };
+
+    checkVk(vk.CreatePipelineLayout(device, &compute_layout, alloc_cbs, &self.pipeline_layout)) catch
+        @panic("failed to create compute pipeline layout");
+
+    const gradient_shader = root.shaders.createShaderModule("gradient_color.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
+    defer vk.DestroyShaderModule(device, gradient_shader, alloc_cbs);
+    const sky_shader = root.shaders.createShaderModule("sky.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
+    defer vk.DestroyShaderModule(device, sky_shader, alloc_cbs);
+
+    const stage_info = vk.PipelineShaderStageCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = null,
+        .stage = vk.SHADER_STAGE_COMPUTE_BIT,
+        .module = gradient_shader,
+        .pName = "main",
+    };
+
+    var ci = vk.ComputePipelineCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .pNext = null,
+        .layout = self.pipeline_layout,
+        .stage = stage_info,
+    };
+
+    var effects_info = [_]struct { []const u8, EffectData, vk.ShaderModule }{
+        .{
+            GRADIENT_EFFECT_NAME,
+            .{ .constants = .{
+                .data1 = Vec4.make(1.0, 0.0, 0.0, 1.0),
+                .data2 = Vec4.make(0.0, 0.0, 1.0, 1.0),
+            } },
+            gradient_shader,
+        },
+        .{
+            SKY_EFFECT_NAME,
+            .{ .constants = .{
+                .data1 = Vec4.make(0.1, 0.2, 0.4, 0.97),
+            } },
+            sky_shader,
+        },
+    };
+
+    for (0..effects_info.len) |i| {
+        var info = &effects_info[i];
+        if (i == 0) self.current_effect = info.@"0";
+        ci.stage.module = info.@"2";
+        checkVk(vk.CreateComputePipelines(device, null, 1, &ci, alloc_cbs, &info.@"1".pipeline)) catch @panic("failed to create compute pipeline");
+        self.all_effects.put(info.@"0", info.@"1") catch @panic("OOM");
+    }
+}

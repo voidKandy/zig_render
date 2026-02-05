@@ -227,9 +227,7 @@ pub const Mesh3D = struct {
         };
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator, vma_a: c.vma.Allocator, device: vk.Device, alloc_callbacks: ?*vk.AllocationCallbacks) void {
-        _ = alloc_callbacks;
-        _ = device;
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator, vma_a: c.vma.Allocator) void {
         c.vma.DestroyBuffer(vma_a, self.index_buffer.buffer, self.index_buffer.allocation);
         c.vma.DestroyBuffer(vma_a, self.vertex_buffer.buffer, self.vertex_buffer.allocation);
         allocator.free(self.vertices);
