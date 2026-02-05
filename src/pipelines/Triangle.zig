@@ -2,7 +2,7 @@ const std = @import("std");
 const root = @import("../root.zig");
 const mesh_mod = @import("../mesh.zig");
 const c = @import("../clibs.zig");
-const PipelineManager = @import("../PipelineManager.zig");
+const PipelineObject = @import("../PipelineObject.zig");
 const PipelineBuilder = @import("../PipelineBuilder.zig");
 const vki = @import("../vulkan_init.zig");
 const vk = c.vk;
@@ -18,11 +18,10 @@ layout: vk.PipelineLayout = undefined,
 
 const Self = @This();
 
-pub fn initialize(
+pub fn init(
     self: *@This(),
-    a: Allocator,
-    vma_a: vma.Allocator,
-    init_data: PipelineManager.InitData,
+    allocs: PipelineObject.Allocators,
+    init_data: PipelineObject.InitData,
     upload_ctx: *vki.UploadContext,
     device: vki.LogicalDevice,
     render_pass: vk.RenderPass,
@@ -50,8 +49,8 @@ pub fn initialize(
     };
     const indices = &[_]u16{ 0, 1, 2 };
 
-    self.mesh = try mesh_mod.Mesh3D.init(a, vertices, indices);
-    self.mesh.upload(vma_a, upload_ctx, device);
+    self.mesh = try mesh_mod.Mesh3D.init(allocs.std, vertices, indices);
+    self.mesh.upload(allocs.vma, upload_ctx, device);
 
     {
         const ci = vki.pipelineLayoutCreateInfo();
@@ -59,10 +58,10 @@ pub fn initialize(
             @panic("failed to create triangle pipeline layout");
     }
 
-    self.pipeline = createPipeline(a, self.layout, init_data.swapchain_extent, device.handle, render_pass, alloc_cbs);
+    self.pipeline = createPipeline(allocs.std, self.layout, init_data.swapchain_extent, device.handle, render_pass, alloc_cbs);
 }
 
-pub fn draw(self: Self, draw_data: PipelineManager.DrawData, cmd: vk.CommandBuffer) void {
+pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
     vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
     const viewport = vk.Viewport{
         .x = 0,
@@ -92,8 +91,8 @@ pub fn draw(self: Self, draw_data: PipelineManager.DrawData, cmd: vk.CommandBuff
     vk.CmdDraw(cmd, @as(u32, @intCast(self.mesh.vertices.len)), 1, 0, 0);
 }
 
-pub fn deinit(self: *Self, a: Allocator, vma_a: vma.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-    self.mesh.deinit(a, vma_a);
+pub fn deinit(self: *Self, allocs: PipelineObject.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+    self.mesh.deinit(allocs.std, allocs.vma);
     vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
 }

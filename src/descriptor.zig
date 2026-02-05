@@ -43,6 +43,7 @@ pub const Allocator = struct {
 
         checkVk(vk.CreateDescriptorPool(device, &ci, self.vk_alloc_cbs, &self.pool)) catch @panic("failed to create descriptor pool");
     }
+
     pub fn clearDescriptors(self: *Self, device: vk.Device) void {
         checkVk(vk.ResetDescriptorPool(device, self.pool, 0)) catch @panic("failed to reset descriptor pool");
     }

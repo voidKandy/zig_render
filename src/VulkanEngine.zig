@@ -10,7 +10,7 @@ const vma_usage = @import("vma_usage.zig");
 const mesh_mod = @import("mesh.zig");
 const c = @import("clibs.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
-const PipelineManager = @import("PipelineManager.zig");
+const PipelineObject = @import("PipelineObject.zig");
 const BackgroundEffects = @import("pipelines/BackgroundEffects.zig");
 const vk = c.vk;
 const checkVk = vki.checkVk;
@@ -33,6 +33,7 @@ const window_extent = vk.Extent2D{ .width = 1600, .height = 900 };
 
 allocator: std.mem.Allocator,
 vma_allocator: c.vma.Allocator = undefined,
+global_descriptor_allocator: descriptor.Allocator = undefined,
 
 window: *sdl.Window = undefined,
 surface: vk.SurfaceKHR = undefined,
@@ -43,24 +44,17 @@ logical_device: vki.LogicalDevice = undefined,
 
 image_deletion_queue: std.ArrayList(vma_usage.VmaImageDeleter),
 
-global_descriptor_allocator: descriptor.Allocator = undefined,
-// draw_image_descriptors: vk.DescriptorSet = undefined,
-// draw_image_descriptor_layout: vk.DescriptorSetLayout = undefined,
-
-// draw_image: vma_usage.AllocatedImage = undefined,
-
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
-
-render_pass: vk.RenderPass = undefined,
+/// this is now redundant
 descriptor_pool: vk.DescriptorPool = undefined,
 
-compute_effect_pipeline_layout: vk.PipelineLayout = undefined,
+render_pass: vk.RenderPass = undefined,
 
-graphics_pipelines: PipelineManager = undefined,
-background_effects: PipelineManager.Entry = undefined,
+graphics_pipelines: std.StringHashMap(PipelineObject) = undefined,
+background_effects: PipelineObject = undefined,
 
 upload_context: vki.UploadContext = .{},
 
@@ -69,30 +63,13 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 /// eventually these should be string hash maps
 meshes: []mesh_mod.Mesh3D = undefined,
 texture: texs.Texture = undefined,
-
 texture_sampler: vk.Sampler = undefined,
-
-// background_effects: std.ArrayList(ComputeEffect) = undefined,
-current_background_effect: usize = 0,
-
-const ComputePushConstants = struct {
-    data1: Vec4 = Vec4.ZERO,
-    data2: Vec4 = Vec4.ZERO,
-    data3: Vec4 = Vec4.ZERO,
-    data4: Vec4 = Vec4.ZERO,
-};
-
-const ComputeEffect = struct {
-    name: []const u8,
-    layout: vk.PipelineLayout,
-    data: ComputePushConstants,
-    pipeline: vk.Pipeline = undefined,
-};
 
 pub fn init(a: std.mem.Allocator) Self {
     return .{
         .allocator = a,
         .image_deletion_queue = std.ArrayList(vma_usage.VmaImageDeleter).initCapacity(a, 64) catch @panic("out of memory"),
+        .global_descriptor_allocator = .init(a, vk_alloc_cbs),
     };
 }
 
@@ -107,18 +84,19 @@ pub fn deinit(self: *Self) void {
     self.frames.deinit(self.logical_device.handle, self.vma_allocator, vk_alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, vk_alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.descriptor_pool, vk_alloc_cbs);
-    self.global_descriptor_allocator.deinit(self.logical_device.handle);
-    // vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.draw_image_descriptor_layout, vk_alloc_cbs);
 
-    vk.DestroyPipelineLayout(self.logical_device.handle, self.compute_effect_pipeline_layout, vk_alloc_cbs);
-    // for (self.background_effects.items) |*effect| {
-    //     vk.DestroyPipeline(self.logical_device.handle, effect.pipeline, vk_alloc_cbs);
-    // }
+    const allocs = PipelineObject.Allocators{
+        .std = self.allocator,
+        .vma = self.vma_allocator,
+        .descriptor = &self.global_descriptor_allocator,
+    };
 
-    // self.background_effects.deinit(self.allocator);
+    var grphx_iter = self.graphics_pipelines.valueIterator();
+    while (grphx_iter.next()) |node|
+        node.deinit(allocs, self.logical_device.handle, vk_alloc_cbs);
+    self.graphics_pipelines.deinit();
 
-    self.graphics_pipelines.deinit(self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
-    self.background_effects.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+    self.background_effects.deinit(allocs, self.logical_device.handle, vk_alloc_cbs);
     // currently not created
     // vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
     // vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
@@ -137,6 +115,7 @@ pub fn deinit(self: *Self) void {
 
     self.allocator.free(self.meshes);
 
+    self.global_descriptor_allocator.deinit(self.logical_device.handle);
     c.vma.DestroyAllocator(self.vma_allocator);
     vk.DestroyDevice(self.logical_device.handle, vk_alloc_cbs);
 
@@ -267,7 +246,7 @@ fn initVulkan(self: *Self) void {
     self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
 
     self.createRenderPass();
-    self.initPipelines();
+    self.initPipelineObjects();
 
     self.swapchain.createFramebuffers(
         self.allocator,
@@ -286,33 +265,36 @@ fn initVulkan(self: *Self) void {
     self.initImgui();
 }
 
-fn initPipelines(self: *Self) void {
-    const init_data: PipelineManager.InitData = .{
+fn initPipelineObjects(self: *Self) void {
+    const init_data = PipelineObject.InitData{
         .swapchain_extent = self.swapchain.extent,
+    };
+    const allocs = PipelineObject.Allocators{
+        .std = self.allocator,
+        .vma = self.vma_allocator,
+        .descriptor = &self.global_descriptor_allocator,
     };
     self.graphics_pipelines = .init(self.allocator);
 
     inline for ([_]struct { []const u8, type }{
         .{ "triangle", @import("pipelines/Triangle.zig") },
     }) |v| {
-        var entry = PipelineManager.Entry.create(v.@"1", self.allocator) catch @panic("OOM");
+        var entry = PipelineObject.create(v.@"1", self.allocator) catch @panic("OOM");
         entry.init(
-            self.allocator,
-            self.vma_allocator,
+            allocs,
             init_data,
             &self.upload_context,
             self.logical_device,
             self.render_pass,
             vk_alloc_cbs,
         );
-        self.graphics_pipelines.insert(v.@"0", entry) catch @panic("OOM");
+        self.graphics_pipelines.put(v.@"0", entry) catch @panic("OOM");
     }
 
     {
-        self.background_effects = PipelineManager.Entry.create(BackgroundEffects, self.allocator) catch @panic("OOM");
+        self.background_effects = PipelineObject.create(BackgroundEffects, self.allocator) catch @panic("OOM");
         self.background_effects.init(
-            self.allocator,
-            self.vma_allocator,
+            allocs,
             init_data,
             &self.upload_context,
             self.logical_device,
@@ -576,7 +558,7 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
     checkVk(vk.BeginCommandBuffer(command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
 
-    const draw_data = PipelineManager.DrawData{
+    const draw_data = PipelineObject.DrawData{
         .swapchain = self.swapchain,
         .image_index = image_idx,
     };
@@ -600,40 +582,15 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
         vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
         defer vk.CmdEndRenderPass(command_buffer);
 
-        for (self.graphics_pipelines.entries.items) |entry| {
-            // vk.CmdBindPipeline(command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
+        var iter = self.graphics_pipelines.valueIterator();
+        while (iter.next()) |entry|
             entry.draw(draw_data, command_buffer);
-        }
-        // self.drawTriangle(command_buffer);
+
         c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), command_buffer);
     }
 }
 
-fn drawBackground(self: *Self, cmd: vk.CommandBuffer) void {
-    const effect = self.background_effects.items[self.current_background_effect];
-    vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_COMPUTE, effect.pipeline);
-
-    vk.CmdBindDescriptorSets(
-        cmd,
-        vk.PIPELINE_BIND_POINT_COMPUTE,
-        effect.layout,
-        0,
-        1,
-        &self.draw_image_descriptors,
-        0,
-        null,
-    );
-
-    vk.CmdPushConstants(cmd, self.compute_effect_pipeline_layout, vk.SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(ComputePushConstants), &effect.data);
-
-    // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
-    const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.width)) / 16.0));
-    const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.height)) / 16.0));
-    vk.CmdDispatch(cmd, w, h, 1);
-}
-
 fn drawImgui(self: *Self) void {
-    // Imgui frame
     c.imgui.impl_vulkan.NewFrame();
     c.imgui.impl_sdl3.NewFrame();
     c.imgui.NewFrame();

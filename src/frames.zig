@@ -79,14 +79,14 @@ pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
         pub fn initBuffers(self: *Self, vma_a: c.vma.Allocator) void {
             for (&self.all) |*frame| {
                 const buf_size = @sizeOf(GPUCameraData);
-                frame.global.data = vma_usage.AllocatedBuffer.create(
+                frame.camera_descriptor.data = vma_usage.AllocatedBuffer.create(
                     vma_a,
                     buf_size,
                     vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                     c.vma.MEMORY_USAGE_CPU_TO_GPU,
                     0,
                 );
-                checkVk(c.vma.MapMemory(vma_a, frame.global.data.allocation, &frame.global.mapped)) catch @panic("failed to map uniform buffer");
+                checkVk(c.vma.MapMemory(vma_a, frame.camera_descriptor.data.allocation, &frame.camera_descriptor.mapped)) catch @panic("failed to map uniform buffer");
             }
         }
 
@@ -139,7 +139,7 @@ pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
                     .descriptorSetCount = 1,
                     .pSetLayouts = &self.global_descriptor_set_layout,
                 };
-                checkVk(vk.AllocateDescriptorSets(device, &ai, &frame.global.descriptor_set)) catch @panic("failed to allocate descriptor sets");
+                checkVk(vk.AllocateDescriptorSets(device, &ai, &frame.camera_descriptor.descriptor_set)) catch @panic("failed to allocate descriptor sets");
             }
         }
 
@@ -151,7 +151,7 @@ pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
         ) void {
             for (&self.all) |*frame| {
                 const camera_data_info = vk.DescriptorBufferInfo{
-                    .buffer = frame.global.data.buffer,
+                    .buffer = frame.camera_descriptor.data.buffer,
                     .offset = 0,
                     .range = @sizeOf(GPUCameraData),
                 };
@@ -159,7 +159,7 @@ pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
                 const camera_data_write = vk.WriteDescriptorSet{
                     .dstBinding = 0,
                     .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet = frame.global.descriptor_set,
+                    .dstSet = frame.camera_descriptor.descriptor_set,
                     .dstArrayElement = 0,
                     .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                     .descriptorCount = 1,
@@ -175,7 +175,7 @@ pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
                 const img_write = vk.WriteDescriptorSet{
                     .dstBinding = 1,
                     .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet = frame.global.descriptor_set,
+                    .dstSet = frame.camera_descriptor.descriptor_set,
                     .dstArrayElement = 0,
                     .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .descriptorCount = 1,
@@ -216,7 +216,7 @@ pub const FrameData = struct {
     command_pool: c.vk.CommandPool = null,
     main_command_buffer: c.vk.CommandBuffer = null,
     /// Used to pass camera data to shader so objects can be rendered in 3D
-    global: BoundDescriptor = .{},
+    camera_descriptor: BoundDescriptor = .{},
 
     const Self = @This();
 
@@ -224,7 +224,7 @@ pub const FrameData = struct {
         vk.DestroySemaphore(device, self.render_semaphore, vk_alloc_cbs);
         vk.DestroyFence(device, self.render_fence, vk_alloc_cbs);
         vk.DestroyCommandPool(device, self.command_pool, vk_alloc_cbs);
-        self.global.deinit(vma_a);
+        self.camera_descriptor.deinit(vma_a);
     }
 };
 
@@ -365,66 +365,5 @@ pub fn NewFramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
                 vk_alloc_cbs,
             );
         }
-
-        // pub fn allocateDescriptorSets(
-        //     self: *Self,
-        //     device: vk.Device,
-        //     pool: vk.DescriptorPool,
-        // ) void {
-        //     for (&self.all) |*frame| {
-        //         const ai = vk.DescriptorSetAllocateInfo{
-        //             .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        //             .descriptorPool = pool,
-        //             .descriptorSetCount = 1,
-        //             .pSetLayouts = &self.global_descriptor_set_layout,
-        //         };
-        //         checkVk(vk.AllocateDescriptorSets(device, &ai, &frame.global.descriptor_set)) catch @panic("failed to allocate descriptor sets");
-        //     }
-        // }
-
-        // pub fn updateDescriptorSets(
-        //     self: *Self,
-        //     device: vk.Device,
-        //     texture_image_view: vk.ImageView,
-        //     texture_sampler: vk.Sampler,
-        // ) void {
-        //     for (&self.all) |*frame| {
-        //         const camera_data_info = vk.DescriptorBufferInfo{
-        //             .buffer = frame.global.data.buffer,
-        //             .offset = 0,
-        //             .range = @sizeOf(GPUCameraData),
-        //         };
-
-        //         const camera_data_write = vk.WriteDescriptorSet{
-        //             .dstBinding = 0,
-        //             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        //             .dstSet = frame.global.descriptor_set,
-        //             .dstArrayElement = 0,
-        //             .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        //             .descriptorCount = 1,
-        //             .pBufferInfo = &camera_data_info,
-        //         };
-
-        //         const img_info = vk.DescriptorImageInfo{
-        //             .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        //             .imageView = texture_image_view,
-        //             .sampler = texture_sampler,
-        //         };
-
-        //         const img_write = vk.WriteDescriptorSet{
-        //             .dstBinding = 1,
-        //             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        //             .dstSet = frame.global.descriptor_set,
-        //             .dstArrayElement = 0,
-        //             .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        //             .descriptorCount = 1,
-        //             .pImageInfo = &img_info,
-        //         };
-
-        //         const writes = &[_]vk.WriteDescriptorSet{ camera_data_write, img_write };
-
-        //         vk.UpdateDescriptorSets(device, writes.len, writes, 0, null);
-        //     }
-        // }
     };
 }

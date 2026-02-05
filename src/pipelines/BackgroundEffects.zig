@@ -4,7 +4,7 @@ const root = @import("../root.zig");
 const util = @import("../vulkan_util.zig");
 const mesh_mod = @import("../mesh.zig");
 const c = @import("../clibs.zig");
-const PipelineManager = @import("../PipelineManager.zig");
+const PipelineObject = @import("../PipelineObject.zig");
 const descriptor = @import("../descriptor.zig");
 const PipelineBuilder = @import("../PipelineBuilder.zig");
 const vki = @import("../vulkan_init.zig");
@@ -33,47 +33,39 @@ current_effect: []const u8 = undefined,
 all_effects: std.StringHashMap(EffectData) = undefined,
 draw_image: vma_usage.AllocatedImage = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
-descriptor_allocator: descriptor.Allocator = undefined,
+// descriptor_allocator: descriptor.Allocator = undefined,
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 descriptor_set: vk.DescriptorSet = undefined,
 
-pub fn initialize(
+pub fn init(
     self: *@This(),
-    a: Allocator,
-    vma_a: vma.Allocator,
-    init_data: PipelineManager.InitData,
+    allocs: PipelineObject.Allocators,
+    init_data: PipelineObject.InitData,
     _: *vki.UploadContext,
     device: vki.LogicalDevice,
     _: vk.RenderPass,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) anyerror!void {
-    self.all_effects = .init(a);
-    self.initDrawImage(vma_a, init_data.swapchain_extent, device.handle, alloc_cbs);
-    self.initDescriptorSet(a, device.handle, alloc_cbs);
+    self.all_effects = .init(allocs.std);
+    self.initDrawImage(allocs.vma, init_data.swapchain_extent, device.handle, alloc_cbs);
+    self.initDescriptorSet(allocs, device.handle, alloc_cbs);
     self.initPipeline(device.handle, alloc_cbs);
 }
 
 pub fn drawImgui(self: *@This()) void {
     var open = true;
     if (c.imgui.Begin("background", &open, 0)) {
-        var selected = self.all_effects.get(self.current_effect) orelse @panic("Invalid current effect");
+        var selected = self.all_effects.getPtr(self.current_effect) orelse @panic("Invalid current effect");
 
         c.imgui.Text("Selected effect: ", self.current_effect.ptr);
         if (c.imgui.BeginCombo("Background Effects", self.current_effect.ptr, 0)) {
             defer c.imgui.EndCombo();
             var iter = self.all_effects.keyIterator();
             while (iter.next()) |key| {
-                // const is_selected = (std.mem.eql(u8, self.current_effect, key));
                 if (c.imgui.Selectable(key.ptr))
                     self.current_effect = key.*;
             }
         }
-        // _ = c.cimgui.SliderInt(
-        //     "Effect Index",
-        //     @ptrCast(&self.current_background_effect),
-        //     0,
-        //     @as(c_int, @intCast(self.background_effects.items.len)) - 1,
-        // );
 
         _ = c.imgui.SliderFloat4("data1", &selected.constants.data1.x, 0.0, 1.0);
         _ = c.imgui.SliderFloat4("data2", &selected.constants.data2.x, 0.0, 1.0);
@@ -84,28 +76,25 @@ pub fn drawImgui(self: *@This()) void {
 
 pub fn deinit(
     self: *@This(),
-    _: Allocator,
-    vma_a: vma.Allocator,
+    allocs: PipelineObject.Allocators,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    c.vma.DestroyImage(vma_a, self.draw_image.image, self.draw_image.allocation);
+    c.vma.DestroyImage(allocs.vma, self.draw_image.image, self.draw_image.allocation);
     vk.DestroyImageView(device, self.draw_image.view, alloc_cbs);
-
-    self.descriptor_allocator.deinit(device);
 
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
 
     vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
 
     var iter = self.all_effects.valueIterator();
-    while (iter.next()) |effect| {
+    while (iter.next()) |effect|
         vk.DestroyPipeline(device, effect.pipeline, alloc_cbs);
-    }
+
     self.all_effects.deinit();
 }
 
-pub fn draw(self: @This(), dd: PipelineManager.DrawData, cmd: vk.CommandBuffer) void {
+pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
     util.transitionImageLayout(
         cmd,
         self.draw_image.image,
@@ -223,20 +212,19 @@ const GRADIENT_EFFECT_NAME = "gradient";
 const SKY_EFFECT_NAME = "sky";
 fn initDescriptorSet(
     self: *@This(),
-    a: Allocator,
+    allocs: PipelineObject.Allocators,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    self.descriptor_allocator = descriptor.Allocator.init(a, alloc_cbs);
     const sizes = [_]descriptor.PoolSizeRatio{.{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 1.0 }};
-    self.descriptor_allocator.initPool(device, 10, &sizes);
+    allocs.descriptor.initPool(device, 10, &sizes);
     {
-        var builder = descriptor.LayoutBuilder.init(a);
-        defer builder.deinit(a);
-        builder.addBinding(a, 0, vk.DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        var builder = descriptor.LayoutBuilder.init(allocs.std);
+        defer builder.deinit(allocs.std);
+        builder.addBinding(allocs.std, 0, vk.DESCRIPTOR_TYPE_STORAGE_IMAGE);
         self.descriptor_set_layout = builder.build(device, vk.SHADER_STAGE_COMPUTE_BIT, null, 0, alloc_cbs);
     }
-    self.descriptor_set = self.descriptor_allocator.allocate(device, self.descriptor_set_layout);
+    self.descriptor_set = allocs.descriptor.allocate(device, self.descriptor_set_layout);
 
     const draw_img_info = vk.DescriptorImageInfo{
         .imageLayout = vk.IMAGE_LAYOUT_GENERAL,

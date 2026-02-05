@@ -19,7 +19,6 @@ pub const InitData = struct {
 };
 
 idx_map: std.StringHashMap(usize),
-entries_with_draw_imgui: std.ArrayList([]const u8),
 entries: std.ArrayList(Entry),
 allocator: Allocator,
 
@@ -29,7 +28,6 @@ pub fn init(a: Allocator) @This() {
     return .{
         .idx_map = .init(a),
         .allocator = a,
-        .entries_with_draw_imgui = std.ArrayList([]const u8).initCapacity(a, 16) catch @panic("OOM"),
         .entries = std.ArrayList(Entry).initCapacity(a, 16) catch @panic("OOM"),
     };
 }
@@ -44,15 +42,12 @@ pub fn deinit(
     for (self.entries.items) |entry| {
         entry.deinit(self.allocator, vma_a, device, alloc_cbs);
     }
-    self.entries_with_draw_imgui.deinit(self.allocator);
     self.idx_map.deinit();
 }
 
 pub fn insert(self: *@This(), key: []const u8, entry: Entry) Allocator.Error!void {
     const idx = self.entries.items.len;
     try self.idx_map.put(key, idx);
-    if (entry.drawImguiFunc != null)
-        try self.entries_with_draw_imgui.append(self.allocator, key);
     self.entries.appendAssumeCapacity(entry);
 }
 
