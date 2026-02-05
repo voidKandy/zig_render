@@ -46,10 +46,9 @@ image_deletion_queue: std.ArrayList(vma_usage.VmaImageDeleter),
 
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
-
+frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
+frame_descriptor_pool: vk.DescriptorPool = undefined,
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
-/// this is now redundant
-descriptor_pool: vk.DescriptorPool = undefined,
 
 render_pass: vk.RenderPass = undefined,
 
@@ -58,9 +57,7 @@ background_effects: PipelineObject = undefined,
 
 upload_context: vki.UploadContext = .{},
 
-frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
-
-/// eventually these should be string hash maps
+/// eventually these should be removed
 meshes: []mesh_mod.Mesh3D = undefined,
 texture: texs.Texture = undefined,
 texture_sampler: vk.Sampler = undefined,
@@ -83,7 +80,7 @@ pub fn deinit(self: *Self) void {
 
     self.frames.deinit(self.logical_device.handle, self.vma_allocator, vk_alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, vk_alloc_cbs);
-    vk.DestroyDescriptorPool(self.logical_device.handle, self.descriptor_pool, vk_alloc_cbs);
+    vk.DestroyDescriptorPool(self.logical_device.handle, self.frame_descriptor_pool, vk_alloc_cbs);
 
     const allocs = PipelineObject.Allocators{
         .std = self.allocator,
@@ -97,9 +94,6 @@ pub fn deinit(self: *Self) void {
     self.graphics_pipelines.deinit();
 
     self.background_effects.deinit(allocs, self.logical_device.handle, vk_alloc_cbs);
-    // currently not created
-    // vk.DestroyPipeline(self.logical_device.handle, self.pipeline, vk_alloc_cbs);
-    // vk.DestroyPipelineLayout(self.logical_device.handle, self.pipeline_layout, vk_alloc_cbs);
 
     vk.DestroyRenderPass(self.logical_device.handle, self.render_pass, vk_alloc_cbs);
 
@@ -260,7 +254,7 @@ fn initVulkan(self: *Self) void {
     self.createMeshes();
     self.createDescriptorPool();
     self.frames.initBuffers(self.vma_allocator);
-    self.frames.allocateDescriptorSets(self.logical_device.handle, self.descriptor_pool);
+    self.frames.allocateDescriptorSets(self.logical_device.handle, self.frame_descriptor_pool);
     self.frames.updateDescriptorSets(self.logical_device.handle, self.texture.image_view, self.texture_sampler);
     self.initImgui();
 }
@@ -547,7 +541,7 @@ fn createDescriptorPool(self: *Self) void {
         .maxSets = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
     };
 
-    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, vk_alloc_cbs, &self.descriptor_pool)) catch @panic("failed to create descriptor pool");
+    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, vk_alloc_cbs, &self.frame_descriptor_pool)) catch @panic("failed to create descriptor pool");
 }
 
 fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
@@ -599,10 +593,13 @@ fn drawImgui(self: *Self) void {
     c.imgui.Render();
 }
 
+fn updateFrameData(self: *Self, frame: frames_mod.FrameData) void {
+    rotateCamera(frame, self.swapchain.extent);
+}
+
 fn drawFrame(self: *Self) void {
     var current_frame = self.frames.currentFrame();
-
-    // self.updateUniformBuffer();
+    self.updateFrameData(current_frame);
 
     const present_semaphore = current_frame.render_semaphore;
 
@@ -690,7 +687,7 @@ fn drawFrame(self: *Self) void {
 }
 
 /// If this function isn't called no uniform buffer will be passed to the shader, causing nothing to be drawn
-fn updateUniformBuffer(self: *Self) void {
+fn rotateCamera(frame: frames_mod.FrameData, swapchain_extent: vk.Extent2D) void {
     const State = struct {
         var start: i128 = 0;
     };
@@ -709,8 +706,8 @@ fn updateUniformBuffer(self: *Self) void {
     const far_plane = 10.0;
 
     const aspect =
-        @as(f32, @floatFromInt(self.swapchain.extent.width)) /
-        @as(f32, @floatFromInt(self.swapchain.extent.height));
+        @as(f32, @floatFromInt(swapchain_extent.width)) /
+        @as(f32, @floatFromInt(swapchain_extent.height));
     var ubo = frames_mod.GPUCameraData{
         .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 1.0),
         .view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0)),
@@ -719,7 +716,7 @@ fn updateUniformBuffer(self: *Self) void {
 
     ubo.proj.j.y *= -1;
 
-    const aligned_data: *frames_mod.GPUCameraData = @ptrCast(@alignCast(self.frames.currentFrame().global.mapped));
+    const aligned_data: *frames_mod.GPUCameraData = @ptrCast(@alignCast(frame.camera_data.mapped));
     aligned_data.* = ubo;
 }
 
