@@ -4,6 +4,10 @@ const core = @import("core");
 const vki = core.vulkan_init;
 const texs = core.textures;
 const vma_usage = core.vma_usage;
+const PipelineObject = core.PipelineObject;
+const PipelineObjManager = core.PipelineObjManager;
+const ResourceManager = core.ResourceManager;
+const pipelines = @import("pipelines");
 const mesh_mod = core.mesh;
 const c = core.clibs;
 const vk = c.vk;
@@ -36,10 +40,57 @@ pub fn main() void {
     const cwd = std.process.getCwd(cwd_buff[0..]) catch @panic("cwd_buff too small");
     std.log.info("Running from: {s}", .{cwd});
 
-    var engine = core.VulkanEngine.init(gpa.allocator(), &initResources);
+    var engine = core.VulkanEngine.init(gpa.allocator(), &initResources, &initPipelineObjects);
     defer engine.deinit();
 
     engine.run();
+}
+
+fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!void {
+    engine.pipeline_objects = PipelineObjManager.init(engine.allocator);
+
+    const init_data = PipelineObject.InitData{
+        .main_render_pass = engine.main_render_pass,
+        .swapchain_extent = engine.swapchain.extent,
+        .resources = engine.resources.?,
+    };
+    const allocs = PipelineObject.Allocators{
+        .std = engine.allocator,
+        .vma = engine.vma_allocator,
+        .descriptor = &engine.global_descriptor_allocator,
+    };
+    // engine.graphics_pipelines = .init(engine.allocator);
+
+    inline for ([_]struct { []const u8, type }{
+        .{ "triangle", pipelines.Triangle },
+    }) |v| {
+        var entry = PipelineObject.create(v.@"1", engine.allocator) catch @panic("OOM");
+        // BAD
+        // This should be done in some other way
+        // eventually meshes should be initialized with some string key to keep track of ids
+        const resources = &[_]ResourceManager.ResourceID{engine.resources.getId(.mesh3D, 0).?};
+        entry.init(
+            allocs,
+            init_data,
+            resources,
+            engine.logical_device,
+            vk_alloc_cbs,
+        );
+        engine.pipeline_objects.insert(allocs.std, .graphics, "meshes", v.@"0", entry) catch @panic("OOM");
+    }
+
+    {
+        const background_image = engine.resources.getId(.image, 0).?;
+        var entry = PipelineObject.create(pipelines.BackgroundEffects, engine.allocator) catch @panic("OOM");
+        entry.init(
+            allocs,
+            init_data,
+            &[_]ResourceManager.ResourceID{background_image},
+            engine.logical_device,
+            vk_alloc_cbs,
+        );
+        engine.pipeline_objects.insert(allocs.std, .compute, "background_image", null, entry) catch @panic("OOM");
+    }
 }
 
 fn initResources(engine: *core.VulkanEngine) anyerror!void {

@@ -7,6 +7,7 @@ const descriptor = @import("descriptor.zig");
 const c = @import("clibs.zig");
 const PipelineObject = @import("PipelineObject.zig");
 const ResourceManager = @import("ResourceManager.zig");
+const PipelineObjManager = @import("PipelineObjManager.zig");
 const BackgroundEffects = @import("pipelines/BackgroundEffects.zig");
 const vk = c.vk;
 const checkVk = vki.checkVk;
@@ -25,10 +26,11 @@ const Self = @This();
 allocator: std.mem.Allocator,
 vma_allocator: c.vma.Allocator = undefined,
 global_descriptor_allocator: descriptor.Allocator = undefined,
+
 resources: ResourceManager = undefined,
-/// resources cannot be created until vulkan is initialized, so
-/// this is passed at initialization to create resources
 createResourcesFn: *const fn (*@This()) anyerror!void,
+pipeline_objects: PipelineObjManager = undefined,
+createPipelineObjectsFn: *const fn (*@This()) anyerror!void,
 
 window: *sdl.Window = undefined,
 surface: vk.SurfaceKHR = undefined,
@@ -44,17 +46,18 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 frame_descriptor_pool: vk.DescriptorPool = undefined,
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
-graphics_pipelines: std.StringHashMap(PipelineObject) = undefined,
-background_effects: PipelineObject = undefined,
-
 upload_context: vki.UploadContext = .{},
 
-// add crete pipelienes as a function parameter
-pub fn init(a: std.mem.Allocator, createResourcesFn: *const fn (*@This()) anyerror!void) Self {
+pub fn init(
+    a: std.mem.Allocator,
+    createResourcesFn: *const fn (*@This()) anyerror!void,
+    createPipelineObjectsFn: *const fn (*@This()) anyerror!void,
+) Self {
     return .{
         .allocator = a,
         .global_descriptor_allocator = .init(a, vk_alloc_cbs),
         .createResourcesFn = createResourcesFn,
+        .createPipelineObjectsFn = createPipelineObjectsFn,
     };
 }
 
@@ -74,12 +77,7 @@ pub fn deinit(self: *Self) void {
         .descriptor = &self.global_descriptor_allocator,
     };
 
-    var grphx_iter = self.graphics_pipelines.valueIterator();
-    while (grphx_iter.next()) |node|
-        node.deinit(allocs, self.logical_device.handle, vk_alloc_cbs);
-    self.graphics_pipelines.deinit();
-
-    self.background_effects.deinit(allocs, self.logical_device.handle, vk_alloc_cbs);
+    self.pipeline_objects.deinit(allocs, self.logical_device.handle, vk_alloc_cbs);
 
     self.upload_context.deinit(self.logical_device.handle, vk_alloc_cbs);
 
@@ -217,10 +215,9 @@ fn initVulkan(self: *Self) void {
 
     self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
 
-    self.createResourcesFn(self) catch @panic("failed to create resources");
-
     self.initMainRenderPass();
-    self.initPipelineObjects();
+    self.createResourcesFn(self) catch @panic("failed to create resources");
+    self.createPipelineObjectsFn(self) catch @panic("failed to create pipeline objects");
 
     // TODO
     // think about how render passes & frames should be managed
@@ -231,9 +228,7 @@ fn initVulkan(self: *Self) void {
         vk_alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
-    // BAD
-    // should be moved to init resources
-    self.createDescriptorPool();
+    self.createFrameDescriptorPool();
     self.frames.initBuffers(self.vma_allocator);
     self.frames.allocateDescriptorSets(self.logical_device.handle, self.frame_descriptor_pool);
 
@@ -316,51 +311,7 @@ fn initMainRenderPass(self: *Self) void {
     checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, vk_alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
 }
 
-fn initPipelineObjects(self: *Self) void {
-    const init_data = PipelineObject.InitData{
-        .main_render_pass = self.main_render_pass,
-        .swapchain_extent = self.swapchain.extent,
-        .resources = self.resources,
-    };
-    const allocs = PipelineObject.Allocators{
-        .std = self.allocator,
-        .vma = self.vma_allocator,
-        .descriptor = &self.global_descriptor_allocator,
-    };
-    self.graphics_pipelines = .init(self.allocator);
-
-    inline for ([_]struct { []const u8, type }{
-        .{ "triangle", @import("pipelines/Triangle.zig") },
-    }) |v| {
-        var entry = PipelineObject.create(v.@"1", self.allocator) catch @panic("OOM");
-        // BAD
-        // This should be done in some other way
-        // eventually meshes should be initialized with some string key to keep track of ids
-        const resources = &[_]ResourceManager.ResourceID{self.resources.getId(.mesh3D, 0).?};
-        entry.init(
-            allocs,
-            init_data,
-            resources,
-            self.logical_device,
-            vk_alloc_cbs,
-        );
-        self.graphics_pipelines.put(v.@"0", entry) catch @panic("OOM");
-    }
-
-    {
-        const background_image = self.resources.getId(.image, 0).?;
-        self.background_effects = PipelineObject.create(BackgroundEffects, self.allocator) catch @panic("OOM");
-        self.background_effects.init(
-            allocs,
-            init_data,
-            &[_]ResourceManager.ResourceID{background_image},
-            self.logical_device,
-            vk_alloc_cbs,
-        );
-    }
-}
-
-fn createDescriptorPool(self: *Self) void {
+fn createFrameDescriptorPool(self: *Self) void {
     const ubo_size = vk.DescriptorPoolSize{
         .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         .descriptorCount = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
@@ -382,52 +333,12 @@ fn createDescriptorPool(self: *Self) void {
     checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, vk_alloc_cbs, &self.frame_descriptor_pool)) catch @panic("failed to create descriptor pool");
 }
 
-fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
-    var begin_info = vk.CommandBufferBeginInfo{
-        .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-    };
-
-    checkVk(vk.BeginCommandBuffer(command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
-    defer checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
-
-    const draw_data = PipelineObject.DrawData{
-        .resources = self.resources,
-        .swapchain = self.swapchain,
-        .image_index = image_idx,
-    };
-
-    self.background_effects.draw(draw_data, command_buffer);
-
-    {
-        var render_pass_info = vk.RenderPassBeginInfo{
-            .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .renderPass = self.main_render_pass,
-            .framebuffer = self.swapchain.framebuffers[image_idx],
-            .renderArea = .{ .offset = .{
-                .x = 0,
-                .y = 0,
-            }, .extent = vk.Extent2D{
-                .height = self.swapchain.extent.height,
-                .width = self.swapchain.extent.width,
-            } },
-        };
-
-        vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
-        defer vk.CmdEndRenderPass(command_buffer);
-
-        var iter = self.graphics_pipelines.valueIterator();
-        while (iter.next()) |entry|
-            entry.draw(draw_data, command_buffer);
-
-        c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), command_buffer);
-    }
-}
-
 fn drawImgui(self: *Self) void {
     c.imgui.impl_vulkan.NewFrame();
     c.imgui.impl_sdl3.NewFrame();
     c.imgui.NewFrame();
-    self.background_effects.drawImgui();
+    self.pipeline_objects.runDrawImgui(.compute);
+    self.pipeline_objects.runDrawImgui(.graphics);
     c.imgui.End();
     c.imgui.Render();
 }
@@ -525,6 +436,44 @@ fn drawFrame(self: *Self) void {
     self.frames.incrementFrame();
 }
 
+fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx: u32) void {
+    var begin_info = vk.CommandBufferBeginInfo{
+        .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    };
+
+    checkVk(vk.BeginCommandBuffer(command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
+    defer checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
+
+    const draw_data = PipelineObject.DrawData{
+        .resources = self.resources,
+        .swapchain = self.swapchain,
+        .image_index = image_idx,
+    };
+
+    self.pipeline_objects.runDraw(.compute, draw_data, command_buffer);
+
+    {
+        var render_pass_info = vk.RenderPassBeginInfo{
+            .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .renderPass = self.main_render_pass,
+            .framebuffer = self.swapchain.framebuffers[image_idx],
+            .renderArea = .{ .offset = .{
+                .x = 0,
+                .y = 0,
+            }, .extent = vk.Extent2D{
+                .height = self.swapchain.extent.height,
+                .width = self.swapchain.extent.width,
+            } },
+        };
+
+        vk.CmdBeginRenderPass(command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
+        defer vk.CmdEndRenderPass(command_buffer);
+
+        self.pipeline_objects.runDraw(.graphics, draw_data, command_buffer);
+
+        c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), command_buffer);
+    }
+}
 /// If this function isn't called no uniform buffer will be passed to the shader, causing nothing to be drawn
 fn rotateCamera(frame: frames_mod.FrameData, swapchain_extent: vk.Extent2D) void {
     const State = struct {

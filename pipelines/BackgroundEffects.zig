@@ -1,20 +1,20 @@
 const std = @import("std");
 const log = std.log.scoped(.BackgroundEffects);
-const root = @import("../root.zig");
-const util = @import("../vulkan_util.zig");
-const mesh_mod = @import("../mesh.zig");
-const c = @import("../clibs.zig");
-const PipelineObject = @import("../PipelineObject.zig");
-const ResourceManager = @import("../ResourceManager.zig");
-const descriptor = @import("../descriptor.zig");
-const PipelineBuilder = @import("../PipelineBuilder.zig");
-const vki = @import("../vulkan_init.zig");
-const vma_usage = @import("../vma_usage.zig");
+const core = @import("core");
+const util = core.vulkan_util;
+const mesh_mod = core.mesh;
+const c = core.clibs;
+const PipelineObject = core.PipelineObject;
+const ResourceManager = core.ResourceManager;
+const descriptor = core.descriptor;
+const PipelineBuilder = core.PipelineBuilder;
+const vki = core.vulkan_init;
+const vma_usage = core.vma_usage;
 const vk = c.vk;
 const vma = c.vma;
 const checkVk = vki.checkVk;
 const Allocator = std.mem.Allocator;
-const Vec4 = root.math.Vec4;
+const Vec4 = core.math.Vec4;
 
 /// potentially bad that this is managed externally
 const ComputePushConstants = struct {
@@ -241,9 +241,9 @@ fn initPipeline(
     checkVk(vk.CreatePipelineLayout(device, &compute_layout, alloc_cbs, &self.pipeline_layout)) catch
         @panic("failed to create compute pipeline layout");
 
-    const gradient_shader = root.shaders.createShaderModule("gradient_color.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
+    const gradient_shader = core.shaders.createShaderModule("gradient_color.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(device, gradient_shader, alloc_cbs);
-    const sky_shader = root.shaders.createShaderModule("sky.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
+    const sky_shader = core.shaders.createShaderModule("sky.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(device, sky_shader, alloc_cbs);
 
     const stage_info = vk.PipelineShaderStageCreateInfo{

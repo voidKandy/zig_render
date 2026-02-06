@@ -1,17 +1,17 @@
 const std = @import("std");
-const root = @import("../root.zig");
-const mesh_mod = @import("../mesh.zig");
-const c = @import("../clibs.zig");
-const PipelineObject = @import("../PipelineObject.zig");
-const PipelineBuilder = @import("../PipelineBuilder.zig");
-const ResourceManager = @import("../ResourceManager.zig");
-const vki = @import("../vulkan_init.zig");
+const core = @import("core");
+const mesh_mod = core.mesh;
+const c = core.clibs;
+const PipelineObject = core.PipelineObject;
+const PipelineBuilder = core.PipelineBuilder;
+const ResourceManager = core.ResourceManager;
+const vki = core.vulkan_init;
 const vk = c.vk;
 const vma = c.vma;
 const checkVk = vki.checkVk;
 const Allocator = std.mem.Allocator;
-const Vec2 = root.math.Vec2;
-const Vec3 = root.math.Vec3;
+const Vec2 = core.math.Vec2;
+const Vec3 = core.math.Vec3;
 
 mesh_id: ResourceManager.ResourceID = undefined,
 render_pass_id: ResourceManager.ResourceID = undefined,
@@ -87,14 +87,14 @@ fn createPipeline(
 ) vk.Pipeline {
     var builder = PipelineBuilder.init(a, alloc_cbs);
     defer builder.deinit();
-    const vert_shader = root.shaders.createShaderModule(
+    const vert_shader = core.shaders.createShaderModule(
         "colored_triangle.vert",
         device,
         alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(device, vert_shader, alloc_cbs);
 
-    const frag_shader = root.shaders.createShaderModule(
+    const frag_shader = core.shaders.createShaderModule(
         "colored_triangle.frag",
         device,
         alloc_cbs,

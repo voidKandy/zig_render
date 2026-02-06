@@ -5,11 +5,16 @@ pub const shaders = @import("shaders.zig");
 pub const mesh = @import("mesh.zig");
 pub const math = @import("math3d.zig");
 pub const textures = @import("textures.zig");
+pub const descriptor = @import("descriptor.zig");
 pub const ResourceManager = @import("ResourceManager.zig");
+pub const PipelineObject = @import("PipelineObject.zig");
+pub const PipelineObjManager = @import("PipelineObjManager.zig");
+pub const PipelineBuilder = @import("PipelineBuilder.zig");
 // pub const ecs = @import("ecs.zig");
 pub const clibs = @import("clibs.zig");
 pub const vma_usage = @import("vma_usage.zig");
 pub const vulkan_init = @import("vulkan_init.zig");
+pub const vulkan_util = @import("vulkan_util.zig");
 pub const VulkanEngine = @import("VulkanEngine.zig");
 pub const OldVulkanEngine = @import("OldVulkanEngine.zig");
 

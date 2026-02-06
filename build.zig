@@ -33,9 +33,6 @@ pub fn build(b: *std.Build) !void {
 
     core_lib.linkSystemLibrary("SDL3", .{});
     core_lib.linkSystemLibrary("vulkan", .{});
-
-    // exe.addLibraryPath(.{ .cwd_relative = "libs/sdl3/lib" });
-    // exe.addIncludePath(.{ .cwd_relative = "libs/sdl3/include" });
     const env_map = try std.process.getEnvMap(b.allocator);
     if (env_map.get("VK_SDK_PATH")) |path| {
         core_lib.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/lib", .{path}) catch @panic("OOM") });
@@ -114,10 +111,23 @@ pub fn build(b: *std.Build) !void {
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
-    buildBinaries(b, target, optimize, core_lib);
+    const pipelines_lib = buildPipelinesLib(b, target, core_lib);
+    buildBinaries(b, target, optimize, &[_]struct { []const u8, *std.Build.Module }{
+        .{ "core", core_lib },
+        .{ "pipelines", pipelines_lib },
+    });
 }
 
-fn buildBinaries(b: *std.Build, target: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, core_lib: *std.Build.Module) void {
+fn buildPipelinesLib(b: *std.Build, target: std.Build.ResolvedTarget, core_lib: *std.Build.Module) *std.Build.Module {
+    const mod = b.addModule("pipelines", .{
+        .root_source_file = b.path("pipelines/root.zig"),
+        .target = target,
+    });
+    mod.addImport("core", core_lib);
+    return mod;
+}
+
+fn buildBinaries(b: *std.Build, target: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, imports: []const struct { []const u8, *std.Build.Module }) void {
     // const bins_entry = b.path("bins/all.zig");
     const bins_dir = "bins";
     const dir = std.fs.cwd().openDir(bins_dir, .{}) catch @panic("Failed to get directory");
@@ -143,7 +153,8 @@ fn buildBinaries(b: *std.Build, target: std.Build.ResolvedTarget, opt: std.built
         });
 
         exe.linkLibCpp();
-        exe.root_module.addImport("core", core_lib);
+        for (imports) |import|
+            exe.root_module.addImport(import.@"0", import.@"1");
 
         b.installArtifact(exe);
         const run = b.addRunArtifact(exe);
