@@ -215,10 +215,6 @@ pub const Mesh3D = struct {
     vertex_buffer: AllocatedBuffer = undefined,
     index_buffer: AllocatedBuffer = undefined,
     const Self = @This();
-    // pub const PushConstants = struct {
-    //     data: Vec4 = undefined,
-    //     render_matrix: m3d.Mat4,
-    // };
 
     pub fn init(a: std.mem.Allocator, vertices: []const Vertex3D, indices: []const u16) std.mem.Allocator.Error!Self {
         return .{
@@ -227,7 +223,7 @@ pub const Mesh3D = struct {
         };
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator, vma_a: c.vma.Allocator) void {
+    pub fn deinit(self: Self, allocator: std.mem.Allocator, vma_a: c.vma.Allocator) void {
         c.vma.DestroyBuffer(vma_a, self.index_buffer.buffer, self.index_buffer.allocation);
         c.vma.DestroyBuffer(vma_a, self.vertex_buffer.buffer, self.vertex_buffer.allocation);
         allocator.free(self.vertices);

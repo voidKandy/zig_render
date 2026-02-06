@@ -4,6 +4,7 @@ const mesh_mod = @import("../mesh.zig");
 const c = @import("../clibs.zig");
 const PipelineObject = @import("../PipelineObject.zig");
 const PipelineBuilder = @import("../PipelineBuilder.zig");
+const ResourceManager = @import("../ResourceManager.zig");
 const vki = @import("../vulkan_init.zig");
 const vk = c.vk;
 const vma = c.vma;
@@ -13,6 +14,7 @@ const Vec2 = root.math.Vec2;
 const Vec3 = root.math.Vec3;
 
 mesh: mesh_mod.Mesh3D = undefined,
+mesh_id: ResourceManager.ResourceID = undefined,
 pipeline: vk.Pipeline = undefined,
 layout: vk.PipelineLayout = undefined,
 
@@ -22,35 +24,14 @@ pub fn init(
     self: *@This(),
     allocs: PipelineObject.Allocators,
     init_data: PipelineObject.InitData,
-    upload_ctx: *vki.UploadContext,
+    resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
     render_pass: vk.RenderPass,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) anyerror!void {
-    const vertices = &[_]mesh_mod.Vertex3D{
-        .{
-            .position = Vec3.make(-1.0, 1.0, 0.0),
-            .normal = Vec3.ZERO,
-            .color = Vec3.make(1.0, 0.0, 0.0),
-            .uv = Vec2.make(1.0, 0.0),
-        },
-        .{
-            .position = Vec3.make(1.0, 1.0, 0.0),
-            .normal = Vec3.ZERO,
-            .color = Vec3.make(0.0, 0.0, 1.0),
-            .uv = Vec2.make(0.0, 1.0),
-        },
-        .{
-            .position = Vec3.make(0.0, -1.0, 0.0),
-            .normal = Vec3.ZERO,
-            .color = Vec3.make(1.0, 1.0, 1.0),
-            .uv = Vec2.make(1.0, 1.0),
-        },
-    };
-    const indices = &[_]u16{ 0, 1, 2 };
-
-    self.mesh = try mesh_mod.Mesh3D.init(allocs.std, vertices, indices);
-    self.mesh.upload(allocs.vma, upload_ctx, device);
+    if (resources.len != 1) return error.UnexpectedResourcesLength;
+    if (resources[0] != .mesh3D) return error.UnexpectedResourceType;
+    self.mesh_id = resources[0];
 
     {
         const ci = vki.pipelineLayoutCreateInfo();
@@ -63,6 +44,8 @@ pub fn init(
 
 pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
     vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
+    const mesh_resource = draw_data.resources.query(self.mesh_id) orelse @panic("NO MESH?");
+
     const viewport = vk.Viewport{
         .x = 0,
         .y = 0,
@@ -85,14 +68,12 @@ pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffe
     };
 
     const offset: u64 = 0;
-    vk.CmdBindVertexBuffers(cmd, 0, 1, &self.mesh.vertex_buffer.buffer, &offset);
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh_resource.mesh3D.vertex_buffer.buffer, &offset);
     vk.CmdSetScissor(cmd, 0, 1, &scissor);
-    // vk.CmdDrawIndexed(cmd, @as(u32, @intCast(mesh.indices.len), 1, mesh, vertexOffset: i32, firstInstance: u32)
-    vk.CmdDraw(cmd, @as(u32, @intCast(self.mesh.vertices.len)), 1, 0, 0);
+    vk.CmdDraw(cmd, @as(u32, @intCast(mesh_resource.mesh3D.vertices.len)), 1, 0, 0);
 }
 
-pub fn deinit(self: *Self, allocs: PipelineObject.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-    self.mesh.deinit(allocs.std, allocs.vma);
+pub fn deinit(self: *Self, _: PipelineObject.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
 }

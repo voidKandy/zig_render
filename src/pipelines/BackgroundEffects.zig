@@ -5,6 +5,7 @@ const util = @import("../vulkan_util.zig");
 const mesh_mod = @import("../mesh.zig");
 const c = @import("../clibs.zig");
 const PipelineObject = @import("../PipelineObject.zig");
+const ResourceManager = @import("../ResourceManager.zig");
 const descriptor = @import("../descriptor.zig");
 const PipelineBuilder = @import("../PipelineBuilder.zig");
 const vki = @import("../vulkan_init.zig");
@@ -16,7 +17,6 @@ const Allocator = std.mem.Allocator;
 const Vec4 = root.math.Vec4;
 
 /// potentially bad that this is managed externally
-pub const DRAW_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
 const ComputePushConstants = struct {
     data1: Vec4 = Vec4.ZERO,
     data2: Vec4 = Vec4.ZERO,
@@ -31,7 +31,8 @@ const EffectData = struct {
 
 current_effect: []const u8 = undefined,
 all_effects: std.StringHashMap(EffectData) = undefined,
-draw_image: vma_usage.AllocatedImage = undefined,
+draw_image_id: ResourceManager.ResourceID = undefined,
+// draw_image: vma_usage.AllocatedImage = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 // descriptor_allocator: descriptor.Allocator = undefined,
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
@@ -41,14 +42,19 @@ pub fn init(
     self: *@This(),
     allocs: PipelineObject.Allocators,
     init_data: PipelineObject.InitData,
-    _: *vki.UploadContext,
+    resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
     _: vk.RenderPass,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) anyerror!void {
+    if (resources.len != 1) return error.UnexpectedResourcesLength;
+    if (resources[0] != .image) return error.UnexpectedResourceType;
+    self.draw_image_id = resources[0];
+    const draw_image_resource = init_data.resources.query(self.draw_image_id) orelse @panic("No draw image?");
+
     self.all_effects = .init(allocs.std);
-    self.initDrawImage(allocs.vma, init_data.swapchain_extent, device.handle, alloc_cbs);
-    self.initDescriptorSet(allocs, device.handle, alloc_cbs);
+    // self.initDrawImage(allocs.vma, init_data.swapchain_extent, device.handle, alloc_cbs);
+    self.initDescriptorSet(allocs, device.handle, draw_image_resource.image.view, alloc_cbs);
     self.initPipeline(device.handle, alloc_cbs);
 }
 
@@ -76,12 +82,12 @@ pub fn drawImgui(self: *@This()) void {
 
 pub fn deinit(
     self: *@This(),
-    allocs: PipelineObject.Allocators,
+    _: PipelineObject.Allocators,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    c.vma.DestroyImage(allocs.vma, self.draw_image.image, self.draw_image.allocation);
-    vk.DestroyImageView(device, self.draw_image.view, alloc_cbs);
+    // c.vma.DestroyImage(allocs.vma, self.draw_image.image, self.draw_image.allocation);
+    // vk.DestroyImageView(device, self.draw_image.view, alloc_cbs);
 
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
 
@@ -95,9 +101,12 @@ pub fn deinit(
 }
 
 pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
+    const draw_image_resource = dd.resources.query(self.draw_image_id) orelse @panic("No draw image?");
+    const draw_image = draw_image_resource.image;
+
     util.transitionImageLayout(
         cmd,
-        self.draw_image.image,
+        draw_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
         vk.IMAGE_LAYOUT_GENERAL,
         vk.ACCESS_MEMORY_WRITE_BIT,
@@ -128,14 +137,14 @@ pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) v
         vk.CmdPushConstants(cmd, self.pipeline_layout, vk.SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(ComputePushConstants), &effect.constants);
 
         // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
-        const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.width)) / 16.0));
-        const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.draw_image.extent.height)) / 16.0));
+        const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(draw_image.extent.width)) / 16.0));
+        const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(draw_image.extent.height)) / 16.0));
         vk.CmdDispatch(cmd, w, h, 1);
     }
 
     util.transitionImageLayout(
         cmd,
-        self.draw_image.image,
+        draw_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
         vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
@@ -153,11 +162,11 @@ pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) v
 
     util.copyImageToImage(
         cmd,
-        self.draw_image.image,
+        draw_image.image,
         dd.swapchain.images[dd.image_index],
         vk.Extent2D{
-            .height = self.draw_image.extent.height,
-            .width = self.draw_image.extent.width,
+            .height = draw_image.extent.height,
+            .width = draw_image.extent.width,
         },
         dd.swapchain.extent,
     );
@@ -172,48 +181,13 @@ pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) v
     );
 }
 
-fn initDrawImage(
-    self: *@This(),
-    vma_a: vma.Allocator,
-    extent: vk.Extent2D,
-    device: vk.Device,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    //hardcoding the draw format to 32 bit float
-    self.draw_image.format = DRAW_IMAGE_FORMAT;
-    self.draw_image.extent = vk.Extent3D{
-        .width = extent.width,
-        .height = extent.height,
-        .depth = 1,
-    };
-
-    const usages: vk.ImageUsageFlags =
-        vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
-        vk.IMAGE_USAGE_TRANSFER_DST_BIT |
-        vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-    const ci = vki.imageCreateInfo(self.draw_image.format, usages, self.draw_image.extent);
-
-    const ai = c.vma.AllocationCreateInfo{
-        .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-        .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-    };
-
-    checkVk(c.vma.CreateImage(vma_a, &ci, &ai, &self.draw_image.image, &self.draw_image.allocation, null)) catch
-        @panic("failed to create draw image");
-
-    //build a image-view for the draw image to use for rendering
-    const render_view_info = vki.imageViewCreateInfo(self.draw_image.format, self.draw_image.image, vk.IMAGE_ASPECT_COLOR_BIT);
-
-    checkVk(vk.CreateImageView(device, &render_view_info, alloc_cbs, &self.draw_image.view)) catch @panic("failed to create image view");
-}
-
 const GRADIENT_EFFECT_NAME = "gradient";
 const SKY_EFFECT_NAME = "sky";
 fn initDescriptorSet(
     self: *@This(),
     allocs: PipelineObject.Allocators,
     device: vk.Device,
+    draw_image_view: vk.ImageView,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     const sizes = [_]descriptor.PoolSizeRatio{.{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 1.0 }};
@@ -228,7 +202,7 @@ fn initDescriptorSet(
 
     const draw_img_info = vk.DescriptorImageInfo{
         .imageLayout = vk.IMAGE_LAYOUT_GENERAL,
-        .imageView = self.draw_image.view,
+        .imageView = draw_image_view,
     };
 
     const draw_img_write = vk.WriteDescriptorSet{

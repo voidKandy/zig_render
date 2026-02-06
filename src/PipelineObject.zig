@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.PipelineObject);
 const c = @import("clibs.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
+const ResourceManager = @import("ResourceManager.zig");
 const descriptor = @import("descriptor.zig");
 const vki = @import("vulkan_init.zig");
 const vk = c.vk;
@@ -22,11 +23,13 @@ const vma = c.vma;
 /// own data.
 /// This way, pipelines could share data and resources could be managed more efficiently.
 pub const DrawData = struct {
+    resources: ResourceManager,
     swapchain: vki.Swapchain,
     image_index: usize,
 };
 pub const InitData = struct {
     swapchain_extent: vk.Extent2D,
+    resources: ResourceManager,
 };
 
 pub const Allocators = struct {
@@ -42,7 +45,8 @@ const InitFunc = fn (
     *anyopaque,
     Allocators,
     InitData,
-    *vki.UploadContext,
+    []const ResourceManager.ResourceID,
+    // *vki.UploadContext,
     vki.LogicalDevice,
     vk.RenderPass,
     ?*vk.AllocationCallbacks,
@@ -76,8 +80,8 @@ pub fn create(
             }
         }.d else null,
         .initializeFunc = &struct {
-            fn i(p: *anyopaque, allocs: Allocators, idat: InitData, ctx: *vki.UploadContext, logi: vki.LogicalDevice, rp: vk.RenderPass, cbs: ?*vk.AllocationCallbacks) anyerror!void {
-                try @as(*T, @ptrCast(@alignCast(p))).init(allocs, idat, ctx, logi, rp, cbs);
+            fn i(p: *anyopaque, allocs: Allocators, idat: InitData, r: []const ResourceManager.ResourceID, logi: vki.LogicalDevice, rp: vk.RenderPass, cbs: ?*vk.AllocationCallbacks) anyerror!void {
+                try @as(*T, @ptrCast(@alignCast(p))).init(allocs, idat, r, logi, rp, cbs);
             }
         }.i,
         .cleanupFunc = &struct {
@@ -94,7 +98,7 @@ pub fn init(
     self: *@This(),
     allocs: Allocators,
     init_data: InitData,
-    upload_ctx: *vki.UploadContext,
+    resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
     render_pass: vk.RenderPass,
     alloc_cbs: ?*vk.AllocationCallbacks,
@@ -103,7 +107,7 @@ pub fn init(
         self.data_ptr,
         allocs,
         init_data,
-        upload_ctx,
+        resources,
         device,
         render_pass,
         alloc_cbs,

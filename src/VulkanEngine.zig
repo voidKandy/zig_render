@@ -11,6 +11,7 @@ const mesh_mod = @import("mesh.zig");
 const c = @import("clibs.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
 const PipelineObject = @import("PipelineObject.zig");
+const ResourceManager = @import("ResourceManager.zig");
 const BackgroundEffects = @import("pipelines/BackgroundEffects.zig");
 const vk = c.vk;
 const checkVk = vki.checkVk;
@@ -34,6 +35,7 @@ const window_extent = vk.Extent2D{ .width = 1600, .height = 900 };
 allocator: std.mem.Allocator,
 vma_allocator: c.vma.Allocator = undefined,
 global_descriptor_allocator: descriptor.Allocator = undefined,
+resources: ResourceManager = undefined,
 
 window: *sdl.Window = undefined,
 surface: vk.SurfaceKHR = undefined,
@@ -103,6 +105,8 @@ pub fn deinit(self: *Self) void {
     // texture should have deinit?
     vk.DestroyImageView(self.logical_device.handle, self.texture.image_view, vk_alloc_cbs);
     c.vma.DestroyImage(self.vma_allocator, self.texture.image.image, self.texture.image.allocation);
+
+    self.resources.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
 
     for (0..self.meshes.len) |i|
         self.meshes[i].deinit(self.allocator, self.vma_allocator);
@@ -239,6 +243,7 @@ fn initVulkan(self: *Self) void {
     // self.frames.initDescriptors(self.allocator, self.logical_device.handle, vk_alloc_cbs);
     self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
 
+    self.initResources();
     self.createRenderPass();
     self.initPipelineObjects();
 
@@ -249,9 +254,10 @@ fn initVulkan(self: *Self) void {
         vk_alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
+    // BAD
+    // should be moved to init resources
     self.createTextureImage();
     self.createTextureSampler();
-    self.createMeshes();
     self.createDescriptorPool();
     self.frames.initBuffers(self.vma_allocator);
     self.frames.allocateDescriptorSets(self.logical_device.handle, self.frame_descriptor_pool);
@@ -259,9 +265,109 @@ fn initVulkan(self: *Self) void {
     self.initImgui();
 }
 
+fn initResources(self: *Self) void {
+    self.resources = ResourceManager.init(self.allocator) catch @panic("OOM");
+    self.initMeshes();
+    self.initBackgroundDrawImage();
+}
+
+fn initMeshes(self: *Self) void {
+    const vertices_indices = [_]struct { []const mesh_mod.Vertex3D, []const u16 }{
+        .{
+            // this is a triangle
+            &[_]mesh_mod.Vertex3D{
+                .{
+                    .position = Vec3.make(-1.0, 1.0, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 0.0, 0.0),
+                    .uv = Vec2.make(1.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(1.0, 1.0, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 0.0, 1.0),
+                    .uv = Vec2.make(0.0, 1.0),
+                },
+                .{
+                    .position = Vec3.make(0.0, -1.0, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 1.0, 1.0),
+                    .uv = Vec2.make(1.0, 1.0),
+                },
+            },
+            &[_]u16{ 0, 1, 2 },
+        },
+        .{
+            &[_]mesh_mod.Vertex3D{
+                .{
+                    .position = Vec3.make(-0.5, -0.5, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 0.0, 0.0),
+                    .uv = Vec2.make(1.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(0.5, -0.5, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 1.0, 0.0),
+                    .uv = Vec2.make(0.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(0.5, 0.5, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 0.0, 1.0),
+                    .uv = Vec2.make(0.0, 1.0),
+                },
+                .{
+                    .position = Vec3.make(-0.5, 0.5, 0.0),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 1.0, 1.0),
+                    .uv = Vec2.make(1.0, 1.0),
+                },
+            },
+            &[_]u16{ 0, 1, 2, 2, 3, 0 },
+        },
+        .{
+            &[_]mesh_mod.Vertex3D{
+                .{
+                    .position = Vec3.make(-0.5, -0.5, -0.5),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 0.0, 0.0),
+                    .uv = Vec2.make(0.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(0.5, -0.5, -0.5),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 1.0, 0.0),
+                    .uv = Vec2.make(1.0, 0.0),
+                },
+                .{
+                    .position = Vec3.make(0.5, 0.5, -0.5),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(0.0, 0.0, 1.0),
+                    .uv = Vec2.make(1.0, 1.0),
+                },
+                .{
+                    .position = Vec3.make(-0.5, 0.5, -0.5),
+                    .normal = Vec3.ZERO,
+                    .color = Vec3.make(1.0, 1.0, 1.0),
+                    .uv = Vec2.make(0.0, 1.0),
+                },
+            },
+            &[_]u16{ 0, 1, 2, 2, 3, 0 },
+        },
+    };
+
+    for (vertices_indices) |vi| {
+        var mesh = mesh_mod.Mesh3D.init(self.allocator, vi.@"0", vi.@"1") catch @panic("OOM");
+        mesh.upload(self.vma_allocator, &self.upload_context, self.logical_device);
+        _ = self.resources.insert(.{ .mesh3D = mesh }) catch @panic("OOM");
+    }
+}
+
 fn initPipelineObjects(self: *Self) void {
     const init_data = PipelineObject.InitData{
         .swapchain_extent = self.swapchain.extent,
+        .resources = self.resources,
     };
     const allocs = PipelineObject.Allocators{
         .std = self.allocator,
@@ -274,10 +380,14 @@ fn initPipelineObjects(self: *Self) void {
         .{ "triangle", @import("pipelines/Triangle.zig") },
     }) |v| {
         var entry = PipelineObject.create(v.@"1", self.allocator) catch @panic("OOM");
+        // BAD
+        // This should be done in some other way
+        // eventually meshes should be initialized with some string key to keep track of ids
+        const resources = &[_]ResourceManager.ResourceID{self.resources.getId(.mesh3D, 0).?};
         entry.init(
             allocs,
             init_data,
-            &self.upload_context,
+            resources,
             self.logical_device,
             self.render_pass,
             vk_alloc_cbs,
@@ -286,11 +396,12 @@ fn initPipelineObjects(self: *Self) void {
     }
 
     {
+        const background_image = self.resources.getId(.image, 0).?;
         self.background_effects = PipelineObject.create(BackgroundEffects, self.allocator) catch @panic("OOM");
         self.background_effects.init(
             allocs,
             init_data,
-            &self.upload_context,
+            &[_]ResourceManager.ResourceID{background_image},
             self.logical_device,
             self.render_pass,
             vk_alloc_cbs,
@@ -298,9 +409,43 @@ fn initPipelineObjects(self: *Self) void {
     }
 }
 
+pub const BG_DRAW_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
+fn initBackgroundDrawImage(self: *@This()) void {
+    var image: vma_usage.AllocatedImage = undefined;
+    //hardcoding the draw format to 32 bit float
+    image.format = BG_DRAW_IMAGE_FORMAT;
+    image.extent = vk.Extent3D{
+        .width = self.swapchain.extent.width,
+        .height = self.swapchain.extent.height,
+        .depth = 1,
+    };
+
+    const usages: vk.ImageUsageFlags =
+        vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
+        vk.IMAGE_USAGE_TRANSFER_DST_BIT |
+        vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    const ci = vki.imageCreateInfo(image.format, usages, image.extent);
+
+    const ai = c.vma.AllocationCreateInfo{
+        .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
+        .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    checkVk(c.vma.CreateImage(self.vma_allocator, &ci, &ai, &image.image, &image.allocation, null)) catch
+        @panic("failed to create draw image");
+
+    //build a image-view for the draw image to use for rendering
+    const render_view_info = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
+
+    checkVk(vk.CreateImageView(self.logical_device.handle, &render_view_info, vk_alloc_cbs, &image.view)) catch @panic("failed to create image view");
+
+    _ = self.resources.insert(.{ .image = image }) catch @panic("OOM");
+}
+
 fn createRenderPass(self: *Self) void {
     const color_attachment = vk.AttachmentDescription{
-        .format = BackgroundEffects.DRAW_IMAGE_FORMAT,
+        .format = BG_DRAW_IMAGE_FORMAT,
         .samples = vk.SAMPLE_COUNT_1_BIT,
         .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
@@ -426,102 +571,6 @@ fn createTextureSampler(self: *Self) void {
     checkVk(vk.CreateSampler(self.logical_device.handle, &ci, null, &self.texture_sampler)) catch @panic("failed to create sampler");
 }
 
-// this function is like a meta staging zone for meshes
-fn createMeshes(self: *Self) void {
-    const vertices_indices = [_]struct { []const mesh_mod.Vertex3D, []const u16 }{
-        .{
-            // this is a triangle
-            &[_]mesh_mod.Vertex3D{
-                .{
-                    .position = Vec3.make(-1.0, 1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
-                    .uv = Vec2.make(1.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(1.0, 1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
-                    .uv = Vec2.make(0.0, 1.0),
-                },
-                .{
-                    .position = Vec3.make(0.0, -1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
-                    .uv = Vec2.make(1.0, 1.0),
-                },
-            },
-            &[_]u16{ 0, 1, 2 },
-        },
-        .{
-            &[_]mesh_mod.Vertex3D{
-                .{
-                    .position = Vec3.make(-0.5, -0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
-                    .uv = Vec2.make(1.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(0.5, -0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 1.0, 0.0),
-                    .uv = Vec2.make(0.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(0.5, 0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
-                    .uv = Vec2.make(0.0, 1.0),
-                },
-                .{
-                    .position = Vec3.make(-0.5, 0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
-                    .uv = Vec2.make(1.0, 1.0),
-                },
-            },
-            &[_]u16{ 0, 1, 2, 2, 3, 0 },
-        },
-        .{
-            &[_]mesh_mod.Vertex3D{
-                .{
-                    .position = Vec3.make(-0.5, -0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
-                    .uv = Vec2.make(0.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(0.5, -0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 1.0, 0.0),
-                    .uv = Vec2.make(1.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(0.5, 0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
-                    .uv = Vec2.make(1.0, 1.0),
-                },
-                .{
-                    .position = Vec3.make(-0.5, 0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
-                    .uv = Vec2.make(0.0, 1.0),
-                },
-            },
-            &[_]u16{ 0, 1, 2, 2, 3, 0 },
-        },
-    };
-
-    self.meshes = self.allocator.alloc(mesh_mod.Mesh3D, vertices_indices.len) catch @panic("out of memory");
-    for (vertices_indices, 0..) |vi, i| {
-        var mesh = mesh_mod.Mesh3D.init(self.allocator, vi.@"0", vi.@"1") catch @panic("OOM");
-
-        mesh.upload(self.vma_allocator, &self.upload_context, self.logical_device);
-        self.meshes[i] = mesh;
-    }
-}
-
 fn createDescriptorPool(self: *Self) void {
     const ubo_size = vk.DescriptorPoolSize{
         .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -553,6 +602,7 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
     defer checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
 
     const draw_data = PipelineObject.DrawData{
+        .resources = self.resources,
         .swapchain = self.swapchain,
         .image_index = image_idx,
     };
