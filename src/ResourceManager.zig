@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const log = std.log.scoped(.Data);
+const log = std.log.scoped(.ResourceManager);
 const texs = @import("textures.zig");
 const vma = @import("clibs.zig").vma;
 const vk = @import("clibs.zig").vk;

@@ -48,7 +48,7 @@ const InitFunc = fn (
     []const ResourceManager.ResourceID,
     // *vki.UploadContext,
     vki.LogicalDevice,
-    vk.RenderPass,
+    // vk.RenderPass,
     ?*vk.AllocationCallbacks,
 ) anyerror!void;
 
@@ -80,8 +80,8 @@ pub fn create(
             }
         }.d else null,
         .initializeFunc = &struct {
-            fn i(p: *anyopaque, allocs: Allocators, idat: InitData, r: []const ResourceManager.ResourceID, logi: vki.LogicalDevice, rp: vk.RenderPass, cbs: ?*vk.AllocationCallbacks) anyerror!void {
-                try @as(*T, @ptrCast(@alignCast(p))).init(allocs, idat, r, logi, rp, cbs);
+            fn i(p: *anyopaque, allocs: Allocators, idat: InitData, r: []const ResourceManager.ResourceID, logi: vki.LogicalDevice, cbs: ?*vk.AllocationCallbacks) anyerror!void {
+                try @as(*T, @ptrCast(@alignCast(p))).init(allocs, idat, r, logi, cbs);
             }
         }.i,
         .cleanupFunc = &struct {
@@ -100,7 +100,6 @@ pub fn init(
     init_data: InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
-    render_pass: vk.RenderPass,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     self.initializeFunc(
@@ -109,7 +108,6 @@ pub fn init(
         init_data,
         resources,
         device,
-        render_pass,
         alloc_cbs,
     ) catch |err| {
         log.err("Failed to initialize pipeline manager: {}", .{err});

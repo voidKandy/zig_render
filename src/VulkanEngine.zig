@@ -36,6 +36,9 @@ allocator: std.mem.Allocator,
 vma_allocator: c.vma.Allocator = undefined,
 global_descriptor_allocator: descriptor.Allocator = undefined,
 resources: ResourceManager = undefined,
+/// resources cannot be created until vulkan is initialized, so
+/// this is passed at initialization to create resources
+createResourcesFn: *const fn (*@This()) anyerror!void,
 
 window: *sdl.Window = undefined,
 surface: vk.SurfaceKHR = undefined,
@@ -44,39 +47,29 @@ instance: vki.Instance = undefined,
 physical_device: vki.PhysicalDevice = undefined,
 logical_device: vki.LogicalDevice = undefined,
 
-image_deletion_queue: std.ArrayList(vma_usage.VmaImageDeleter),
-
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 frame_descriptor_pool: vk.DescriptorPool = undefined,
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
-render_pass: vk.RenderPass = undefined,
-
 graphics_pipelines: std.StringHashMap(PipelineObject) = undefined,
 background_effects: PipelineObject = undefined,
 
 upload_context: vki.UploadContext = .{},
 
-/// eventually these should be removed
-meshes: []mesh_mod.Mesh3D = undefined,
-texture: texs.Texture = undefined,
-texture_sampler: vk.Sampler = undefined,
-
-pub fn init(a: std.mem.Allocator) Self {
+// add crete pipelienes as a function parameter
+pub fn init(a: std.mem.Allocator, createResourcesFn: *const fn (*@This()) anyerror!void) Self {
     return .{
         .allocator = a,
-        .image_deletion_queue = std.ArrayList(vma_usage.VmaImageDeleter).initCapacity(a, 64) catch @panic("out of memory"),
         .global_descriptor_allocator = .init(a, vk_alloc_cbs),
+        .createResourcesFn = createResourcesFn,
     };
 }
 
 pub fn deinit(self: *Self) void {
     checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
 
-    vma_usage.VmaImageDeleter.flushList(self.image_deletion_queue, self.vma_allocator, self.logical_device.handle);
-    self.image_deletion_queue.deinit(self.allocator);
     self.swapchain.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
     c.imgui.impl_vulkan.Shutdown();
 
@@ -97,21 +90,11 @@ pub fn deinit(self: *Self) void {
 
     self.background_effects.deinit(allocs, self.logical_device.handle, vk_alloc_cbs);
 
-    vk.DestroyRenderPass(self.logical_device.handle, self.render_pass, vk_alloc_cbs);
-
     self.upload_context.deinit(self.logical_device.handle, vk_alloc_cbs);
-    vk.DestroySampler(self.logical_device.handle, self.texture_sampler, vk_alloc_cbs);
 
     // texture should have deinit?
-    vk.DestroyImageView(self.logical_device.handle, self.texture.image_view, vk_alloc_cbs);
-    c.vma.DestroyImage(self.vma_allocator, self.texture.image.image, self.texture.image.allocation);
 
     self.resources.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
-
-    for (0..self.meshes.len) |i|
-        self.meshes[i].deinit(self.allocator, self.vma_allocator);
-
-    self.allocator.free(self.meshes);
 
     self.global_descriptor_allocator.deinit(self.logical_device.handle);
     c.vma.DestroyAllocator(self.vma_allocator);
@@ -243,125 +226,38 @@ fn initVulkan(self: *Self) void {
     // self.frames.initDescriptors(self.allocator, self.logical_device.handle, vk_alloc_cbs);
     self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
 
-    self.initResources();
-    self.createRenderPass();
+    self.createResourcesFn(self) catch @panic("failed to create resources");
+
+    // self.initResources();
     self.initPipelineObjects();
 
+    // TODO
+    // think about how render passes should be managed
     self.swapchain.createFramebuffers(
         self.allocator,
         self.logical_device.handle,
-        self.render_pass,
+        self.mainRenderPass(),
         vk_alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
     // BAD
     // should be moved to init resources
-    self.createTextureImage();
-    self.createTextureSampler();
     self.createDescriptorPool();
     self.frames.initBuffers(self.vma_allocator);
     self.frames.allocateDescriptorSets(self.logical_device.handle, self.frame_descriptor_pool);
-    self.frames.updateDescriptorSets(self.logical_device.handle, self.texture.image_view, self.texture_sampler);
+
+    const texture_id = self.resources.getId(.texture, 0) orelse @panic("No texture?");
+    const texture_resource = self.resources.query(texture_id) orelse @panic("malformed resources");
+    const sampler_id = self.resources.getId(.sampler, 0) orelse @panic("No sampler?");
+    const sampler_resource = self.resources.query(sampler_id) orelse @panic("malformed resources");
+    self.frames.updateDescriptorSets(self.logical_device.handle, texture_resource.texture.image_view, sampler_resource.sampler);
     self.initImgui();
 }
 
-fn initResources(self: *Self) void {
-    self.resources = ResourceManager.init(self.allocator) catch @panic("OOM");
-    self.initMeshes();
-    self.initBackgroundDrawImage();
-}
-
-fn initMeshes(self: *Self) void {
-    const vertices_indices = [_]struct { []const mesh_mod.Vertex3D, []const u16 }{
-        .{
-            // this is a triangle
-            &[_]mesh_mod.Vertex3D{
-                .{
-                    .position = Vec3.make(-1.0, 1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
-                    .uv = Vec2.make(1.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(1.0, 1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
-                    .uv = Vec2.make(0.0, 1.0),
-                },
-                .{
-                    .position = Vec3.make(0.0, -1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
-                    .uv = Vec2.make(1.0, 1.0),
-                },
-            },
-            &[_]u16{ 0, 1, 2 },
-        },
-        .{
-            &[_]mesh_mod.Vertex3D{
-                .{
-                    .position = Vec3.make(-0.5, -0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
-                    .uv = Vec2.make(1.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(0.5, -0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 1.0, 0.0),
-                    .uv = Vec2.make(0.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(0.5, 0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
-                    .uv = Vec2.make(0.0, 1.0),
-                },
-                .{
-                    .position = Vec3.make(-0.5, 0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
-                    .uv = Vec2.make(1.0, 1.0),
-                },
-            },
-            &[_]u16{ 0, 1, 2, 2, 3, 0 },
-        },
-        .{
-            &[_]mesh_mod.Vertex3D{
-                .{
-                    .position = Vec3.make(-0.5, -0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
-                    .uv = Vec2.make(0.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(0.5, -0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 1.0, 0.0),
-                    .uv = Vec2.make(1.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(0.5, 0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
-                    .uv = Vec2.make(1.0, 1.0),
-                },
-                .{
-                    .position = Vec3.make(-0.5, 0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
-                    .uv = Vec2.make(0.0, 1.0),
-                },
-            },
-            &[_]u16{ 0, 1, 2, 2, 3, 0 },
-        },
-    };
-
-    for (vertices_indices) |vi| {
-        var mesh = mesh_mod.Mesh3D.init(self.allocator, vi.@"0", vi.@"1") catch @panic("OOM");
-        mesh.upload(self.vma_allocator, &self.upload_context, self.logical_device);
-        _ = self.resources.insert(.{ .mesh3D = mesh }) catch @panic("OOM");
-    }
+/// the `main` render pass is the 0Th render pass stored in resources
+fn mainRenderPass(self: *Self) vk.RenderPass {
+    const id = self.resources.getId(.render_pass, 0) orelse @panic("RESOURCES HAVE 0 RENDER PASSES");
+    return (self.resources.query(id) orelse @panic("MALFORMED RESOURCES")).render_pass;
 }
 
 fn initPipelineObjects(self: *Self) void {
@@ -383,13 +279,12 @@ fn initPipelineObjects(self: *Self) void {
         // BAD
         // This should be done in some other way
         // eventually meshes should be initialized with some string key to keep track of ids
-        const resources = &[_]ResourceManager.ResourceID{self.resources.getId(.mesh3D, 0).?};
+        const resources = &[_]ResourceManager.ResourceID{ self.resources.getId(.mesh3D, 0).?, self.resources.getId(.render_pass, 0).? };
         entry.init(
             allocs,
             init_data,
             resources,
             self.logical_device,
-            self.render_pass,
             vk_alloc_cbs,
         );
         self.graphics_pipelines.put(v.@"0", entry) catch @panic("OOM");
@@ -403,172 +298,9 @@ fn initPipelineObjects(self: *Self) void {
             init_data,
             &[_]ResourceManager.ResourceID{background_image},
             self.logical_device,
-            self.render_pass,
             vk_alloc_cbs,
         );
     }
-}
-
-pub const BG_DRAW_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
-fn initBackgroundDrawImage(self: *@This()) void {
-    var image: vma_usage.AllocatedImage = undefined;
-    //hardcoding the draw format to 32 bit float
-    image.format = BG_DRAW_IMAGE_FORMAT;
-    image.extent = vk.Extent3D{
-        .width = self.swapchain.extent.width,
-        .height = self.swapchain.extent.height,
-        .depth = 1,
-    };
-
-    const usages: vk.ImageUsageFlags =
-        vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
-        vk.IMAGE_USAGE_TRANSFER_DST_BIT |
-        vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-    const ci = vki.imageCreateInfo(image.format, usages, image.extent);
-
-    const ai = c.vma.AllocationCreateInfo{
-        .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-        .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-    };
-
-    checkVk(c.vma.CreateImage(self.vma_allocator, &ci, &ai, &image.image, &image.allocation, null)) catch
-        @panic("failed to create draw image");
-
-    //build a image-view for the draw image to use for rendering
-    const render_view_info = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
-
-    checkVk(vk.CreateImageView(self.logical_device.handle, &render_view_info, vk_alloc_cbs, &image.view)) catch @panic("failed to create image view");
-
-    _ = self.resources.insert(.{ .image = image }) catch @panic("OOM");
-}
-
-fn createRenderPass(self: *Self) void {
-    const color_attachment = vk.AttachmentDescription{
-        .format = BG_DRAW_IMAGE_FORMAT,
-        .samples = vk.SAMPLE_COUNT_1_BIT,
-        .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
-        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
-        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-        .initialLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
-    };
-
-    const color_attachment_ref = vk.AttachmentReference{
-        .attachment = 0,
-        .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    };
-
-    // const depth_attachment = vk.AttachmentDescription{
-    //     .format = vki.DepthResource.findDepthFormat(self.physical_device),
-    //     .samples = vk.SAMPLE_COUNT_1_BIT,
-    //     .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
-    //     .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-    //     .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-    //     .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-    //     .initialLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    //     .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    // };
-
-    // const depth_attachment_ref = vk.AttachmentReference{
-    //     .attachment = 1,
-    //     .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    // };
-
-    const subpass = vk.SubpassDescription{
-        .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &color_attachment_ref,
-        .pDepthStencilAttachment = null,
-        // .pDepthStencilAttachment = &depth_attachment_ref,
-    };
-
-    const dependency = vk.SubpassDependency{
-        .srcSubpass = vk.SUBPASS_EXTERNAL,
-        .dstSubpass = 0,
-        .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        .srcAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        // .srcAccessMask = vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        // | vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-    };
-
-    const all_attachments = &[_]vk.AttachmentDescription{
-        color_attachment,
-        // depth_attachment
-    };
-
-    const ci = vk.RenderPassCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = all_attachments.len,
-        .pAttachments = all_attachments,
-        .subpassCount = 1,
-        .pSubpasses = &subpass,
-        .dependencyCount = 1,
-        .pDependencies = &dependency,
-    };
-
-    checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, vk_alloc_cbs, &self.render_pass)) catch @panic("failed to create render pass");
-}
-
-fn createTextureImage(self: *Self) void {
-    const test_img = texs.loadImageFromFile(self.vma_allocator, &self.upload_context, self.logical_device, "assets/test_img.jpg") catch @panic("Failed to load image");
-
-    const image_view_ci = vk.ImageViewCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .viewType = vk.IMAGE_VIEW_TYPE_2D,
-        .image = test_img.image,
-        .format = vk.FORMAT_R8G8B8A8_SRGB,
-        .components = .{
-            .r = vk.COMPONENT_SWIZZLE_IDENTITY,
-            .g = vk.COMPONENT_SWIZZLE_IDENTITY,
-            .b = vk.COMPONENT_SWIZZLE_IDENTITY,
-            .a = vk.COMPONENT_SWIZZLE_IDENTITY,
-        },
-        .subresourceRange = .{
-            .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    };
-
-    var lost_empire = texs.Texture{
-        .image = .{
-            .allocation = test_img.allocation,
-            .image = test_img.image,
-        },
-        .image_view = null,
-    };
-
-    checkVk(vk.CreateImageView(self.logical_device.handle, &image_view_ci, vk_alloc_cbs, &lost_empire.image_view)) catch @panic("Failed to create image view");
-    self.texture = lost_empire;
-}
-
-fn createTextureSampler(self: *Self) void {
-    const ci = vk.SamplerCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter = vk.FILTER_LINEAR,
-        .minFilter = vk.FILTER_LINEAR,
-        .addressModeU = vk.SAMPLER_ADDRESS_MODE_REPEAT,
-        .addressModeV = vk.SAMPLER_ADDRESS_MODE_REPEAT,
-        .addressModeW = vk.SAMPLER_ADDRESS_MODE_REPEAT,
-        .anisotropyEnable = vk.TRUE,
-        .maxAnisotropy = self.physical_device.properties.limits.maxSamplerAnisotropy,
-        .borderColor = vk.BORDER_COLOR_INT_OPAQUE_BLACK,
-        .unnormalizedCoordinates = vk.FALSE,
-        .compareEnable = vk.FALSE,
-        .compareOp = vk.COMPARE_OP_ALWAYS,
-        .mipmapMode = vk.SAMPLER_MIPMAP_MODE_LINEAR,
-        .mipLodBias = 0.0,
-        .minLod = 0.0,
-        .maxLod = 0.0,
-    };
-
-    checkVk(vk.CreateSampler(self.logical_device.handle, &ci, null, &self.texture_sampler)) catch @panic("failed to create sampler");
 }
 
 fn createDescriptorPool(self: *Self) void {
@@ -612,7 +344,7 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
     {
         var render_pass_info = vk.RenderPassBeginInfo{
             .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .renderPass = self.render_pass,
+            .renderPass = self.mainRenderPass(),
             .framebuffer = self.swapchain.framebuffers[image_idx],
             .renderArea = .{ .offset = .{
                 .x = 0,
@@ -724,7 +456,7 @@ fn drawFrame(self: *Self) void {
                     .depth_buffer = false,
                 },
                 self.window,
-                self.render_pass,
+                self.mainRenderPass(),
                 vk_alloc_cbs,
             );
             self.framebuffer_resized = false;
@@ -843,6 +575,6 @@ fn initImgui(self: *Self) void {
         .MSAASamples = vk.SAMPLE_COUNT_1_BIT,
     };
 
-    _ = c.imgui.impl_vulkan.Init(&init_info, self.render_pass);
+    _ = c.imgui.impl_vulkan.Init(&init_info, self.mainRenderPass());
     _ = c.imgui.impl_vulkan.CreateFontsTexture();
 }

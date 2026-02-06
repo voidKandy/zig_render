@@ -44,7 +44,6 @@ pub fn init(
     init_data: PipelineObject.InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
-    _: vk.RenderPass,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) anyerror!void {
     if (resources.len != 1) return error.UnexpectedResourcesLength;
