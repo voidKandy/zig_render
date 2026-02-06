@@ -32,9 +32,7 @@ const EffectData = struct {
 current_effect: []const u8 = undefined,
 all_effects: std.StringHashMap(EffectData) = undefined,
 draw_image_id: ResourceManager.ResourceID = undefined,
-// draw_image: vma_usage.AllocatedImage = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
-// descriptor_allocator: descriptor.Allocator = undefined,
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 descriptor_set: vk.DescriptorSet = undefined,
 

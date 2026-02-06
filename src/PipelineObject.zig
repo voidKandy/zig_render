@@ -24,11 +24,13 @@ const vma = c.vma;
 /// This way, pipelines could share data and resources could be managed more efficiently.
 pub const DrawData = struct {
     resources: ResourceManager,
+    camera_descriptor_set: vk.DescriptorSet,
     swapchain: vki.Swapchain,
     image_index: usize,
 };
 pub const InitData = struct {
     swapchain_extent: vk.Extent2D,
+    global_descriptor_set_layout: vk.DescriptorSetLayout,
     main_render_pass: vk.RenderPass,
     resources: ResourceManager,
 };

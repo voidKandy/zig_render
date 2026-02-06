@@ -13,11 +13,12 @@ const Allocator = std.mem.Allocator;
 const Vec2 = core.math.Vec2;
 const Vec3 = core.math.Vec3;
 
-mesh_id: ResourceManager.ResourceID = undefined,
-render_pass_id: ResourceManager.ResourceID = undefined,
+mesh_ids: []ResourceManager.ResourceID = undefined,
+/// for now, a single texture is shared by all meshes
+texture_id: ResourceManager.ResourceID = undefined,
+sampler_id: ResourceManager.ResourceID = undefined,
 pipeline: vk.Pipeline = undefined,
 layout: vk.PipelineLayout = undefined,
-
 const Self = @This();
 
 pub fn init(
@@ -28,12 +29,27 @@ pub fn init(
     device: vki.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) anyerror!void {
-    if (resources.len != 1) return error.UnexpectedResourcesLength;
-    if (resources[0] != .mesh3D) return error.UnexpectedResourceType;
-    self.mesh_id = resources[0];
+    var mesh_ids = std.ArrayList(ResourceManager.ResourceID).initCapacity(allocs.std, resources.len) catch @panic("OOM");
+    for (0..resources.len) |i| {
+        switch (resources[i]) {
+            .texture => self.texture_id = resources[i],
+            .sampler => self.sampler_id = resources[i],
+            .mesh3D => mesh_ids.appendAssumeCapacity(resources[i]),
+            else => @panic("UNEXPECTED RESOURCE TYPE"),
+        }
+    }
+    self.mesh_ids = mesh_ids.toOwnedSlice(allocs.std) catch @panic("OOM");
 
     {
-        const ci = vki.pipelineLayoutCreateInfo();
+        const ci = vk.PipelineLayoutCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            // need a way to pass descriptor set
+            // BAD
+            .pSetLayouts = &init_data.global_descriptor_set_layout,
+            // .pushConstantRangeCount = 1,
+            // .pPushConstantRanges = &push_constant,
+        };
         checkVk(vk.CreatePipelineLayout(device.handle, &ci, alloc_cbs, &self.layout)) catch
             @panic("failed to create triangle pipeline layout");
     }
@@ -43,7 +59,6 @@ pub fn init(
 
 pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
     vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
-    const mesh_resource = draw_data.resources.query(self.mesh_id) orelse @panic("NO MESH?");
 
     const viewport = vk.Viewport{
         .x = 0,
@@ -66,13 +81,29 @@ pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffe
         },
     };
 
-    const offset: u64 = 0;
-    vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh_resource.mesh3D.vertex_buffer.buffer, &offset);
     vk.CmdSetScissor(cmd, 0, 1, &scissor);
-    vk.CmdDraw(cmd, @as(u32, @intCast(mesh_resource.mesh3D.vertices.len)), 1, 0, 0);
+
+    vk.CmdBindDescriptorSets(
+        cmd,
+        vk.PIPELINE_BIND_POINT_GRAPHICS,
+        self.layout,
+        0,
+        1,
+        &draw_data.camera_descriptor_set,
+        0,
+        null,
+    );
+
+    const offset: u64 = 0;
+    for (self.mesh_ids) |id| {
+        const mesh_resource = draw_data.resources.query(id) orelse @panic("NO MESH?");
+        vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh_resource.mesh3D.vertex_buffer.buffer, &offset);
+        vk.CmdDraw(cmd, @as(u32, @intCast(mesh_resource.mesh3D.vertices.len)), 1, 0, 0);
+    }
 }
 
-pub fn deinit(self: *Self, _: PipelineObject.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: *Self, a: PipelineObject.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+    a.std.free(self.mesh_ids);
     vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
 }
@@ -88,7 +119,7 @@ fn createPipeline(
     var builder = PipelineBuilder.init(a, alloc_cbs);
     defer builder.deinit();
     const vert_shader = core.shaders.createShaderModule(
-        "colored_triangle.vert",
+        "uniform_buffer.vert",
         device,
         alloc_cbs,
     ) orelse @panic("failed to create vert shader module");

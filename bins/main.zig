@@ -46,29 +46,38 @@ pub fn main() void {
     engine.run();
 }
 
+fn initResources(engine: *core.VulkanEngine) anyerror!void {
+    engine.resources = core.ResourceManager.init(engine.allocator) catch @panic("OOM");
+    initMeshes(engine);
+    initBackgroundDrawImage(engine);
+    initTextureImage(engine);
+    initTextureSampler(engine);
+}
+
 fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!void {
     engine.pipeline_objects = PipelineObjManager.init(engine.allocator);
 
     const init_data = PipelineObject.InitData{
         .main_render_pass = engine.main_render_pass,
         .swapchain_extent = engine.swapchain.extent,
-        .resources = engine.resources.?,
+        .global_descriptor_set_layout = engine.frames.global_descriptor_set_layout,
+        .resources = engine.resources,
     };
     const allocs = PipelineObject.Allocators{
         .std = engine.allocator,
         .vma = engine.vma_allocator,
         .descriptor = &engine.global_descriptor_allocator,
     };
-    // engine.graphics_pipelines = .init(engine.allocator);
 
-    inline for ([_]struct { []const u8, type }{
-        .{ "triangle", pipelines.Triangle },
+    inline for ([_]struct { []const u8, usize, type }{
+        .{ "triangle", 0, pipelines.Triangle },
+        .{ "scene3D", 1, pipelines.Scene3D },
     }) |v| {
-        var entry = PipelineObject.create(v.@"1", engine.allocator) catch @panic("OOM");
+        var entry = PipelineObject.create(v.@"2", engine.allocator) catch @panic("OOM");
         // BAD
         // This should be done in some other way
         // eventually meshes should be initialized with some string key to keep track of ids
-        const resources = &[_]ResourceManager.ResourceID{engine.resources.getId(.mesh3D, 0).?};
+        const resources = &[_]ResourceManager.ResourceID{engine.resources.getId(.mesh3D, v.@"1").?};
         entry.init(
             allocs,
             init_data,
@@ -91,14 +100,6 @@ fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!void {
         );
         engine.pipeline_objects.insert(allocs.std, .compute, "background_image", null, entry) catch @panic("OOM");
     }
-}
-
-fn initResources(engine: *core.VulkanEngine) anyerror!void {
-    engine.resources = core.ResourceManager.init(engine.allocator) catch @panic("OOM");
-    initMeshes(engine);
-    initBackgroundDrawImage(engine);
-    initTextureImage(engine);
-    initTextureSampler(engine);
 }
 
 fn initMeshes(engine: *core.VulkanEngine) void {
@@ -196,7 +197,6 @@ fn initMeshes(engine: *core.VulkanEngine) void {
 
 fn initBackgroundDrawImage(engine: *core.VulkanEngine) void {
     var image: vma_usage.AllocatedImage = undefined;
-    //hardcoding the draw format to 32 bit float
     image.format = core.VulkanEngine.MAIN_RENDER_PASS_IMAGE_FORMAT;
     image.extent = vk.Extent3D{
         .width = engine.swapchain.extent.width,

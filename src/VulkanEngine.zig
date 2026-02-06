@@ -8,7 +8,6 @@ const c = @import("clibs.zig");
 const PipelineObject = @import("PipelineObject.zig");
 const ResourceManager = @import("ResourceManager.zig");
 const PipelineObjManager = @import("PipelineObjManager.zig");
-const BackgroundEffects = @import("pipelines/BackgroundEffects.zig");
 const vk = c.vk;
 const checkVk = vki.checkVk;
 const sdl = c.sdl;
@@ -216,8 +215,6 @@ fn initVulkan(self: *Self) void {
     self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
 
     self.initMainRenderPass();
-    self.createResourcesFn(self) catch @panic("failed to create resources");
-    self.createPipelineObjectsFn(self) catch @panic("failed to create pipeline objects");
 
     // TODO
     // think about how render passes & frames should be managed
@@ -231,6 +228,9 @@ fn initVulkan(self: *Self) void {
     self.createFrameDescriptorPool();
     self.frames.initBuffers(self.vma_allocator);
     self.frames.allocateDescriptorSets(self.logical_device.handle, self.frame_descriptor_pool);
+
+    self.createResourcesFn(self) catch @panic("failed to create resources");
+    self.createPipelineObjectsFn(self) catch @panic("failed to create pipeline objects");
 
     const texture_id = self.resources.getId(.texture, 0) orelse @panic("No texture?");
     const texture_resource = self.resources.query(texture_id) orelse @panic("malformed resources");
@@ -448,6 +448,7 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
         .resources = self.resources,
         .swapchain = self.swapchain,
         .image_index = image_idx,
+        .camera_descriptor_set = self.frames.currentFrame().camera_data.descriptor_set,
     };
 
     self.pipeline_objects.runDraw(.compute, draw_data, command_buffer);
