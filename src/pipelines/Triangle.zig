@@ -28,10 +28,9 @@ pub fn init(
     device: vki.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) anyerror!void {
-    if (resources.len != 2) return error.UnexpectedResourcesLength;
-    if (resources[0] != .mesh3D or resources[1] != .render_pass) return error.UnexpectedResourceType;
+    if (resources.len != 1) return error.UnexpectedResourcesLength;
+    if (resources[0] != .mesh3D) return error.UnexpectedResourceType;
     self.mesh_id = resources[0];
-    self.render_pass_id = resources[1];
 
     {
         const ci = vki.pipelineLayoutCreateInfo();
@@ -39,8 +38,7 @@ pub fn init(
             @panic("failed to create triangle pipeline layout");
     }
 
-    const render_pass_res = init_data.resources.query(self.render_pass_id) orelse @panic("NO RENDER PASS?");
-    self.pipeline = createPipeline(allocs.std, self.layout, init_data.swapchain_extent, device.handle, render_pass_res.render_pass, alloc_cbs);
+    self.pipeline = createPipeline(allocs.std, self.layout, init_data.swapchain_extent, device.handle, init_data.main_render_pass, alloc_cbs);
 }
 
 pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {

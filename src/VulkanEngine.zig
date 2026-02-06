@@ -1,15 +1,10 @@
 const std = @import("std");
 const log = std.log.scoped(.VulkanEngine);
 const root = @import("root.zig");
-const texs = @import("textures.zig");
 const vki = @import("vulkan_init.zig");
-const util = @import("vulkan_util.zig");
 const frames_mod = @import("frames.zig");
 const descriptor = @import("descriptor.zig");
-const vma_usage = @import("vma_usage.zig");
-const mesh_mod = @import("mesh.zig");
 const c = @import("clibs.zig");
-const PipelineBuilder = @import("PipelineBuilder.zig");
 const PipelineObject = @import("PipelineObject.zig");
 const ResourceManager = @import("ResourceManager.zig");
 const BackgroundEffects = @import("pipelines/BackgroundEffects.zig");
@@ -18,19 +13,14 @@ const checkVk = vki.checkVk;
 const sdl = c.sdl;
 const checkSdl = root.checkSdl;
 const VkError = vki.VkError;
-const UploadContext = vki.UploadContext;
-const FrameData = frames_mod.FrameData;
-const VulkanDeleter = vma_usage.VulkanDeleter;
-const Vec2 = root.math.Vec2;
 const Vec3 = root.math.Vec3;
-const Vec4 = root.math.Vec4;
 const Mat4 = root.math.Mat4;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
+const window_extent = vk.Extent2D{ .width = 1600, .height = 900 };
+const vk_alloc_cbs: ?*vk.AllocationCallbacks = null;
 
 const Self = @This();
-const vk_alloc_cbs: ?*vk.AllocationCallbacks = null;
-const window_extent = vk.Extent2D{ .width = 1600, .height = 900 };
 
 allocator: std.mem.Allocator,
 vma_allocator: c.vma.Allocator = undefined,
@@ -47,6 +37,7 @@ instance: vki.Instance = undefined,
 physical_device: vki.PhysicalDevice = undefined,
 logical_device: vki.LogicalDevice = undefined,
 
+main_render_pass: vk.RenderPass = undefined,
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
@@ -92,9 +83,9 @@ pub fn deinit(self: *Self) void {
 
     self.upload_context.deinit(self.logical_device.handle, vk_alloc_cbs);
 
-    // texture should have deinit?
-
     self.resources.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+
+    vk.DestroyRenderPass(self.logical_device.handle, self.main_render_pass, vk_alloc_cbs);
 
     self.global_descriptor_allocator.deinit(self.logical_device.handle);
     c.vma.DestroyAllocator(self.vma_allocator);
@@ -223,20 +214,20 @@ fn initVulkan(self: *Self) void {
     self.upload_context.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
     self.frames.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
     self.upload_context.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
-    // self.frames.initDescriptors(self.allocator, self.logical_device.handle, vk_alloc_cbs);
+
     self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
 
     self.createResourcesFn(self) catch @panic("failed to create resources");
 
-    // self.initResources();
+    self.initMainRenderPass();
     self.initPipelineObjects();
 
     // TODO
-    // think about how render passes should be managed
+    // think about how render passes & frames should be managed
     self.swapchain.createFramebuffers(
         self.allocator,
         self.logical_device.handle,
-        self.mainRenderPass(),
+        self.main_render_pass,
         vk_alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
@@ -254,14 +245,80 @@ fn initVulkan(self: *Self) void {
     self.initImgui();
 }
 
-/// the `main` render pass is the 0Th render pass stored in resources
-fn mainRenderPass(self: *Self) vk.RenderPass {
-    const id = self.resources.getId(.render_pass, 0) orelse @panic("RESOURCES HAVE 0 RENDER PASSES");
-    return (self.resources.query(id) orelse @panic("MALFORMED RESOURCES")).render_pass;
+pub const MAIN_RENDER_PASS_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
+fn initMainRenderPass(self: *Self) void {
+    const color_attachment = vk.AttachmentDescription{
+        .format = MAIN_RENDER_PASS_IMAGE_FORMAT,
+        .samples = vk.SAMPLE_COUNT_1_BIT,
+        .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    };
+
+    const color_attachment_ref = vk.AttachmentReference{
+        .attachment = 0,
+        .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    // const depth_attachment = vk.AttachmentDescription{
+    //     .format = vki.DepthResource.findDepthFormat(self.physical_device),
+    //     .samples = vk.SAMPLE_COUNT_1_BIT,
+    //     .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
+    //     .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+    //     .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+    //     .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+    //     .initialLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    //     .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    // };
+
+    // const depth_attachment_ref = vk.AttachmentReference{
+    //     .attachment = 1,
+    //     .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    // };
+
+    const subpass = vk.SubpassDescription{
+        .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &color_attachment_ref,
+        .pDepthStencilAttachment = null,
+        // .pDepthStencilAttachment = &depth_attachment_ref,
+    };
+
+    const dependency = vk.SubpassDependency{
+        .srcSubpass = vk.SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        // .srcAccessMask = vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        // | vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    };
+
+    const all_attachments = &[_]vk.AttachmentDescription{
+        color_attachment,
+        // depth_attachment
+    };
+
+    const ci = vk.RenderPassCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = all_attachments.len,
+        .pAttachments = all_attachments,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 1,
+        .pDependencies = &dependency,
+    };
+
+    checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, vk_alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
 }
 
 fn initPipelineObjects(self: *Self) void {
     const init_data = PipelineObject.InitData{
+        .main_render_pass = self.main_render_pass,
         .swapchain_extent = self.swapchain.extent,
         .resources = self.resources,
     };
@@ -279,7 +336,7 @@ fn initPipelineObjects(self: *Self) void {
         // BAD
         // This should be done in some other way
         // eventually meshes should be initialized with some string key to keep track of ids
-        const resources = &[_]ResourceManager.ResourceID{ self.resources.getId(.mesh3D, 0).?, self.resources.getId(.render_pass, 0).? };
+        const resources = &[_]ResourceManager.ResourceID{self.resources.getId(.mesh3D, 0).?};
         entry.init(
             allocs,
             init_data,
@@ -344,7 +401,7 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
     {
         var render_pass_info = vk.RenderPassBeginInfo{
             .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .renderPass = self.mainRenderPass(),
+            .renderPass = self.main_render_pass,
             .framebuffer = self.swapchain.framebuffers[image_idx],
             .renderArea = .{ .offset = .{
                 .x = 0,
@@ -456,7 +513,7 @@ fn drawFrame(self: *Self) void {
                     .depth_buffer = false,
                 },
                 self.window,
-                self.mainRenderPass(),
+                self.main_render_pass,
                 vk_alloc_cbs,
             );
             self.framebuffer_resized = false;
@@ -575,6 +632,6 @@ fn initImgui(self: *Self) void {
         .MSAASamples = vk.SAMPLE_COUNT_1_BIT,
     };
 
-    _ = c.imgui.impl_vulkan.Init(&init_info, self.mainRenderPass());
+    _ = c.imgui.impl_vulkan.Init(&init_info, self.main_render_pass);
     _ = c.imgui.impl_vulkan.CreateFontsTexture();
 }

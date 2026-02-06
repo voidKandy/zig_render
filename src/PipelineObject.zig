@@ -29,6 +29,7 @@ pub const DrawData = struct {
 };
 pub const InitData = struct {
     swapchain_extent: vk.Extent2D,
+    main_render_pass: vk.RenderPass,
     resources: ResourceManager,
 };
 
@@ -46,9 +47,7 @@ const InitFunc = fn (
     Allocators,
     InitData,
     []const ResourceManager.ResourceID,
-    // *vki.UploadContext,
     vki.LogicalDevice,
-    // vk.RenderPass,
     ?*vk.AllocationCallbacks,
 ) anyerror!void;
 

@@ -13,7 +13,7 @@ pub const Type = enum {
     sampler,
     image,
     buffer,
-    render_pass,
+    // render_pass,
 };
 
 pub const ResourceID = union(Type) {
@@ -22,7 +22,6 @@ pub const ResourceID = union(Type) {
     sampler: u32,
     image: u32,
     buffer: u32,
-    render_pass: u32,
 };
 
 pub const Resource = union(Type) {
@@ -31,7 +30,6 @@ pub const Resource = union(Type) {
     sampler: vk.Sampler,
     image: vma_usage.AllocatedImage,
     buffer: vma_usage.AllocatedBuffer,
-    render_pass: vk.RenderPass,
 };
 
 pub const ResourcePtr = union(Type) {
@@ -40,7 +38,6 @@ pub const ResourcePtr = union(Type) {
     sampler: *vk.Sampler,
     image: *vma_usage.AllocatedImage,
     buffer: *vma_usage.AllocatedBuffer,
-    render_pass: *vk.RenderPass,
 };
 
 mesh3D_manager: IdentifierManager(mesh_mod.Mesh3D, 48),
@@ -48,7 +45,6 @@ texture_manager: IdentifierManager(texs.Texture, 48),
 sampler_manager: IdentifierManager(vk.Sampler, 48),
 image_manager: IdentifierManager(vma_usage.AllocatedImage, 48),
 buffer_manager: IdentifierManager(vma_usage.AllocatedBuffer, 48),
-render_pass_manager: IdentifierManager(vk.RenderPass, 48),
 const Self = @This();
 
 pub fn init(a: Allocator) (std.posix.OpenError || Allocator.Error)!Self {
@@ -58,7 +54,7 @@ pub fn init(a: Allocator) (std.posix.OpenError || Allocator.Error)!Self {
         .image_manager = try .init(a),
         .sampler_manager = try .init(a),
         .buffer_manager = try .init(a),
-        .render_pass_manager = try .init(a),
+        // .render_pass_manager = try .init(a),
     };
 }
 
@@ -93,11 +89,6 @@ pub fn deinit(self: *Self, a: Allocator, vma_a: vma.Allocator, device: vk.Device
         vma.DestroyBuffer(vma_a, buf.buffer, buf.allocation);
     } else break;
     self.buffer_manager.deinit(a);
-
-    for (self.render_pass_manager.data) |rp_opt| if (rp_opt) |rp| {
-        vk.DestroyRenderPass(device, rp, alloc_cbs);
-    } else break;
-    self.render_pass_manager.deinit(a);
 }
 
 pub fn getId(self: Self, t: Type, idx: usize) ?ResourceID {
@@ -107,7 +98,6 @@ pub fn getId(self: Self, t: Type, idx: usize) ?ResourceID {
         .sampler => .{ .sampler = self.sampler_manager.getId(idx) orelse return null },
         .image => .{ .image = self.image_manager.getId(idx) orelse return null },
         .buffer => .{ .buffer = self.buffer_manager.getId(idx) orelse return null },
-        .render_pass => .{ .render_pass = self.render_pass_manager.getId(idx) orelse return null },
     };
 }
 
@@ -133,10 +123,6 @@ pub fn insert(self: *Self, insrt: Resource) Allocator.Error!u32 {
             const id, _ = try self.buffer_manager.register(buf);
             return id;
         },
-        .render_pass => |rp| {
-            const id, _ = try self.render_pass_manager.register(rp);
-            return id;
-        },
     }
 }
 
@@ -147,7 +133,6 @@ pub fn query(self: Self, qu: ResourceID) ?Resource {
         .sampler => |id| .{ .sampler = self.sampler_manager.getData(id) orelse return null },
         .image => |id| .{ .image = self.image_manager.getData(id) orelse return null },
         .buffer => |id| .{ .buffer = self.buffer_manager.getData(id) orelse return null },
-        .render_pass => |id| .{ .render_pass = self.render_pass_manager.getData(id) orelse return null },
     };
 }
 
@@ -158,7 +143,6 @@ pub fn queryPtr(self: *Self, qu: ResourceID) ?ResourcePtr {
         .sampler => |id| return .{ .sampler = try self.sampler_manager.getDataPtr(id) },
         .image => |id| return .{ .image = try self.image_manager.getDataPtr(id) },
         .buffer => |id| return .{ .buffer = try self.buffer_manager.getDataPtr(id) },
-        .render_pass => |id| return .{ .render_pass = try self.render_pass_manager.getDataPtr(id) },
     }
 }
 
