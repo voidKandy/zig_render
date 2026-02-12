@@ -65,6 +65,20 @@ pub const Allocator = struct {
     }
 };
 
+pub const default_initial_sets: u32 = 64;
+pub const default_pool_ratios = &[_]PoolSizeRatio{
+    .{ .typ = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER, .ratio = 1.0 },
+    .{ .typ = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, .ratio = 0.5 },
+
+    .{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER, .ratio = 1.0 },
+    .{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, .ratio = 0.5 },
+
+    .{ .typ = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .ratio = 4.0 },
+
+    .{ .typ = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE, .ratio = 1.0 },
+    .{ .typ = vk.DESCRIPTOR_TYPE_SAMPLER, .ratio = 1.0 },
+};
+
 pub const DynamicAllocator = struct {
     const Self = @This();
 
@@ -75,32 +89,36 @@ pub const DynamicAllocator = struct {
     ready_pools: std.ArrayList(vk.DescriptorPool),
     sets_per_pool: u32,
 
-    pub fn init(a: std.mem.Allocator, vk_alloc_cbs: ?*vk.AllocationCallbacks, device: vk.Device, initial_sets: u32, ratios: []const PoolSizeRatio) Self {
+    pub fn init(a: std.mem.Allocator, vk_alloc_cbs: ?*vk.AllocationCallbacks, device: vk.Device, initial_sets: u32, ratios: []const PoolSizeRatio) std.mem.Allocator.Error!Self {
+        const alloc_ratios = try a.alloc(PoolSizeRatio, ratios.len);
+        @memcpy(alloc_ratios, ratios);
         var self = Self{
-            .ratios = ratios,
+            .ratios = alloc_ratios,
             .allocator = a,
-            .full_pools = std.ArrayList(vk.DescriptorPool).initCapacity(a, 16),
-            .ready_pools = std.ArrayList(vk.DescriptorPool).initCapacity(a, 16),
+            .full_pools = try std.ArrayList(vk.DescriptorPool).initCapacity(a, 16),
+            .ready_pools = try std.ArrayList(vk.DescriptorPool).initCapacity(a, 16),
             .sets_per_pool = @intFromFloat(@as(f32, @floatFromInt(initial_sets)) * 1.5),
             .vk_alloc_cbs = vk_alloc_cbs,
         };
 
         const new_pool = self.createPool(device);
-        self.ready_pools.append(self.allocator, new_pool);
+        try self.ready_pools.append(self.allocator, new_pool);
         return self;
     }
 
-    pub fn deinit(self: Self) void {
+    pub fn deinit(self: *Self, device: vk.Device) void {
+        self.allocator.free(self.ratios);
+        self.destroyPools(device);
         self.full_pools.deinit(self.allocator);
         self.ready_pools.deinit(self.allocator);
     }
 
     pub fn clearPools(self: *Self, device: vk.Device) void {
-        for (&self.ready_pools.items) |pool| {
-            vk.ResetDescriptorPool(device, pool, 0);
+        for (self.ready_pools.items) |pool| {
+            checkVk(vk.ResetDescriptorPool(device, pool, 0)) catch @panic("failed to reset ready descriptor pools");
         }
-        for (&self.full_pools.items) |pool| {
-            vk.ResetDescriptorPool(device, pool, 0);
+        for (self.full_pools.items) |pool| {
+            checkVk(vk.ResetDescriptorPool(device, pool, 0)) catch @panic("failed to reset full descriptor pools");
             self.ready_pools.append(self.allocator, pool);
         }
 
@@ -108,10 +126,10 @@ pub const DynamicAllocator = struct {
     }
 
     pub fn destroyPools(self: *Self, device: vk.Device) void {
-        for (&self.ready_pools.items) |pool|
+        for (self.ready_pools.items) |pool|
             vk.DestroyDescriptorPool(device, pool, self.vk_alloc_cbs);
 
-        for (&self.full_pools.items) |pool|
+        for (self.full_pools.items) |pool|
             vk.DestroyDescriptorPool(device, pool, self.vk_alloc_cbs);
 
         self.full_pools.clearRetainingCapacity();
@@ -124,15 +142,15 @@ pub const DynamicAllocator = struct {
             .pNext = p_next,
             .descriptorPool = pool_to_use,
             .descriptorSetCount = 1,
-            .pSetLayouts = layout,
+            .pSetLayouts = &layout,
         };
 
-        const ds: vk.DescriptorSet = undefined;
+        var ds: vk.DescriptorSet = undefined;
 
         checkVk(vk.AllocateDescriptorSets(device, &ai, &ds)) catch |e| {
             switch (e) {
-                vk.ERROR_OUT_OF_POOL_MEMORY, vk.ERROR_FRAGMENTED_POOL => {
-                    self.full_pools.append(self.allocator, pool_to_use) catch @panic("out of memory");
+                error.ErrorOutOfPoolMemory, error.ErrorFragmentedPool => {
+                    self.full_pools.append(self.allocator, pool_to_use) catch @panic("OOM");
                     pool_to_use = self.getPool(device);
                     ai.descriptorPool = pool_to_use;
                     checkVk(vk.AllocateDescriptorSets(device, &ai, &ds)) catch @panic("failed on second try of allocating descriptor set");
@@ -141,22 +159,25 @@ pub const DynamicAllocator = struct {
             }
         };
 
-        self.ready_pools.append(self.allocator, pool_to_use);
+        self.ready_pools.append(self.allocator, pool_to_use) catch @panic("OOM");
         return ds;
     }
 
     pub fn getPool(self: *Self, device: vk.Device) vk.DescriptorPool {
-        const new_pool = vk.DescriptorPool;
+        var new_pool: vk.DescriptorPool = undefined;
 
         if (self.ready_pools.items.len != 0)
             new_pool = self.ready_pools.pop().?
         else
             new_pool = self.createPool(device);
+
+        return new_pool;
     }
 
     pub fn createPool(self: *Self, device: vk.Device) vk.DescriptorPool {
         const pool_sizes: []vk.DescriptorPoolSize = self.allocator.alloc(vk.DescriptorPoolSize, self.ratios.len) catch @panic("out of memory");
-        for (&pool_sizes, 0..) |*pool, i| {
+        defer self.allocator.free(pool_sizes);
+        for (pool_sizes, 0..) |*pool, i| {
             pool.type = self.ratios[i].typ;
             pool.descriptorCount = @intFromFloat(self.ratios[i].ratio * @as(f32, @floatFromInt(self.sets_per_pool)));
         }
@@ -165,13 +186,13 @@ pub const DynamicAllocator = struct {
             .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .flags = 0,
             .maxSets = self.sets_per_pool,
-            .poolSizeCount = pool_sizes.len,
+            .poolSizeCount = @as(u32, @intCast(pool_sizes.len)),
             .pPoolSizes = pool_sizes.ptr,
         };
 
-        const new_pool: vk.DescriptorPool = undefined;
+        var new_pool: vk.DescriptorPool = undefined;
 
-        checkVk(vk.CreateDescriptorPool(device, &ci, self.vk_alloc_cbs, new_pool)) catch @panic("failed to create a new descriptor pool");
+        checkVk(vk.CreateDescriptorPool(device, &ci, self.vk_alloc_cbs, &new_pool)) catch @panic("failed to create a new descriptor pool");
 
         return new_pool;
     }

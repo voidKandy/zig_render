@@ -38,7 +38,7 @@ descriptor_set: vk.DescriptorSet = undefined,
 
 pub fn init(
     self: *@This(),
-    allocs: PipelineObject.Allocators,
+    allocs: *core.VulkanEngine.Allocators,
     init_data: PipelineObject.InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
@@ -79,13 +79,10 @@ pub fn drawImgui(self: *@This()) void {
 
 pub fn deinit(
     self: *@This(),
-    _: PipelineObject.Allocators,
+    _: *core.VulkanEngine.Allocators,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    // c.vma.DestroyImage(allocs.vma, self.draw_image.image, self.draw_image.allocation);
-    // vk.DestroyImageView(device, self.draw_image.view, alloc_cbs);
-
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
 
     vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
@@ -182,20 +179,20 @@ const GRADIENT_EFFECT_NAME = "gradient";
 const SKY_EFFECT_NAME = "sky";
 fn initDescriptorSet(
     self: *@This(),
-    allocs: PipelineObject.Allocators,
+    allocs: *core.VulkanEngine.Allocators,
     device: vk.Device,
     draw_image_view: vk.ImageView,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    const sizes = [_]descriptor.PoolSizeRatio{.{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 1.0 }};
-    allocs.descriptor.initPool(device, 10, &sizes);
+    // const sizes = [_]descriptor.PoolSizeRatio{.{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 1.0 }};
+    // allocs.global_descriptor.initPool(device, 10, &sizes);
     {
         var builder = descriptor.LayoutBuilder.init(allocs.std);
         defer builder.deinit(allocs.std);
         builder.addBinding(allocs.std, 0, vk.DESCRIPTOR_TYPE_STORAGE_IMAGE);
         self.descriptor_set_layout = builder.build(device, vk.SHADER_STAGE_COMPUTE_BIT, null, 0, alloc_cbs);
     }
-    self.descriptor_set = allocs.descriptor.allocate(device, self.descriptor_set_layout);
+    self.descriptor_set = allocs.global_descriptor.allocate(device, self.descriptor_set_layout, null);
 
     const draw_img_info = vk.DescriptorImageInfo{
         .imageLayout = vk.IMAGE_LAYOUT_GENERAL,

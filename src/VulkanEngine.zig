@@ -6,6 +6,7 @@ const frames_mod = @import("frames.zig");
 const descriptor = @import("descriptor.zig");
 const c = @import("clibs.zig");
 const PipelineObject = @import("PipelineObject.zig");
+const BoundDescriptor = @import("BoundDescriptor.zig");
 const ResourceManager = @import("ResourceManager.zig");
 const PipelineObjManager = @import("PipelineObjManager.zig");
 const vk = c.vk;
@@ -18,18 +19,24 @@ const Mat4 = root.math.Mat4;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 const window_extent = vk.Extent2D{ .width = 1600, .height = 900 };
-const vk_alloc_cbs: ?*vk.AllocationCallbacks = null;
 
 const Self = @This();
 
-allocator: std.mem.Allocator,
-vma_allocator: c.vma.Allocator = undefined,
-global_descriptor_allocator: descriptor.Allocator = undefined,
+pub const Allocators = struct {
+    std: std.mem.Allocator,
+    vma: c.vma.Allocator = undefined,
+    global_descriptor: descriptor.DynamicAllocator = undefined,
+};
+
+allocs: Allocators,
+alloc_cbs: ?*vk.AllocationCallbacks,
 
 resources: ResourceManager = undefined,
-createResourcesFn: *const fn (*@This()) anyerror!void,
+createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
 pipeline_objects: PipelineObjManager = undefined,
-createPipelineObjectsFn: *const fn (*@This()) anyerror!void,
+createPipelineObjectsFn: *const fn (*@This()) anyerror!PipelineObjManager,
+bound_descriptors: std.StringHashMap(BoundDescriptor) = undefined,
+createBoundDescriptorsFn: *const fn (*@This()) anyerror!std.StringHashMap(BoundDescriptor),
 
 window: *sdl.Window = undefined,
 surface: vk.SurfaceKHR = undefined,
@@ -49,52 +56,54 @@ upload_context: vki.UploadContext = .{},
 
 pub fn init(
     a: std.mem.Allocator,
-    createResourcesFn: *const fn (*@This()) anyerror!void,
-    createPipelineObjectsFn: *const fn (*@This()) anyerror!void,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+    createBoundDescriptorsFn: *const fn (*@This()) anyerror!std.StringHashMap(BoundDescriptor),
+    createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
+    createPipelineObjectsFn: *const fn (*@This()) anyerror!PipelineObjManager,
 ) Self {
     return .{
-        .allocator = a,
-        .global_descriptor_allocator = .init(a, vk_alloc_cbs),
+        .alloc_cbs = alloc_cbs,
+        .allocs = .{ .std = a },
         .createResourcesFn = createResourcesFn,
         .createPipelineObjectsFn = createPipelineObjectsFn,
+        .createBoundDescriptorsFn = createBoundDescriptorsFn,
     };
 }
 
 pub fn deinit(self: *Self) void {
     checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
 
-    self.swapchain.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+    self.swapchain.deinit(self.allocs.std, self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
     c.imgui.impl_vulkan.Shutdown();
 
-    self.frames.deinit(self.logical_device.handle, self.vma_allocator, vk_alloc_cbs);
-    vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, vk_alloc_cbs);
-    vk.DestroyDescriptorPool(self.logical_device.handle, self.frame_descriptor_pool, vk_alloc_cbs);
+    var desc_iter = self.bound_descriptors.valueIterator();
+    while (desc_iter.next()) |desc|
+        desc.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+    self.bound_descriptors.deinit();
 
-    const allocs = PipelineObject.Allocators{
-        .std = self.allocator,
-        .vma = self.vma_allocator,
-        .descriptor = &self.global_descriptor_allocator,
-    };
+    self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
+    vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
+    vk.DestroyDescriptorPool(self.logical_device.handle, self.frame_descriptor_pool, self.alloc_cbs);
 
-    self.pipeline_objects.deinit(allocs, self.logical_device.handle, vk_alloc_cbs);
+    self.pipeline_objects.deinit(&self.allocs, self.logical_device.handle, self.alloc_cbs);
 
-    self.upload_context.deinit(self.logical_device.handle, vk_alloc_cbs);
+    self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
 
-    self.resources.deinit(self.allocator, self.vma_allocator, self.logical_device.handle, vk_alloc_cbs);
+    self.resources.deinit(self.allocs.std, self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
 
-    vk.DestroyRenderPass(self.logical_device.handle, self.main_render_pass, vk_alloc_cbs);
+    vk.DestroyRenderPass(self.logical_device.handle, self.main_render_pass, self.alloc_cbs);
 
-    self.global_descriptor_allocator.deinit(self.logical_device.handle);
-    c.vma.DestroyAllocator(self.vma_allocator);
-    vk.DestroyDevice(self.logical_device.handle, vk_alloc_cbs);
+    self.allocs.global_descriptor.deinit(self.logical_device.handle);
+    c.vma.DestroyAllocator(self.allocs.vma);
+    vk.DestroyDevice(self.logical_device.handle, self.alloc_cbs);
 
     if (self.instance.debug_messenger != null) {
         const destroy_fn = self.instance.getDestroyDebugUtilsMessengerFn() orelse @panic("Debug messenger present but there is no destroy function?")();
-        destroy_fn(self.instance.handle, self.instance.debug_messenger, vk_alloc_cbs);
+        destroy_fn(self.instance.handle, self.instance.debug_messenger, self.alloc_cbs);
     }
 
-    vk.DestroySurfaceKHR(self.instance.handle, self.surface, vk_alloc_cbs);
-    vk.DestroyInstance(self.instance.handle, vk_alloc_cbs);
+    vk.DestroySurfaceKHR(self.instance.handle, self.surface, self.alloc_cbs);
+    vk.DestroyInstance(self.instance.handle, self.alloc_cbs);
 
     sdl.DestroyWindow(self.window);
     sdl.Quit();
@@ -114,6 +123,10 @@ pub fn run(self: *Self) void {
         }
 
         self.drawImgui();
+        var iter = self.bound_descriptors.valueIterator();
+        while (iter.next()) |desc| {
+            desc.updateFn(self.*, desc);
+        }
         self.drawFrame();
     }
 
@@ -146,7 +159,7 @@ fn initVulkan(self: *Self) void {
     };
 
     // surface creation
-    checkSdl(sdl.Vulkan_CreateSurface(self.window, self.instance.handle, vk_alloc_cbs, &self.surface));
+    checkSdl(sdl.Vulkan_CreateSurface(self.window, self.instance.handle, self.alloc_cbs, &self.surface));
 
     // Physical device creation
     const required_device_extensions: []const [*c]const u8 = &.{
@@ -157,7 +170,7 @@ fn initVulkan(self: *Self) void {
         vk.KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
         vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
     };
-    const physical_device = vki.PhysicalDevice.select(self.allocator, self.instance.handle, .{
+    const physical_device = vki.PhysicalDevice.select(self.allocs.std, self.instance.handle, .{
         .min_api_version = vk.MAKE_VERSION(1, 1, 0),
         // .required_extensions = required_device_extensions,
         .surface = self.surface,
@@ -172,12 +185,12 @@ fn initVulkan(self: *Self) void {
         .pNext = null,
     };
 
-    const logical_device = vki.LogicalDevice.create(self.allocator, .{
+    const logical_device = vki.LogicalDevice.create(self.allocs.std, .{
         .physical_device = self.physical_device,
         .features = vk.PhysicalDeviceFeatures{
             .samplerAnisotropy = vk.TRUE,
         },
-        .alloc_cb = vk_alloc_cbs,
+        .alloc_cb = self.alloc_cbs,
         .pnext = &shader_draw_parameters_features,
         .device_extensions = required_device_extensions,
     }) catch @panic("Failed to create logical device");
@@ -189,13 +202,16 @@ fn initVulkan(self: *Self) void {
         .device = self.logical_device.handle,
         .instance = self.instance.handle,
     };
-    checkVk(c.vma.CreateAllocator(&allocator_ci, &self.vma_allocator)) catch @panic("Failed to create VMA allocator");
+    checkVk(c.vma.CreateAllocator(&allocator_ci, &self.allocs.vma)) catch @panic("Failed to create VMA allocator");
+
+    // descriptor allocator
+    self.allocs.global_descriptor = descriptor.DynamicAllocator.init(self.allocs.std, self.alloc_cbs, self.logical_device.handle, descriptor.default_initial_sets, descriptor.default_pool_ratios) catch @panic("OOM");
 
     // Swapchain creation
     var win_width: c_int, var win_height: c_int = .{ undefined, undefined };
     checkSdl(c.sdl.GetWindowSize(self.window, &win_width, &win_height));
 
-    self.swapchain = vki.Swapchain.create(self.allocator, self.vma_allocator, .{
+    self.swapchain = vki.Swapchain.create(self.allocs.std, self.allocs.vma, .{
         .physical_device = self.physical_device,
         .logical_device = self.logical_device.handle,
         .surface = self.surface,
@@ -203,40 +219,42 @@ fn initVulkan(self: *Self) void {
         .vsync = true,
         .window_width = @intCast(win_width),
         .window_height = @intCast(win_height),
-        .alloc_cb = vk_alloc_cbs,
+        .alloc_cb = self.alloc_cbs,
         .depth_buffer = false,
     }) catch @panic("failed to create swapchain");
 
-    self.frames.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
-    self.upload_context.initSyncObjects(self.logical_device.handle, vk_alloc_cbs);
-    self.frames.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
-    self.upload_context.initCommands(self.logical_device.handle, self.physical_device, vk_alloc_cbs);
+    self.bound_descriptors = self.createBoundDescriptorsFn(self) catch @panic("Failed to init bound descriptors");
 
-    self.frames.initDescriptorSetLayouts(self.logical_device.handle, vk_alloc_cbs);
+    self.frames.initSyncObjects(self.logical_device.handle, self.alloc_cbs);
+    self.upload_context.initSyncObjects(self.logical_device.handle, self.alloc_cbs);
+    self.frames.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
+    self.upload_context.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
+
+    self.frames.initDescriptorSetLayouts(self.logical_device.handle, self.alloc_cbs);
 
     self.initMainRenderPass();
 
     // TODO
     // think about how render passes & frames should be managed
     self.swapchain.createFramebuffers(
-        self.allocator,
+        self.allocs.std,
         self.logical_device.handle,
         self.main_render_pass,
-        vk_alloc_cbs,
+        self.alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
     self.createFrameDescriptorPool();
-    self.frames.initBuffers(self.vma_allocator);
-    self.frames.allocateDescriptorSets(self.logical_device.handle, self.frame_descriptor_pool);
+    // self.frames.initBuffers(self.allocs.vma);
+    // self.frames.allocateDescriptorSets(self.logical_device.handle, self.frame_descriptor_pool);
 
-    self.createResourcesFn(self) catch @panic("failed to create resources");
-    self.createPipelineObjectsFn(self) catch @panic("failed to create pipeline objects");
+    self.resources = self.createResourcesFn(self) catch @panic("failed to create resources");
+    self.pipeline_objects = self.createPipelineObjectsFn(self) catch @panic("failed to create pipeline objects");
 
-    const texture_id = self.resources.getId(.texture, 0) orelse @panic("No texture?");
-    const texture_resource = self.resources.query(texture_id) orelse @panic("malformed resources");
-    const sampler_id = self.resources.getId(.sampler, 0) orelse @panic("No sampler?");
-    const sampler_resource = self.resources.query(sampler_id) orelse @panic("malformed resources");
-    self.frames.updateDescriptorSets(self.logical_device.handle, texture_resource.texture.image_view, sampler_resource.sampler);
+    // const texture_id = self.resources.getId(.texture, 0) orelse @panic("No texture?");
+    // const texture_resource = self.resources.query(texture_id) orelse @panic("malformed resources");
+    // const sampler_id = self.resources.getId(.sampler, 0) orelse @panic("No sampler?");
+    // const sampler_resource = self.resources.query(sampler_id) orelse @panic("malformed resources");
+    // self.frames.updateDescriptorSets(self.logical_device.handle, texture_resource.texture.image_view, sampler_resource.sampler);
     self.initImgui();
 }
 
@@ -308,7 +326,7 @@ fn initMainRenderPass(self: *Self) void {
         .pDependencies = &dependency,
     };
 
-    checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, vk_alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
+    checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, self.alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
 }
 
 fn createFrameDescriptorPool(self: *Self) void {
@@ -330,7 +348,7 @@ fn createFrameDescriptorPool(self: *Self) void {
         .maxSets = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
     };
 
-    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, vk_alloc_cbs, &self.frame_descriptor_pool)) catch @panic("failed to create descriptor pool");
+    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, self.alloc_cbs, &self.frame_descriptor_pool)) catch @panic("failed to create descriptor pool");
 }
 
 fn drawImgui(self: *Self) void {
@@ -349,7 +367,7 @@ fn updateFrameData(self: *Self, frame: frames_mod.FrameData) void {
 
 fn drawFrame(self: *Self) void {
     var current_frame = self.frames.currentFrame();
-    self.updateFrameData(current_frame);
+    // self.updateFrameData(current_frame);
 
     const present_semaphore = current_frame.render_semaphore;
 
@@ -410,8 +428,8 @@ fn drawFrame(self: *Self) void {
             self.framebuffer_resized)
         {
             self.swapchain.recreate(
-                self.allocator,
-                self.vma_allocator,
+                self.allocs.std,
+                self.allocs.vma,
                 vki.SwapchainCreateOpts{
                     .physical_device = self.physical_device,
                     .logical_device = self.logical_device.handle,
@@ -420,12 +438,12 @@ fn drawFrame(self: *Self) void {
                     .vsync = true,
                     .window_width = @intCast(window_extent.width),
                     .window_height = @intCast(window_extent.height),
-                    .alloc_cb = vk_alloc_cbs,
+                    .alloc_cb = self.alloc_cbs,
                     .depth_buffer = false,
                 },
                 self.window,
                 self.main_render_pass,
-                vk_alloc_cbs,
+                self.alloc_cbs,
             );
             self.framebuffer_resized = false;
         } else {
@@ -448,7 +466,8 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
         .resources = self.resources,
         .swapchain = self.swapchain,
         .image_index = image_idx,
-        .camera_descriptor_set = self.frames.currentFrame().camera_data.descriptor_set,
+        .descriptors = self.bound_descriptors,
+        // .camera_descriptor_set = self.frames.currentFrame().camera_data.descriptor_set,
     };
 
     self.pipeline_objects.runDraw(.compute, draw_data, command_buffer);
@@ -565,7 +584,7 @@ fn initImgui(self: *Self) void {
         .pPoolSizes = &pool_sizes[0],
     };
 
-    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &pool_ci, vk_alloc_cbs, &self.imgui_descriptor_pool)) catch @panic("Failed to create imgui descriptor pool");
+    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &pool_ci, self.alloc_cbs, &self.imgui_descriptor_pool)) catch @panic("Failed to create imgui descriptor pool");
 
     _ = c.imgui.CreateContext(null);
     _ = c.imgui.impl_sdl3.InitForVulkan(self.window);

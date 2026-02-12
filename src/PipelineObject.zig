@@ -2,10 +2,12 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.PipelineObject);
 const c = @import("clibs.zig");
+const root = @import("root.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
 const ResourceManager = @import("ResourceManager.zig");
 const descriptor = @import("descriptor.zig");
 const vki = @import("vulkan_init.zig");
+const Allocators = root.VulkanEngine.Allocators;
 const vk = c.vk;
 const vma = c.vma;
 
@@ -24,29 +26,23 @@ const vma = c.vma;
 /// This way, pipelines could share data and resources could be managed more efficiently.
 pub const DrawData = struct {
     resources: ResourceManager,
-    camera_descriptor_set: vk.DescriptorSet,
+    descriptors: std.StringHashMap(root.BoundDescriptor),
     swapchain: vki.Swapchain,
     image_index: usize,
 };
 pub const InitData = struct {
     swapchain_extent: vk.Extent2D,
-    global_descriptor_set_layout: vk.DescriptorSetLayout,
+    descriptors: std.StringHashMap(root.BoundDescriptor),
     main_render_pass: vk.RenderPass,
     resources: ResourceManager,
 };
 
-pub const Allocators = struct {
-    std: Allocator,
-    vma: vma.Allocator,
-    descriptor: *descriptor.Allocator,
-};
-
 const DrawImguiFunc = fn (*anyopaque) void;
 const DrawFunc = fn (*anyopaque, DrawData, vk.CommandBuffer) void;
-const DeinitFunc = fn (*anyopaque, Allocators, vk.Device, ?*vk.AllocationCallbacks) void;
+const DeinitFunc = fn (*anyopaque, *Allocators, vk.Device, ?*vk.AllocationCallbacks) void;
 const InitFunc = fn (
     *anyopaque,
-    Allocators,
+    *Allocators,
     InitData,
     []const ResourceManager.ResourceID,
     vki.LogicalDevice,
@@ -81,12 +77,12 @@ pub fn create(
             }
         }.d else null,
         .initializeFunc = &struct {
-            fn i(p: *anyopaque, allocs: Allocators, idat: InitData, r: []const ResourceManager.ResourceID, logi: vki.LogicalDevice, cbs: ?*vk.AllocationCallbacks) anyerror!void {
+            fn i(p: *anyopaque, allocs: *Allocators, idat: InitData, r: []const ResourceManager.ResourceID, logi: vki.LogicalDevice, cbs: ?*vk.AllocationCallbacks) anyerror!void {
                 try @as(*T, @ptrCast(@alignCast(p))).init(allocs, idat, r, logi, cbs);
             }
         }.i,
         .cleanupFunc = &struct {
-            fn c(p: *anyopaque, allocs: Allocators, d: vk.Device, cbs: ?*vk.AllocationCallbacks) void {
+            fn c(p: *anyopaque, allocs: *Allocators, d: vk.Device, cbs: ?*vk.AllocationCallbacks) void {
                 const pt: *T = @ptrCast(@alignCast(p));
                 defer allocs.std.destroy(pt);
                 pt.deinit(allocs, d, cbs);
@@ -97,7 +93,7 @@ pub fn create(
 
 pub fn init(
     self: *@This(),
-    allocs: Allocators,
+    allocs: *Allocators,
     init_data: InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
@@ -116,7 +112,7 @@ pub fn init(
     };
 }
 
-pub fn deinit(self: @This(), allocs: Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: @This(), allocs: *Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.cleanupFunc(self.data_ptr, allocs, device, alloc_cbs);
 }
 

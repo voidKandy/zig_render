@@ -25,7 +25,7 @@ pub fn init(a: Allocator) @This() {
     };
 }
 
-pub fn deinit(self: *@This(), allocs: PipelineObject.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: *@This(), allocs: *root.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     var iter = self.all_graphics.valueIterator();
     while (iter.next()) |entry| {
         switch (entry.*) {

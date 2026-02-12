@@ -22,7 +22,7 @@ const Self = @This();
 
 pub fn init(
     self: *Self,
-    allocs: PipelineObject.Allocators,
+    allocs: *core.VulkanEngine.Allocators,
     init_data: PipelineObject.InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
@@ -72,7 +72,7 @@ pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffe
     vk.CmdDraw(cmd, @as(u32, @intCast(mesh_resource.mesh3D.vertices.len)), 1, 0, 0);
 }
 
-pub fn deinit(self: *Self, _: PipelineObject.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: *Self, _: *core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
 }

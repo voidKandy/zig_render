@@ -23,7 +23,7 @@ const Self = @This();
 
 pub fn init(
     self: *Self,
-    allocs: PipelineObject.Allocators,
+    allocs: *core.VulkanEngine.Allocators,
     init_data: PipelineObject.InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
@@ -46,7 +46,8 @@ pub fn init(
             .setLayoutCount = 1,
             // need a way to pass descriptor set
             // BAD
-            .pSetLayouts = &init_data.global_descriptor_set_layout,
+            // this key is set in the function that creates bound descriptors. this is a logic leak
+            .pSetLayouts = &init_data.descriptors.get("camera_data").?.descriptor_set_layout,
             // .pushConstantRangeCount = 1,
             // .pPushConstantRanges = &push_constant,
         };
@@ -54,6 +55,7 @@ pub fn init(
             @panic("failed to create triangle pipeline layout");
     }
 
+    
     self.pipeline = createPipeline(allocs.std, self.layout, init_data.swapchain_extent, device.handle, init_data.main_render_pass, alloc_cbs);
 }
 
@@ -89,7 +91,9 @@ pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffe
         self.layout,
         0,
         1,
-        &draw_data.camera_descriptor_set,
+        // BAD
+        // this key is set in the function that creates bound descriptors. this is a logic leak
+        &draw_data.descriptors.get("camera_data").?.descriptor_set,
         0,
         null,
     );
@@ -102,7 +106,7 @@ pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffe
     }
 }
 
-pub fn deinit(self: *Self, a: PipelineObject.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: *Self, a: *core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     a.std.free(self.mesh_ids);
     vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
