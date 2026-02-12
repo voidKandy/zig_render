@@ -230,7 +230,7 @@ fn initVulkan(self: *Self) void {
     self.frames.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
     self.upload_context.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
 
-    self.frames.initDescriptorSetLayouts(self.logical_device.handle, self.alloc_cbs);
+    // self.frames.initDescriptorSetLayouts(self.logical_device.handle, self.alloc_cbs);
 
     self.initMainRenderPass();
 
