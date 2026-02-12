@@ -49,7 +49,7 @@ main_render_pass: vk.RenderPass = undefined,
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
-frame_descriptor_pool: vk.DescriptorPool = undefined,
+// frame_descriptor_pool: vk.DescriptorPool = undefined,
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
 upload_context: vki.UploadContext = .{},
@@ -83,7 +83,7 @@ pub fn deinit(self: *Self) void {
 
     self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
-    vk.DestroyDescriptorPool(self.logical_device.handle, self.frame_descriptor_pool, self.alloc_cbs);
+    // vk.DestroyDescriptorPool(self.logical_device.handle, self.frame_descriptor_pool, self.alloc_cbs);
 
     self.pipeline_objects.deinit(&self.allocs, self.logical_device.handle, self.alloc_cbs);
 
@@ -124,9 +124,9 @@ pub fn run(self: *Self) void {
 
         self.drawImgui();
         var iter = self.bound_descriptors.valueIterator();
-        while (iter.next()) |desc| {
+        while (iter.next()) |desc|
             desc.updateFn(self.*, desc);
-        }
+
         self.drawFrame();
     }
 
@@ -230,8 +230,6 @@ fn initVulkan(self: *Self) void {
     self.frames.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
     self.upload_context.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
 
-    // self.frames.initDescriptorSetLayouts(self.logical_device.handle, self.alloc_cbs);
-
     self.initMainRenderPass();
 
     // TODO
@@ -243,18 +241,9 @@ fn initVulkan(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
-    self.createFrameDescriptorPool();
-    // self.frames.initBuffers(self.allocs.vma);
-    // self.frames.allocateDescriptorSets(self.logical_device.handle, self.frame_descriptor_pool);
-
     self.resources = self.createResourcesFn(self) catch @panic("failed to create resources");
     self.pipeline_objects = self.createPipelineObjectsFn(self) catch @panic("failed to create pipeline objects");
 
-    // const texture_id = self.resources.getId(.texture, 0) orelse @panic("No texture?");
-    // const texture_resource = self.resources.query(texture_id) orelse @panic("malformed resources");
-    // const sampler_id = self.resources.getId(.sampler, 0) orelse @panic("No sampler?");
-    // const sampler_resource = self.resources.query(sampler_id) orelse @panic("malformed resources");
-    // self.frames.updateDescriptorSets(self.logical_device.handle, texture_resource.texture.image_view, sampler_resource.sampler);
     self.initImgui();
 }
 
@@ -329,28 +318,6 @@ fn initMainRenderPass(self: *Self) void {
     checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, self.alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
 }
 
-fn createFrameDescriptorPool(self: *Self) void {
-    const ubo_size = vk.DescriptorPoolSize{
-        .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
-    };
-    const sampler_size = vk.DescriptorPoolSize{
-        .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
-    };
-
-    const sizes = &[_]vk.DescriptorPoolSize{ ubo_size, sampler_size };
-
-    const ci = vk.DescriptorPoolCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .poolSizeCount = sizes.len,
-        .pPoolSizes = sizes,
-        .maxSets = @as(u32, @intCast(MAX_FRAMES_IN_FLIGHT)),
-    };
-
-    checkVk(vk.CreateDescriptorPool(self.logical_device.handle, &ci, self.alloc_cbs, &self.frame_descriptor_pool)) catch @panic("failed to create descriptor pool");
-}
-
 fn drawImgui(self: *Self) void {
     c.imgui.impl_vulkan.NewFrame();
     c.imgui.impl_sdl3.NewFrame();
@@ -361,18 +328,12 @@ fn drawImgui(self: *Self) void {
     c.imgui.Render();
 }
 
-fn updateFrameData(self: *Self, frame: frames_mod.FrameData) void {
-    rotateCamera(frame, self.swapchain.extent);
-}
-
 fn drawFrame(self: *Self) void {
     var current_frame = self.frames.currentFrame();
-    // self.updateFrameData(current_frame);
 
     const present_semaphore = current_frame.render_semaphore;
 
     checkVk(vk.WaitForFences(self.logical_device.handle, 1, &current_frame.render_fence, vk.TRUE, std.math.maxInt(u64))) catch @panic("failed to wait for current fence");
-    // current_frame.reset(self.logical_device.handle);
 
     var image_idx: u32 = undefined;
     checkVk(vk.AcquireNextImageKHR(self.logical_device.handle, self.swapchain.handle, std.math.maxInt(u64), present_semaphore, null, &image_idx)) catch |e|
@@ -493,39 +454,6 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
 
         c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), command_buffer);
     }
-}
-/// If this function isn't called no uniform buffer will be passed to the shader, causing nothing to be drawn
-fn rotateCamera(frame: frames_mod.FrameData, swapchain_extent: vk.Extent2D) void {
-    const State = struct {
-        var start: i128 = 0;
-    };
-
-    // If first call, initialize start time
-    if (State.start == 0) {
-        State.start = std.time.nanoTimestamp();
-    }
-
-    const now = std.time.nanoTimestamp();
-    const delta_ns = now - State.start;
-    const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
-
-    const fov = 45.0;
-    const near_plane = 0.1;
-    const far_plane = 10.0;
-
-    const aspect =
-        @as(f32, @floatFromInt(swapchain_extent.width)) /
-        @as(f32, @floatFromInt(swapchain_extent.height));
-    var ubo = frames_mod.GPUCameraData{
-        .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 1.0),
-        .view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0)),
-        .proj = Mat4.perspective(fov, aspect, near_plane, far_plane),
-    };
-
-    ubo.proj.j.y *= -1;
-
-    const aligned_data: *frames_mod.GPUCameraData = @ptrCast(@alignCast(frame.camera_data.mapped));
-    aligned_data.* = ubo;
 }
 
 fn initImgui(self: *Self) void {
