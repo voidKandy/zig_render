@@ -11,22 +11,26 @@ pub inline fn abs(f: anytype) @TypeOf(f) {
     return if (f < 0) -f else f;
 }
 
-pub const Vec2 = struct {
+pub const Vec2 = packed struct {
     x: f32,
     y: f32,
 
     pub const ZERO = make(0.0, 0.0);
 
+    pub inline fn fromSizedArray(array: [2]f32) Vec2 {
+        return .{ .x = array[0], .y = array[1] };
+    }
+
     pub inline fn make(x: f32, y: f32) Vec2 {
         return .{ .x = x, .y = y };
     }
 
-    pub inline fn to_vec3(self: Vec2, z: f32) Vec3 {
+    pub inline fn toVec3(self: Vec2, z: f32) Vec3 {
         return .{ .x = self.x, .y = self.y, .z = z };
     }
 };
 
-pub const Vec3 = struct {
+pub const Vec3 = packed struct {
     x: f32,
     y: f32,
     z: f32,
@@ -34,6 +38,10 @@ pub const Vec3 = struct {
     const Self = @This();
 
     pub const ZERO = make(0.0, 0.0, 0.0);
+
+    pub inline fn fromSizedArray(array: [3]f32) Self {
+        return .{ .x = array[0], .y = array[1], .z = array[2] };
+    }
 
     pub inline fn make(x: f32, y: f32, z: f32) Self {
         return .{ .x = x, .y = y, .z = z };
@@ -144,7 +152,7 @@ pub const Vec4 = packed struct {
     }
 };
 
-pub const Mat4 = struct {
+pub const Mat4 = packed struct {
     i: Vec4,
     j: Vec4,
     k: Vec4,

@@ -10,6 +10,7 @@ const BoundDescriptor = core.BoundDescriptor;
 const ResourceManager = core.ResourceManager;
 const pipelines = @import("pipelines");
 const mesh_mod = core.mesh;
+const math_mod = core.math;
 const c = core.clibs;
 const vk = c.vk;
 const vma = c.vma;
@@ -347,14 +348,95 @@ fn initMeshes(
         },
     };
 
-    const all_meshes = allocs.std.alloc(ResourceManager.Resource, vertices_indices.len) catch @panic("OOM");
-    for (all_meshes, vertices_indices) |*m, vi| {
+    var all_meshes = std.ArrayList(ResourceManager.Resource).initCapacity(allocs.std, 16) catch @panic("OOM");
+    for (vertices_indices) |vi| {
         var mesh = mesh_mod.Mesh3D.init(allocs.std, vi.@"0", vi.@"1") catch @panic("OOM");
         mesh.upload(allocs.vma, ctx, logical_device);
-        m.* = .{ .mesh3D = mesh };
+        all_meshes.append(allocs.std, .{ .mesh3D = mesh }) catch @panic("OOM");
     }
 
-    return all_meshes;
+    {
+        const Vertex3DHash = struct {
+            // Scale factor for float compression
+            const SCALE: f64 = 1000.0;
+
+            fn compressFloat(f: f64) u64 {
+                // Clamp to avoid integer overflow
+                const max_val = @as(f64, @floatFromInt(std.math.maxInt(u64))) / SCALE;
+                const min_val: f64 = 0.0; // assuming only non-negative floats; adjust if needed
+
+                const clamped = if (f < min_val) min_val else if (f > max_val) max_val else f;
+                return @intFromFloat(clamped * SCALE);
+            }
+
+            fn hashVec2(vec: Vec2) u64 {
+                const x: u64 = compressFloat(vec.x);
+                const y: u64 = compressFloat(vec.y);
+                return x ^ y;
+            }
+
+            fn hashVec3(vec: Vec3) u64 {
+                const x: u64 = compressFloat(vec.x);
+                const y: u64 = compressFloat(vec.y);
+                const z: u64 = compressFloat(vec.z);
+                return x ^ y ^ z;
+            }
+
+            fn hash(vertex: mesh_mod.Vertex3D, has_normal: bool, has_uv: bool, has_color: bool) u64 {
+                var h = hashVec3(vertex.position);
+                if (has_normal) h ^= hashVec3(vertex.normal);
+                if (has_color) h ^= hashVec3(vertex.color);
+                if (has_uv) h ^= hashVec2(vertex.uv);
+                return h;
+            }
+        };
+        var lost_empire = core.obj_loader.parseFile(allocs.std, "assets/lost_empire.obj") catch @panic("failed to read lost_empire.obj");
+        defer lost_empire.deinit();
+        var uniques = std.AutoHashMap(u64, u16).init(allocs.std);
+        var indices = std.ArrayList(u16).initCapacity(allocs.std, lost_empire.vertices.len) catch @panic("OOM");
+        var vertices = std.ArrayList(mesh_mod.Vertex3D).initCapacity(allocs.std, lost_empire.vertices.len) catch @panic("OOM");
+        defer {
+            indices.deinit(allocs.std);
+            vertices.deinit(allocs.std);
+            uniques.deinit();
+        }
+
+        var current_index: u16 = 0;
+        for (0..lost_empire.vertices.len - 1) |i| {
+            const has_uv = i >= lost_empire.uvs.len;
+            const has_normal = i >= lost_empire.normals.len;
+            const has_color = false;
+
+            const vertex = mesh_mod.Vertex3D{
+                .position = math_mod.Vec3.fromSizedArray(lost_empire.vertices[i]),
+                .uv = if (has_uv) Vec2.ZERO else Vec2.fromSizedArray(lost_empire.uvs[i]),
+                .normal = if (has_normal) Vec3.ZERO else Vec3.fromSizedArray(lost_empire.normals[i]),
+                .color = Vec3.ZERO,
+                // .color = if (i > lost_empire.colors.len) Vec2.ZERO else Vec2.fromSizedArray(lost_empire[i]),
+            };
+
+            const entry = uniques.getOrPut(Vertex3DHash.hash(
+                vertex,
+                has_normal,
+                has_uv,
+                has_color,
+            )) catch @panic("OOM");
+
+            if (!entry.found_existing) {
+                entry.value_ptr.* = current_index;
+                vertices.append(allocs.std, vertex) catch @panic("OOM");
+                current_index += 1;
+            }
+
+            indices.append(allocs.std, entry.value_ptr.*) catch @panic("OOM");
+        }
+
+        var mesh_3d = mesh_mod.Mesh3D.init(allocs.std, vertices.items, indices.items) catch @panic("failed to create mesh");
+        mesh_3d.upload(allocs.vma, ctx, logical_device);
+        all_meshes.append(allocs.std, .{ .mesh3D = mesh_3d }) catch @panic("OOM");
+    }
+
+    return all_meshes.toOwnedSlice(allocs.std) catch @panic("OOM");
 }
 
 fn initBackgroundDrawImage(

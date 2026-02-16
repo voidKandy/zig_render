@@ -335,12 +335,17 @@ pub const Mesh3D = struct {
         // const end_pos = try file.getEndPos();
         // const content = try file.readToEndAlloc(a, end_pos);
         var attributes = c.tol.Attributes{};
-        const shapes: [][]?*c.tol.Shape = a.alloc([]?*c.tol.Shape, 1024) catch @panic("OOM");
+        // const shapes: [][]?c.tol.Shape = a.alloc([]?c.tol.Shape, 1024) catch @panic("OOM");
+        const shapes: [*]?*c.tol.Shape = (a.alloc(?*c.tol.Shape, 1024) catch ("OOM")).ptr;
+        //the slicing is required because [*] is unknown length
+        for (shapes[0..1024]) |*ele| ele.* = a.create(c.tol.shape) catch unreachable;
         // const shapes = [_][]?*const c.tol.Shape{};
         // var shapes_c: [*c][*]c.tol.Shape = &shapes;
         var num_shapes: usize = 0;
 
-        const materials: [][]?*c.tol.Material = a.alloc([]?*c.tol.Material, 1024) catch @panic("OOM");
+        // const materials: [][]?c.tol.Material = a.alloc([]?c.tol.Material, 1024) catch @panic("OOM");
+        const materials: [*]?*c.tol.Material = (a.alloc(?*c.tol.Material, 1024) catch ("OOM")).ptr;
+        for (materials[0..1024]) |*ele| ele.* = a.create(c.tol.shape) catch unreachable;
         // var materials_c: [*c][*c]c.tol.Material = &materials;
         var num_materials: usize = 0;
         const c_path = a.dupeZ(u8, filepath) catch @panic("OOM");
@@ -349,9 +354,11 @@ pub const Mesh3D = struct {
         // safe to call
         const result = c.tol.parseObject(
             &attributes,
-            @as([*][*]c.tol.Shape, shapes.ptr),
+            shapes.ptr,
+            // @as([*][*]c.tol.Shape, shapes.ptr),
             &num_shapes,
-            @as([*][*]c.tol.Material, materials.ptr),
+            materials.ptr,
+            // @as([*][*]c.tol.Material, materials.ptr),
             &num_materials,
             c_path.ptr,
             null,
@@ -408,5 +415,8 @@ pub const Mesh3D = struct {
 };
 
 test "obj" {
+    const obj = @import("obj_loader.zig");
+    var mesh = try obj.parseFile(std.testing.allocator, "assets/lost_empire.obj");
+    mesh.deinit();
     // _ = Mesh3D.loadFromObj(std.testing.allocator, "assets/lost_empire.obj");
 }
