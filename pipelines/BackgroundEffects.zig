@@ -105,6 +105,9 @@ pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) v
         vk.IMAGE_LAYOUT_GENERAL,
         vk.ACCESS_MEMORY_WRITE_BIT,
         vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
+        //BAD!
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
     {
@@ -143,6 +146,9 @@ pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) v
         vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
         vk.ACCESS_TRANSFER_WRITE_BIT | vk.ACCESS_TRANSFER_READ_BIT,
+        //BAD!
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
     util.transitionImageLayout(
@@ -152,6 +158,9 @@ pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) v
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         vk.ACCESS_TRANSFER_READ_BIT,
         vk.ACCESS_MEMORY_READ_BIT,
+        //BAD!
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
     util.copyImageToImage(
@@ -172,6 +181,9 @@ pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) v
         vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         vk.ACCESS_MEMORY_WRITE_BIT,
         vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
+        //BAD!
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 }
 

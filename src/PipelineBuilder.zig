@@ -19,8 +19,8 @@ scissor: vk.Rect2D = undefined,
 color_blend_attachment: vk.PipelineColorBlendAttachmentState = undefined,
 multisampling: vk.PipelineMultisampleStateCreateInfo = undefined,
 layout: vk.PipelineLayout = undefined,
-// depth_stencil: vk.PipelineDepthStencilStateCreateInfo = undefined,
-// render_info: vk.PipelineRenderingCreateInfo = undefined,
+depth_stencil: vk.PipelineDepthStencilStateCreateInfo = undefined,
+render_info: vk.PipelineRenderingCreateInfo = undefined,
 // color_attachment_format: vk.Format = undefined,
 
 const Self = @This();
@@ -47,8 +47,8 @@ pub fn clear(self: *Self) void {
     // self.layout = undefind
     self.viewport = .{};
     self.scissor = .{};
-    // self.depth_stencil = .{ .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-    // self.render_info = .{ .sType = vk.STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+    self.depth_stencil = .{ .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+    // self.render_info = .{ .sType = vk. };
     self.shader_stages.clearRetainingCapacity();
 }
 
@@ -93,21 +93,17 @@ pub fn disableBlending(self: *Self) void {
     self.color_blend_attachment.blendEnable = vk.FALSE;
 }
 
-// pub fn setDepthFormat(self: *Self, format: vk.Format) void {
-//     self.render_info.depthAttachmentFormat = format;
-// }
-
-// pub fn disableDepthtest(self: *Self) void {
-//     self.depth_stencil.depthTestEnable = vk.FALSE;
-//     self.depth_stencil.depthWriteEnable = vk.FALSE;
-//     self.depth_stencil.depthCompareOp = vk.COMPARE_OP_NEVER;
-//     self.depth_stencil.depthBoundsTestEnable = vk.FALSE;
-//     self.depth_stencil.stencilTestEnable = vk.FALSE;
-//     self.depth_stencil.front = .{};
-//     self.depth_stencil.back = .{};
-//     self.depth_stencil.minDepthBounds = 0.0;
-//     self.depth_stencil.maxDepthBounds = 1.0;
-// }
+pub fn disableDepthtest(self: *Self) void {
+    self.depth_stencil.depthTestEnable = vk.FALSE;
+    self.depth_stencil.depthWriteEnable = vk.FALSE;
+    self.depth_stencil.depthCompareOp = vk.COMPARE_OP_NEVER;
+    self.depth_stencil.depthBoundsTestEnable = vk.FALSE;
+    self.depth_stencil.stencilTestEnable = vk.FALSE;
+    self.depth_stencil.front = .{};
+    self.depth_stencil.back = .{};
+    self.depth_stencil.minDepthBounds = 0.0;
+    self.depth_stencil.maxDepthBounds = 1.0;
+}
 
 pub fn build(self: *Self, device: vk.Device, render_pass: vk.RenderPass) vk.Pipeline {
 
@@ -158,7 +154,7 @@ pub fn build(self: *Self, device: vk.Device, render_pass: vk.RenderPass) vk.Pipe
         .pRasterizationState = &self.rasterizer,
         .pMultisampleState = &self.multisampling,
         .pColorBlendState = &color_blending,
-        // .pDepthStencilState = &self.depth_stencil,
+        .pDepthStencilState = &self.depth_stencil,
         .subpass = 0,
         .layout = self.layout,
         .pDynamicState = &state_ci,

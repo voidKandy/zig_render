@@ -66,7 +66,11 @@ pub const Allocator = struct {
 };
 
 pub const default_initial_sets: u32 = 64;
+/// BAD
 pub const default_pool_ratios = &[_]PoolSizeRatio{
+    // MUST have at least one for depth image
+    .{ .typ = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 1.0 },
+
     .{ .typ = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER, .ratio = 1.0 },
     .{ .typ = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, .ratio = 0.5 },
 

@@ -169,6 +169,7 @@ pub const UploadContext = struct {
         vk.DestroyFence(device, self.upload_fence, vk_alloc_cbs);
     }
 
+    /// `submit_ctx` must be a struct with a `submit` function.
     pub fn immediateSubmit(self: *@This(), device: LogicalDevice, submit_ctx: anytype) void {
         // Check the context is good
         comptime {
@@ -741,9 +742,6 @@ pub const LogicalDevice = struct {
 };
 
 pub const DepthResource = struct {
-    allocation: vma_usage.AllocatedImage,
-    view: vk.ImageView,
-
     pub fn findDepthFormat(device: PhysicalDevice) vk.Format {
         return device.findSupportedFormat(
             &[_]vk.Format{ vk.FORMAT_D32_SFLOAT, vk.FORMAT_D32_SFLOAT_S8_UINT, vk.FORMAT_D24_UNORM_S8_UINT },
@@ -752,16 +750,32 @@ pub const DepthResource = struct {
         ) catch @panic("failed to find depth format");
     }
 
+    pub fn transition(
+        cmd: vk.CommandBuffer,
+        image: vma_usage.AllocatedImage,
+    ) void {
+        @import("vulkan_util.zig").transitionImageLayout(
+            cmd,
+            image.image,
+            vk.IMAGE_LAYOUT_UNDEFINED,
+            vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            0,
+            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        );
+    }
+
     pub fn init(
         vma_a: c.vma.Allocator,
         physical_device: PhysicalDevice,
         logical_device: vk.Device,
         swapchain_extent: vk.Extent2D,
         vk_alloc_cbs: ?*vk.AllocationCallbacks,
-    ) @This() {
+    ) vma_usage.AllocatedImage {
         const depth_format = findDepthFormat(physical_device);
-        var allocation: vma_usage.AllocatedImage = undefined;
-        var image_view: vk.ImageView = undefined;
+        var image: vma_usage.AllocatedImage = undefined;
 
         const ci = vk.ImageCreateInfo{
             .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -790,14 +804,14 @@ pub const DepthResource = struct {
             vma_a,
             &ci,
             &ai,
-            &allocation.image,
-            &allocation.allocation,
+            &image.image,
+            &image.allocation,
             null,
         )) catch @panic("failed to create image");
 
         const depth_image_view_ci = vk.ImageViewCreateInfo{
             .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = allocation.image,
+            .image = image.image,
             .viewType = vk.IMAGE_VIEW_TYPE_2D,
             .format = depth_format,
             .subresourceRange = .{
@@ -813,23 +827,10 @@ pub const DepthResource = struct {
             logical_device,
             &depth_image_view_ci,
             vk_alloc_cbs,
-            &image_view,
+            &image.view,
         )) catch @panic("Failed to create depth image view");
 
-        return @This(){
-            .allocation = allocation,
-            .view = image_view,
-        };
-    }
-
-    pub fn deinit(
-        self: @This(),
-        vma_a: c.vma.Allocator,
-        device: vk.Device,
-        vk_alloc_cbs: ?*vk.AllocationCallbacks,
-    ) void {
-        vk.DestroyImageView(device, self.view, vk_alloc_cbs);
-        c.vma.DestroyImage(vma_a, self.allocation.image, self.allocation.allocation);
+        return image;
     }
 };
 
@@ -859,10 +860,9 @@ pub const Swapchain = struct {
     framebuffers: []vk.Framebuffer = &.{},
     format: vk.Format = undefined,
     extent: vk.Extent2D = undefined,
-    depth_resource: ?DepthResource = null,
+    depth_resource: ?vma_usage.AllocatedImage = null,
 
     pub fn create(a: Allocator, vma_a: c.vma.Allocator, opts: SwapchainCreateOpts) !@This() {
-        _ = vma_a;
         const support_info = try SwapchainSupportInfo.init(a, opts.physical_device.handle, opts.surface);
         defer support_info.deinit(a);
 
@@ -935,10 +935,10 @@ pub const Swapchain = struct {
             checkVk(c.vk.CreateSemaphore(opts.logical_device, &semaphore_ci, opts.alloc_cb, &semaphores[i])) catch @panic("failed to create semaphore");
         }
 
-        // const depth_resource = if (opts.depth_buffer)
-        //     DepthResource.init(vma_a, opts.physical_device, opts.logical_device, extent, opts.alloc_cb)
-        // else
-        //     null;
+        const depth_resource = if (opts.depth_buffer)
+            DepthResource.init(vma_a, opts.physical_device, opts.logical_device, extent, opts.alloc_cb)
+        else
+            null;
 
         return .{
             .handle = swapchain,
@@ -947,7 +947,7 @@ pub const Swapchain = struct {
             .image_views = swapchain_image_views,
             .format = format,
             .extent = extent,
-            // .depth_resource = depth_resource,
+            .depth_resource = depth_resource,
         };
     }
 
@@ -965,7 +965,8 @@ pub const Swapchain = struct {
         }
 
         if (self.depth_resource) |b| {
-            b.deinit(vma_a, device, vk_alloc_cbs);
+            c.vma.DestroyImage(vma_a, b.image, b.allocation);
+            vk.DestroyImageView(device, b.view, vk_alloc_cbs);
         }
 
         a.free(self.images);

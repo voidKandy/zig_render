@@ -55,7 +55,6 @@ pub fn init(
             @panic("failed to create triangle pipeline layout");
     }
 
-    
     self.pipeline = createPipeline(allocs.std, self.layout, init_data.swapchain_extent, device.handle, init_data.main_render_pass, alloc_cbs);
 }
 
@@ -171,7 +170,5 @@ fn createPipeline(
     builder.disableBlending();
 
     // builder.setColorAttachmentFormat(self.draw_image.format);
-    // builder.setDepthFormat(vk.FORMAT_UNDEFINED);
-
     return builder.build(device, render_pass);
 }

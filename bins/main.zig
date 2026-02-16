@@ -208,16 +208,16 @@ fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!PipelineObjManager {
     };
 
     {
-        var entry = PipelineObject.create(pipelines.Triangle, engine.allocs.std) catch @panic("OOM");
-        const resources = &[_]ResourceManager.ResourceID{engine.resources.getId(.mesh3D, 0).?};
-        entry.init(
-            &engine.allocs,
-            init_data,
-            resources,
-            engine.logical_device,
-            engine.alloc_cbs,
-        );
-        pipeline_objects.insert(engine.allocs.std, .graphics, "meshes", "triangle", entry) catch @panic("OOM");
+        // var entry = PipelineObject.create(pipelines.Triangle, engine.allocs.std) catch @panic("OOM");
+        // const resources = &[_]ResourceManager.ResourceID{engine.resources.getId(.mesh3D, 0).?};
+        // entry.init(
+        //     &engine.allocs,
+        //     init_data,
+        //     resources,
+        //     engine.logical_device,
+        //     engine.alloc_cbs,
+        // );
+        // pipeline_objects.insert(engine.allocs.std, .graphics, "meshes", "triangle", entry) catch @panic("OOM");
     }
 
     {
