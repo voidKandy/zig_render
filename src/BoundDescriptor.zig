@@ -16,42 +16,63 @@ data: root.vma_usage.AllocatedBuffer = .{ .buffer = null, .allocation = null },
 mapped: ?*anyopaque = undefined,
 descriptor_set: c.vk.DescriptorSet,
 descriptor_set_layout: c.vk.DescriptorSetLayout,
-updateFn: *const fn (root.VulkanEngine, *Self) void,
+
+updateFn: *const fn (@This(), root.VulkanEngine, *Self) void,
+state_ptr: *anyopaque,
+deinitStateFn: *const fn (*@This(), std.mem.Allocator) void,
 
 const Self = @This();
 
 pub fn init(
     comptime T: type,
-    vma_a: vma.Allocator,
+    comptime State: type,
+    allocs: *root.VulkanEngine.Allocators,
     set: vk.DescriptorSet,
     layout: vk.DescriptorSetLayout,
-    update: *const fn (root.VulkanEngine, *Self) void,
+    state: State,
+    comptime update: *const fn (*State, root.VulkanEngine, *Self) void,
 ) Self {
     const buf_size = @sizeOf(T);
+    const state_ptr: *State = allocs.std.create(State) catch @panic("OOM");
+    state_ptr.* = state;
+
     var self = Self{
         .descriptor_set = set,
         .descriptor_set_layout = layout,
-        .updateFn = update,
+        .updateFn = struct {
+            fn u(self: Self, engine: root.VulkanEngine, desc: *Self) void {
+                const s: *State = @ptrCast(@alignCast(self.state_ptr));
+                update(s, engine, desc);
+            }
+        }.u,
+        .state_ptr = @ptrCast(state_ptr),
+        .deinitStateFn = struct {
+            fn d(self: *Self, a: std.mem.Allocator) void {
+                const s: *State = @ptrCast(@alignCast(self.state_ptr));
+                a.destroy(s);
+            }
+        }.d,
     };
     self.data = vma_usage.AllocatedBuffer.create(
-        vma_a,
+        allocs.vma,
         buf_size,
         // these should maybe be params
         vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         vma.MEMORY_USAGE_CPU_TO_GPU,
         0,
     );
-    checkVk(c.vma.MapMemory(vma_a, self.data.allocation, &self.mapped)) catch @panic("failed to map uniform buffer");
+    checkVk(c.vma.MapMemory(allocs.vma, self.data.allocation, &self.mapped)) catch @panic("failed to map uniform buffer");
     return self;
 }
 
 pub fn deinit(
     self: *Self,
-    vma_a: c.vma.Allocator,
+    allocs: *root.VulkanEngine.Allocators,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    c.vma.UnmapMemory(vma_a, self.data.allocation);
-    c.vma.DestroyBuffer(vma_a, self.data.buffer, self.data.allocation);
+    self.deinitStateFn(self, allocs.std);
+    c.vma.UnmapMemory(allocs.vma, self.data.allocation);
+    c.vma.DestroyBuffer(allocs.vma, self.data.buffer, self.data.allocation);
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
 }

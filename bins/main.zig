@@ -8,7 +8,7 @@ const PipelineObject = core.PipelineObject;
 const PipelineObjManager = core.PipelineObjManager;
 const BoundDescriptor = core.BoundDescriptor;
 const ResourceManager = core.ResourceManager;
-const pipelines = @import("pipelines");
+const tools = @import("tools");
 const mesh_mod = core.mesh;
 const math_mod = core.math;
 const c = core.clibs;
@@ -22,72 +22,22 @@ const Vec3 = core.math.Vec3;
 const Vec4 = core.math.Vec4;
 const Mat4 = core.math.Mat4;
 
-fn createCameraDataDescriptorSet(device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) vk.DescriptorSet {
-    var layout: vk.DescriptorSetLayout = undefined;
-    // const frame_sizes = &[_]descriptor.Allocator.PoolSizeRatio{
-    //     .{ vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 },
-    //     .{ vk.DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
-    //     .{ vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
-    //     .{ vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 },
-    // };
-    // for (self.all) |frame| {
-    //     frame.descriptors = descriptor.Allocator.init(a, vk_alloc_cbs, device, 1000, frame_sizes);
-    // }
-
-    const ubo_layout_binding = vk.DescriptorSetLayoutBinding{
-        .binding = 0,
-        .descriptorCount = 1,
-        .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-        .pImmutableSamplers = null,
-    };
-    const sampler_layout_binding = vk.DescriptorSetLayoutBinding{
-        .binding = 1,
-        .descriptorCount = 1,
-        .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
-        .pImmutableSamplers = null,
-    };
-
-    const bindings = &[_]vk.DescriptorSetLayoutBinding{ ubo_layout_binding, sampler_layout_binding };
-
-    const ci = vk.DescriptorSetLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = bindings.len,
-        .pBindings = bindings,
-    };
-
-    checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &layout)) catch @panic("failed to create descriptor set layout");
-}
-
 fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.StringHashMap(BoundDescriptor) {
     var map = std.StringHashMap(BoundDescriptor).init(engine.allocs.std);
-
-    var builder = core.descriptor.LayoutBuilder.init(engine.allocs.std);
-    defer builder.deinit(engine.allocs.std);
-    builder.addBinding(engine.allocs.std, 0, vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    const camera_data_layout = builder.build(engine.logical_device.handle, vk.SHADER_STAGE_VERTEX_BIT, null, 0, engine.alloc_cbs);
-    const camera_data_set = engine.allocs.global_descriptor.allocate(engine.logical_device.handle, camera_data_layout, null);
-
-    const bound = BoundDescriptor.init(
-        core.frames.GPUCameraData,
-        engine.allocs.vma,
-        camera_data_set,
-        camera_data_layout,
-        &rotateCamera,
-    );
-    try map.put("camera_data", bound);
+    const camera = tools.Camera{};
+    const bound_camera = tools.Camera.createBoundDescriptor(camera, &engine.allocs, engine.logical_device.handle, engine.alloc_cbs);
+    try map.put("camera_data", bound_camera);
 
     const camera_data_info = vk.DescriptorBufferInfo{
-        .buffer = bound.data.buffer,
+        .buffer = bound_camera.data.buffer,
         .offset = 0,
-        .range = @sizeOf(core.frames.GPUCameraData),
+        .range = @sizeOf(tools.Camera.Data),
     };
 
     const camera_data_write = vk.WriteDescriptorSet{
         .dstBinding = 0,
         .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = camera_data_set,
+        .dstSet = bound_camera.descriptor_set,
         .dstArrayElement = 0,
         .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         .descriptorCount = 1,
@@ -118,39 +68,6 @@ fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.Strin
     vk.UpdateDescriptorSets(engine.logical_device.handle, writes.len, writes, 0, null);
 
     return map;
-}
-
-fn rotateCamera(engine: core.VulkanEngine, desc: *BoundDescriptor) void {
-    const State = struct {
-        var start: i128 = 0;
-    };
-
-    // If first call, initialize start time
-    if (State.start == 0) {
-        State.start = std.time.nanoTimestamp();
-    }
-
-    const now = std.time.nanoTimestamp();
-    const delta_ns = now - State.start;
-    const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
-
-    const fov = 45.0;
-    const near_plane = 0.1;
-    const far_plane = 10.0;
-
-    const aspect =
-        @as(f32, @floatFromInt(engine.swapchain.extent.width)) /
-        @as(f32, @floatFromInt(engine.swapchain.extent.height));
-    var ubo = core.frames.GPUCameraData{
-        .model = Mat4.IDENTITY.rotate(Vec3.make(0.0, 0.0, 1.0), time * 1.0),
-        .view = Mat4.lookAt(Vec3.make(2.0, 2.0, 2.0), Vec3.make(0.0, 0.0, 0.0), Vec3.make(0.0, 0.0, 1.0)),
-        .proj = Mat4.perspective(fov, aspect, near_plane, far_plane),
-    };
-
-    ubo.proj.j.y *= -1;
-
-    const aligned_data: *core.frames.GPUCameraData = @ptrCast(@alignCast(desc.mapped));
-    aligned_data.* = ubo;
 }
 
 pub fn main() void {
@@ -209,7 +126,7 @@ fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!PipelineObjManager {
     };
 
     {
-        // var entry = PipelineObject.create(pipelines.Triangle, engine.allocs.std) catch @panic("OOM");
+        // var entry = PipelineObject.create(tools.Triangle, engine.allocs.std) catch @panic("OOM");
         // const resources = &[_]ResourceManager.ResourceID{engine.resources.getId(.mesh3D, 0).?};
         // entry.init(
         //     &engine.allocs,
@@ -231,7 +148,7 @@ fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!PipelineObjManager {
             resources[j] = engine.resources.getId(.mesh3D, i).?;
         }
 
-        var entry = PipelineObject.create(pipelines.Scene3D, engine.allocs.std) catch @panic("OOM");
+        var entry = PipelineObject.create(tools.Scene3D, engine.allocs.std) catch @panic("OOM");
         entry.init(
             &engine.allocs,
             init_data,
@@ -244,7 +161,7 @@ fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!PipelineObjManager {
 
     {
         const background_image = engine.resources.getId(.image, 0).?;
-        var entry = PipelineObject.create(pipelines.BackgroundEffects, engine.allocs.std) catch @panic("OOM");
+        var entry = PipelineObject.create(tools.BackgroundEffects, engine.allocs.std) catch @panic("OOM");
         entry.init(
             &engine.allocs,
             init_data,
@@ -357,36 +274,31 @@ fn initMeshes(
 
     {
         const Vertex3DHash = struct {
-            // Scale factor for float compression
-            const SCALE: f64 = 1000.0;
-
-            fn compressFloat(f: f64) u64 {
-                // Clamp to avoid integer overflow
-                const max_val = @as(f64, @floatFromInt(std.math.maxInt(u64))) / SCALE;
-                const min_val: f64 = 0.0; // assuming only non-negative floats; adjust if needed
-
-                const clamped = if (f < min_val) min_val else if (f > max_val) max_val else f;
-                return @intFromFloat(clamped * SCALE);
+            pub fn float64Hash(x: f64) usize {
+                const HashUnion = extern union { source: f64, target: usize };
+                var h = HashUnion{ .target = 0 };
+                h.source = x;
+                return h.target;
             }
 
             fn hashVec2(vec: Vec2) u64 {
-                const x: u64 = compressFloat(vec.x);
-                const y: u64 = compressFloat(vec.y);
+                const x: u64 = float64Hash(vec.x);
+                const y: u64 = float64Hash(vec.y);
                 return x ^ y;
             }
 
             fn hashVec3(vec: Vec3) u64 {
-                const x: u64 = compressFloat(vec.x);
-                const y: u64 = compressFloat(vec.y);
-                const z: u64 = compressFloat(vec.z);
+                const x: u64 = float64Hash(vec.x);
+                const y: u64 = float64Hash(vec.y);
+                const z: u64 = float64Hash(vec.z);
                 return x ^ y ^ z;
             }
 
-            fn hash(vertex: mesh_mod.Vertex3D, has_normal: bool, has_uv: bool, has_color: bool) u64 {
+            fn hash(vertex: mesh_mod.Vertex3D) u64 {
                 var h = hashVec3(vertex.position);
-                if (has_normal) h ^= hashVec3(vertex.normal);
-                if (has_color) h ^= hashVec3(vertex.color);
-                if (has_uv) h ^= hashVec2(vertex.uv);
+                h ^= hashVec3(vertex.normal);
+                h ^= hashVec3(vertex.color);
+                h ^= hashVec2(vertex.uv);
                 return h;
             }
         };
@@ -405,7 +317,6 @@ fn initMeshes(
         for (0..lost_empire.vertices.len - 1) |i| {
             const has_uv = i >= lost_empire.uvs.len;
             const has_normal = i >= lost_empire.normals.len;
-            const has_color = false;
 
             const vertex = mesh_mod.Vertex3D{
                 .position = math_mod.Vec3.fromSizedArray(lost_empire.vertices[i]),
@@ -415,12 +326,9 @@ fn initMeshes(
                 // .color = if (i > lost_empire.colors.len) Vec2.ZERO else Vec2.fromSizedArray(lost_empire[i]),
             };
 
-            const entry = uniques.getOrPut(Vertex3DHash.hash(
-                vertex,
-                has_normal,
-                has_uv,
-                has_color,
-            )) catch @panic("OOM");
+            const entry = uniques.getOrPut(
+                // vertex
+                Vertex3DHash.hash(vertex)) catch @panic("OOM");
 
             if (!entry.found_existing) {
                 entry.value_ptr.* = current_index;

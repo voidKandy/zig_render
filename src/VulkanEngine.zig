@@ -8,6 +8,7 @@ const c = @import("clibs.zig");
 const PipelineObject = @import("PipelineObject.zig");
 const BoundDescriptor = @import("BoundDescriptor.zig");
 const ResourceManager = @import("ResourceManager.zig");
+const Input = @import("Input.zig");
 const PipelineObjManager = @import("PipelineObjManager.zig");
 const vma_usage = @import("vma_usage.zig");
 const util = @import("vulkan_util.zig");
@@ -16,8 +17,6 @@ const checkVk = vki.checkVk;
 const sdl = c.sdl;
 const checkSdl = root.checkSdl;
 const VkError = vki.VkError;
-const Vec3 = root.math.Vec3;
-const Mat4 = root.math.Mat4;
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 const window_extent = vk.Extent2D{ .width = 1600, .height = 900 };
@@ -40,6 +39,7 @@ createPipelineObjectsFn: *const fn (*@This()) anyerror!PipelineObjManager,
 bound_descriptors: std.StringHashMap(BoundDescriptor) = undefined,
 createBoundDescriptorsFn: *const fn (*@This()) anyerror!std.StringHashMap(BoundDescriptor),
 
+input: Input = .{},
 window: *sdl.Window = undefined,
 surface: vk.SurfaceKHR = undefined,
 instance: vki.Instance = undefined,
@@ -79,7 +79,7 @@ pub fn deinit(self: *Self) void {
 
     var desc_iter = self.bound_descriptors.valueIterator();
     while (desc_iter.next()) |desc|
-        desc.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+        desc.deinit(&self.allocs, self.logical_device.handle, self.alloc_cbs);
     self.bound_descriptors.deinit();
 
     self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -114,20 +114,20 @@ pub fn run(self: *Self) void {
     self.initWindow();
     self.initVulkan();
 
-    var quit = false;
+    // var quit = false;
     var event: c.sdl.Event = undefined;
 
-    while (!quit) {
+    while (!self.input.quit) {
+        self.input = .{};
         while (c.sdl.PollEvent(&event)) {
-            if (event.type == c.sdl.EVENT_QUIT) quit = true;
             _ = c.imgui.impl_sdl3.ProcessEvent(&event);
+            self.input.update(event);
         }
-
         self.drawImgui();
+
         var iter = self.bound_descriptors.valueIterator();
         while (iter.next()) |desc|
-            desc.updateFn(self.*, desc);
-
+            desc.updateFn(desc.*, self.*, desc);
         self.drawFrame();
     }
 

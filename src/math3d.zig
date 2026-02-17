@@ -38,6 +38,9 @@ pub const Vec3 = packed struct {
     const Self = @This();
 
     pub const ZERO = make(0.0, 0.0, 0.0);
+    pub const UP = make(0.0, 0.0, 1.0);
+    pub const FORWARD = make(0.0, 1.0, 0.0);
+    pub const RIGHT = make(1.0, 0.0, 0.0);
 
     pub inline fn fromSizedArray(array: [3]f32) Self {
         return .{ .x = array[0], .y = array[1], .z = array[2] };
@@ -71,12 +74,16 @@ pub const Vec3 = packed struct {
         return make(self.x + other.x, self.y + other.y, self.z + other.z);
     }
 
+    pub inline fn eucDist(self: Self, other: Self) f32 {
+        return self.sub(other).norm();
+    }
+
     pub inline fn sub(self: Self, other: Self) Self {
         return make(self.x - other.x, self.y - other.y, self.z - other.z);
     }
 
-    pub inline fn mul(self: Self, other: f32) Self {
-        return make(self.x * other, self.y * other, self.z * other);
+    pub inline fn mul(self: Self, val: f32) Self {
+        return make(self.x * val, self.y * val, self.z * val);
     }
 
     pub inline fn div(self: Self, other: f32) Self {
