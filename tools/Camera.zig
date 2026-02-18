@@ -39,8 +39,9 @@ pub fn createBoundDescriptor(
 ) core.BoundDescriptor {
     var builder = core.descriptor.LayoutBuilder.init(allocs.std);
     defer builder.deinit(allocs.std);
-    builder.addBinding(allocs.std, 0, vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    const layout = builder.build(device, vk.SHADER_STAGE_VERTEX_BIT, null, 0, alloc_cbs);
+    builder.addBinding(allocs.std, 0, vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER, vk.SHADER_STAGE_VERTEX_BIT);
+    builder.addBinding(allocs.std, 1, vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, vk.SHADER_STAGE_FRAGMENT_BIT);
+    const layout = builder.build(device, null, 0, alloc_cbs);
     const set = allocs.global_descriptor.allocate(device, layout, null);
 
     const bound = core.BoundDescriptor.init(
@@ -56,7 +57,9 @@ pub fn createBoundDescriptor(
     return bound;
 }
 
-fn createDescriptorSet(device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) vk.DescriptorSet {
+/// DEAD CODE
+/// MEANT FOR REFERENCE
+fn createDescriptorSetLayout(device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) vk.DescriptorSetLayout {
     var layout: vk.DescriptorSetLayout = undefined;
 
     const ubo_layout_binding = vk.DescriptorSetLayoutBinding{
@@ -83,6 +86,7 @@ fn createDescriptorSet(device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) v
     };
 
     checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &layout)) catch @panic("failed to create descriptor set layout");
+    return layout;
 }
 
 pub fn controlCamera(self: *@This(), engine: core.VulkanEngine, desc: *core.BoundDescriptor) void {
@@ -97,7 +101,6 @@ pub fn controlCamera(self: *@This(), engine: core.VulkanEngine, desc: *core.Boun
     const min_distance = 0.2;
     const max_distance = 10.0;
 
-    // var distance = self.eye.eucDist(self.target);
     self.distance = std.math.clamp(self.distance - engine.input.scroll * zoom_speed, min_distance, max_distance);
 
     // this could also be computed with a yaw/pitch if those should be added to camera

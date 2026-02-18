@@ -129,7 +129,7 @@ fn createPipeline(
     defer vk.DestroyShaderModule(device, vert_shader, alloc_cbs);
 
     const frag_shader = core.shaders.createShaderModule(
-        "colored_triangle.frag",
+        "triangle.frag",
         device,
         alloc_cbs,
     ) orelse @panic("failed to create frag shader module");

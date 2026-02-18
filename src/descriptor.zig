@@ -303,9 +303,10 @@ pub const LayoutBuilder = struct {
         self.bindings.deinit(a);
     }
 
-    pub fn addBinding(self: *Self, a: std.mem.Allocator, binding: u32, typ: vk.DescriptorType) void {
+    pub fn addBinding(self: *Self, a: std.mem.Allocator, binding: u32, typ: vk.DescriptorType, stage_flags: vk.ShaderStageFlags) void {
         const newbind = vk.DescriptorSetLayoutBinding{
             .binding = binding,
+            .stageFlags = stage_flags,
             .descriptorCount = 1,
             .descriptorType = typ,
         };
@@ -320,14 +321,14 @@ pub const LayoutBuilder = struct {
     pub fn build(
         self: *Self,
         device: vk.Device,
-        shader_stages: vk.ShaderStageFlags,
+        // shader_stages: vk.ShaderStageFlags,
         p_next: ?*const anyopaque,
         flags: vk.DescriptorSetLayoutCreateFlags,
         vk_alloc_cbs: ?*vk.AllocationCallbacks,
     ) vk.DescriptorSetLayout {
-        for (self.bindings.items) |*b| {
-            b.stageFlags |= shader_stages;
-        }
+        // for (self.bindings.items) |*b| {
+        //     b.stageFlags |= shader_stages;
+        // }
         const ci =
             vk.DescriptorSetLayoutCreateInfo{
                 .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,

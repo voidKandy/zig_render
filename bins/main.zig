@@ -44,26 +44,28 @@ fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.Strin
         .pBufferInfo = &camera_data_info,
     };
 
-    // const img_info = vk.DescriptorImageInfo{
-    //     .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    //     .imageView = texture_image_view,
-    //     .sampler = texture_sampler,
-    // };
+    // BAD!!
+    // This exture and sampler leaks to Scene3D AND Camera
+    const texture_id = engine.resources.getId(.texture, 0).?;
+    const sampler_id = engine.resources.getId(.sampler, 0).?;
 
-    // const img_write = vk.WriteDescriptorSet{
-    //     .dstBinding = 1,
-    //     .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-    //     .dstSet = frame.camera_data.descriptor_set,
-    //     .dstArrayElement = 0,
-    //     .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-    //     .descriptorCount = 1,
-    //     .pImageInfo = &img_info,
-    // };
-
-    const writes = &[_]vk.WriteDescriptorSet{
-        camera_data_write,
-        // img_write
+    const img_info = vk.DescriptorImageInfo{
+        .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .imageView = engine.resources.query(texture_id).?.texture.image_view,
+        .sampler = engine.resources.query(sampler_id).?.sampler,
     };
+
+    const img_write = vk.WriteDescriptorSet{
+        .dstBinding = 1,
+        .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = bound_camera.descriptor_set,
+        .dstArrayElement = 0,
+        .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = 1,
+        .pImageInfo = &img_info,
+    };
+
+    const writes = &[_]vk.WriteDescriptorSet{ camera_data_write, img_write };
 
     vk.UpdateDescriptorSets(engine.logical_device.handle, writes.len, writes, 0, null);
 
@@ -139,14 +141,20 @@ fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!PipelineObjManager {
     }
 
     {
-        const count = init_data.resources.mesh3D_manager.count;
-
-        var resources = try engine.allocs.std.alloc(ResourceManager.ResourceID, count - 1);
+        const mesh_count = init_data.resources.mesh3D_manager.count;
+        var resources = try engine.allocs.std.alloc(ResourceManager.ResourceID, mesh_count + 1);
         defer engine.allocs.std.free(resources);
 
-        for (1..count, 0..) |i, j| {
+        var j: usize = 0;
+        // we skip mesh 0 because that is triangle
+        // BAD
+        for (1..mesh_count) |i| {
             resources[j] = engine.resources.getId(.mesh3D, i).?;
+            j += 1;
         }
+        resources[j] = engine.resources.getId(.texture, 0).?;
+        j += 1;
+        resources[j] = engine.resources.getId(.sampler, 0).?;
 
         var entry = PipelineObject.create(tools.Scene3D, engine.allocs.std) catch @panic("OOM");
         entry.init(
@@ -413,7 +421,7 @@ fn initTextureImage(
         },
     };
 
-    var lost_empire = texs.Texture{
+    var test_texture = texs.Texture{
         .image = .{
             .allocation = test_img.allocation,
             .image = test_img.image,
@@ -421,9 +429,9 @@ fn initTextureImage(
         .image_view = null,
     };
 
-    checkVk(vk.CreateImageView(logical_device.handle, &image_view_ci, alloc_cbs, &lost_empire.image_view)) catch @panic("Failed to create image view");
+    checkVk(vk.CreateImageView(logical_device.handle, &image_view_ci, alloc_cbs, &test_texture.image_view)) catch @panic("Failed to create image view");
 
-    return .{ .texture = lost_empire };
+    return .{ .texture = test_texture };
 }
 
 fn initTextureSampler(device: vk.Device, physical_device: vki.PhysicalDevice) ResourceManager.Resource {

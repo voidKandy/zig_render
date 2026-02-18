@@ -229,6 +229,7 @@ fn initVulkan(self: *Self) void {
         .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
 
+    self.resources = self.createResourcesFn(self) catch @panic("failed to create resources");
     self.bound_descriptors = self.createBoundDescriptorsFn(self) catch @panic("Failed to init bound descriptors");
 
     self.initMainRenderPass();
@@ -242,7 +243,6 @@ fn initVulkan(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
-    self.resources = self.createResourcesFn(self) catch @panic("failed to create resources");
     self.pipeline_objects = self.createPipelineObjectsFn(self) catch @panic("failed to create pipeline objects");
 
     self.initImgui();
