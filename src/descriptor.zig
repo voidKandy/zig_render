@@ -210,44 +210,43 @@ pub const Writer = struct {
 
     const Self = @This();
 
-    pub fn init(a: std.mem.Allocator) Self {
+    pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!Self {
         return .{
             .allocator = a,
-            .buffer_infos = std.ArrayList(vk.DescriptorBufferInfo).initCapacity(a, 32),
-            .image_infos = std.ArrayList(vk.DescriptorImageInfo).initCapacity(a, 32),
-            .writes = std.ArrayList(vk.WriteDescriptorSet).initCapacity(a, 32),
+            .buffer_infos = try std.ArrayList(vk.DescriptorBufferInfo).initCapacity(a, 32),
+            .image_infos = try std.ArrayList(vk.DescriptorImageInfo).initCapacity(a, 32),
+            .writes = try std.ArrayList(vk.WriteDescriptorSet).initCapacity(a, 32),
         };
     }
 
-    pub fn deinit(self: Self) void {
-        self.buffer_infos.deinit(self.allocator);
-        self.image_infos.deinit(self.allocator);
-        self.writes.deinit(self.allocator);
+    pub fn deinit(self: *Self, a: std.mem.Allocator) void {
+        self.buffer_infos.deinit(a);
+        self.image_infos.deinit(a);
+        self.writes.deinit(a);
     }
 
     pub fn updateSet(self: *Self, device: vk.Device, set: vk.DescriptorSet) void {
         for (0..self.writes.items.len) |i| {
-            self.writes[i].dstSet = set;
+            self.writes.items[i].dstSet = set;
         }
 
-        vk.UpdateDescriptorSets(device, self.writes.items.len, self.writes.items.ptr, 0, null);
+        vk.UpdateDescriptorSets(device, @as(u32, @intCast(self.writes.items.len)), self.writes.items.ptr, 0, null);
     }
 
     pub fn writeBuffer(
         self: *Self,
+        a: std.mem.Allocator,
         binding: u32,
         buffer: vk.Buffer,
         size: u64,
         offset: u64,
         typ: vk.DescriptorType,
     ) void {
-        self.buffer_infos.append(self.allocator, vk.DescriptorBufferInfo{
+        self.buffer_infos.append(a, vk.DescriptorBufferInfo{
             .buffer = buffer,
             .offset = offset,
             .range = size,
         }) catch @panic("out of memory");
-
-        const info: *vk.DescriptorBufferInfo = &self.buffer_infos.getLast();
 
         const write = vk.WriteDescriptorSet{
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -255,26 +254,25 @@ pub const Writer = struct {
             .dstSet = null,
             .descriptorCount = 1,
             .descriptorType = typ,
-            .pImageInfo = &info,
+            .pBufferInfo = &self.buffer_infos.items[self.buffer_infos.items.len - 1],
         };
-        self.writes.append(self.allocator, write) catch @panic("out of memory");
+        self.writes.append(a, write) catch @panic("out of memory");
     }
 
     pub fn writeImage(
         self: *Self,
+        a: std.mem.Allocator,
         binding: u32,
         image: vk.ImageView,
         sampler: vk.Sampler,
         layout: vk.ImageLayout,
         typ: vk.DescriptorType,
     ) void {
-        self.image_infos.append(self.allocator, vk.DescriptorImageInfo{
+        self.image_infos.append(a, vk.DescriptorImageInfo{
             .sampler = sampler,
             .imageView = image,
             .imageLayout = layout,
         }) catch @panic("out of memory");
-
-        const info: *vk.DescriptorImageInfo = &self.image_infos.getLast();
 
         const write = vk.WriteDescriptorSet{
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -282,9 +280,9 @@ pub const Writer = struct {
             .dstSet = null,
             .descriptorCount = 1,
             .descriptorType = typ,
-            .pImageInfo = &info,
+            .pImageInfo = &self.image_infos.items[self.image_infos.items.len - 1],
         };
-        self.writes.append(self.allocator, write) catch @panic("out of memory");
+        self.writes.append(a, write) catch @panic("out of memory");
     }
 };
 

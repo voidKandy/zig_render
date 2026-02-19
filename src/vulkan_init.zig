@@ -775,22 +775,24 @@ pub const DepthResource = struct {
         vk_alloc_cbs: ?*vk.AllocationCallbacks,
     ) vma_usage.AllocatedImage {
         const depth_format = findDepthFormat(physical_device);
+        const extent = vk.Extent3D{
+            .depth = 1,
+            .height = swapchain_extent.height,
+            .width = swapchain_extent.width,
+        };
+        const usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
         var image: vma_usage.AllocatedImage = undefined;
 
         const ci = vk.ImageCreateInfo{
             .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .imageType = vk.IMAGE_TYPE_2D,
             .format = depth_format,
-            .extent = vk.Extent3D{
-                .depth = 1,
-                .height = swapchain_extent.height,
-                .width = swapchain_extent.width,
-            },
+            .extent = extent,
             .mipLevels = 1,
             .arrayLayers = 1,
             .samples = vk.SAMPLE_COUNT_1_BIT,
             .tiling = vk.IMAGE_TILING_OPTIMAL,
-            .usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .usage = usage,
             .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
             .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
         };
@@ -964,10 +966,8 @@ pub const Swapchain = struct {
             vk.DestroySemaphore(device, self.render_semaphores[k], vk_alloc_cbs);
         }
 
-        if (self.depth_resource) |b| {
-            c.vma.DestroyImage(vma_a, b.image, b.allocation);
-            vk.DestroyImageView(device, b.view, vk_alloc_cbs);
-        }
+        if (self.depth_resource) |b|
+            b.deinit(vma_a, device, vk_alloc_cbs);
 
         a.free(self.images);
         a.free(self.image_views);

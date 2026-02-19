@@ -36,7 +36,11 @@ resources: ResourceManager = undefined,
 createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
 pipeline_objects: PipelineObjManager = undefined,
 createPipelineObjectsFn: *const fn (*@This()) anyerror!PipelineObjManager,
+
 bound_descriptors: std.StringHashMap(BoundDescriptor) = undefined,
+descriptor_set: vk.DescriptorSet = undefined,
+descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+
 createBoundDescriptorsFn: *const fn (*@This()) anyerror!std.StringHashMap(BoundDescriptor),
 
 input: Input = .{},
@@ -79,10 +83,11 @@ pub fn deinit(self: *Self) void {
 
     var desc_iter = self.bound_descriptors.valueIterator();
     while (desc_iter.next()) |desc|
-        desc.deinit(&self.allocs, self.logical_device.handle, self.alloc_cbs);
+        desc.deinit(&self.allocs);
     self.bound_descriptors.deinit();
 
     self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
+    vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.descriptor_set_layout, self.alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
     // vk.DestroyDescriptorPool(self.logical_device.handle, self.frame_descriptor_pool, self.alloc_cbs);
 
@@ -427,7 +432,7 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
         .resources = self.resources,
         .swapchain = self.swapchain,
         .image_index = image_idx,
-        .descriptors = self.bound_descriptors,
+        .descriptor_set = self.descriptor_set,
     };
 
     self.pipeline_objects.runDraw(.compute, draw_data, command_buffer);

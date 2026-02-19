@@ -7,11 +7,9 @@ const Type = std.builtin.Type;
 const Shape = zbt.Shape;
 const Allocator = std.mem.Allocator;
 
-/// Associates some `Data` type with a `u32` identifier
-/// Currently used for managing `System`s and `Entity`s
-fn IdentifierManager(
+pub fn IdentifierManager(
+    comptime T: type,
     MAX: comptime_int,
-    Data: type,
 ) type {
     return struct {
         const IdentifierNode = struct {
@@ -19,28 +17,33 @@ fn IdentifierManager(
             id: u32,
         };
         const IdQueue = std.DoublyLinkedList;
-        const Self = @This();
+        const Manager = @This();
 
         available_ids: std.DoublyLinkedList,
         index_map: std.AutoHashMap(u32, usize),
-        identifier_map: std.AutoHashMap(usize, u32),
+        identifier_map: std.AutoHashMap(usize, *IdentifierNode),
         count: usize,
         /// Maintains a *tightly packed* array of Data
-        data: [MAX]?Data = blk: {
-            var all: [MAX]?Data = undefined;
+        data: [MAX]?T = blk: {
+            var all: [MAX]?T = undefined;
             @memset(&all, null);
             break :blk all;
         },
 
         /// requires the same allocator be passed as with `init`
-        fn deinit(self: *@This(), allocator: Allocator) void {
+        pub fn deinit(self: *@This(), allocator: Allocator) void {
             defer self.index_map.deinit();
+            var keys = self.identifier_map.keyIterator();
+            while (keys.next()) |k| {
+                const kv = self.identifier_map.fetchRemove(k.*) orelse unreachable;
+                allocator.destroy(kv.value);
+            }
             defer self.identifier_map.deinit();
             while (self.available_ids.pop()) |n|
                 allocator.destroy(@as(*IdentifierNode, @fieldParentPtr("node", n)));
         }
 
-        fn init(allocator: Allocator) (std.posix.OpenError || Allocator.Error)!Self {
+        pub fn init(allocator: Allocator) (std.posix.OpenError || Allocator.Error)!Manager {
             var prng = std.Random.DefaultPrng.init(blk: {
                 var seed: u64 = undefined;
                 try std.posix.getrandom(std.mem.asBytes(&seed));
@@ -59,8 +62,8 @@ fn IdentifierManager(
             }
 
             const idx_map = std.AutoHashMap(u32, usize).init(allocator);
-            const ent_map = std.AutoHashMap(usize, u32).init(allocator);
-            return Self{
+            const ent_map = std.AutoHashMap(usize, *IdentifierNode).init(allocator);
+            return Manager{
                 .available_ids = available_ids,
                 .index_map = idx_map,
                 .identifier_map = ent_map,
@@ -68,70 +71,164 @@ fn IdentifierManager(
             };
         }
 
-        /// Returns a tuple of the `Identifier` (`u32`) and the index of the registered data
+        /// Returns the identifier & index of registered entity
         pub fn register(
-            self: *Self,
-            data: Data,
+            self: *Manager,
+            data: T,
         ) Allocator.Error!struct { u32, usize } {
             const id_node: *IdentifierNode = @fieldParentPtr("node", self.available_ids.pop() orelse @panic("Identifier not available"));
-            const id = id_node.id;
-
-            warn(
-                \\ REGISTERING IDENTIFIER: {}
-                \\ COUNT: {}
-            , .{ id, self.count });
-            try self.index_map.put(id, self.count);
-            try self.identifier_map.put(self.count, id);
+            try self.index_map.put(id_node.id, self.count);
+            try self.identifier_map.put(self.count, id_node);
             self.data[self.count] = data;
             self.count += 1;
-
-            return .{ id, self.count - 1 };
+            return .{ id_node.id, self.count - 1 };
         }
 
-        fn lastRegistered(self: Self) ?struct { u32, usize } {
-            const idx = self.available_ids.len() - 1;
-            const id = self.identifier_map.get(idx) orelse return null;
-            return .{ id, idx };
+        pub fn lastRegistered(self: Manager) ?struct { u32, usize } {
+            const dif = MAX - self.available_ids.len();
+            if (dif == 0) return null;
+            const idx = dif - 1;
+            const node = self.identifier_map.get(idx) orelse return null;
+            return .{ node.id, idx };
         }
 
-        fn remove(self: *Self, allocator: Allocator, id: u32) (error{NotPresent} || Allocator.Error)!void {
-            const index = self.index_map.get(id) orelse return error.NotPresent;
+        pub fn remove(self: *Manager, id: u32) (error{NotPresent} || Allocator.Error)!void {
+            const index = (self.index_map.fetchRemove(id) orelse return error.NotPresent).value;
+            const node = (self.identifier_map.fetchRemove(index) orelse @panic("No node for index?")).value;
             if (self.lastRegistered()) |last_reg| {
                 if (last_reg.@"0" != id) {
-                    const last_data = self.getData(last_reg.@"0") orelse @panic("No signature for last inserted?");
+                    const last_reg_kv = self.identifier_map.fetchRemove(last_reg.@"1") orelse @panic("No node for last registered?");
+                    const last_reg_node = last_reg_kv.value;
+                    const last_data = self.getData(last_reg.@"0") orelse @panic("No signature for last registered?");
                     try self.index_map.put(last_reg.@"0", index);
-                    try self.identifier_map.put(index, last_reg.@"0");
+                    try self.identifier_map.put(index, last_reg_node);
                     self.data[index] = last_data;
                     self.data[last_reg.@"1"] = null;
                 }
             }
 
-            const node = try allocator.create(IdentifierNode);
-            node.* = .{ .id = id };
             self.available_ids.append(&node.node);
             self.count -= 1;
 
             return;
         }
 
-        pub fn getData(self: Self, entity: u32) ?Data {
+        pub fn getId(self: Manager, idx: usize) ?u32 {
+            return (self.identifier_map.get(idx) orelse return null).id;
+        }
+
+        pub fn getData(self: Manager, entity: u32) ?T {
             const idx = self.index_map.get(entity) orelse return null;
             return self.data[idx];
+        }
+
+        pub fn getDataPtr(self: *Manager, entity: u32) ?*T {
+            const idx = self.index_map.get(entity) orelse return null;
+            return &(self.data[idx] orelse return null);
         }
     };
 }
 
-test "identifier manager" {
-    const Manager = IdentifierManager(7, u8);
-    var manager = try Manager.init(std.testing.allocator);
-    defer manager.deinit(std.testing.allocator);
-    const id4 = try manager.register(4);
-    try manager.remove(std.testing.allocator, id4.@"0");
-    const id5 = try manager.register(5);
-    _ = id5;
-    try std.testing.expectEqual(1, manager.count);
+test "register assigns ids and stores data" {
+    const Manager = IdentifierManager(u8, 8);
+    var m = try Manager.init(std.testing.allocator);
+    defer m.deinit(std.testing.allocator);
+
+    const a = try m.register(10);
+    const b = try m.register(20);
+
+    try std.testing.expectEqual(@as(usize, 2), m.count);
+    try std.testing.expectEqual(@as(u8, 10), m.getData(a.@"0").?);
+    try std.testing.expectEqual(@as(u8, 20), m.getData(b.@"0").?);
 }
 
+test "remove decreases count and moves data" {
+    const Manager = IdentifierManager(u8, 8);
+    var m = try Manager.init(std.testing.allocator);
+    defer m.deinit(std.testing.allocator);
+
+    const a = try m.register(1);
+    const b = try m.register(2);
+
+    try m.remove(a.@"0");
+
+    try std.testing.expectEqual(@as(usize, 1), m.count);
+    try std.testing.expect(m.getData(a.@"0") == null);
+    try std.testing.expectEqual(@as(u8, 2), m.getData(b.@"0").?);
+}
+
+test "remove middle swaps last into hole" {
+    const Manager = IdentifierManager(u8, 8);
+    var m = try Manager.init(std.testing.allocator);
+    defer m.deinit(std.testing.allocator);
+
+    const a = try m.register(1);
+    const b = try m.register(2);
+    const c_ = try m.register(3);
+
+    try m.remove(b.@"0");
+
+    try std.testing.expectEqual(@as(usize, 2), m.count);
+    try std.testing.expectEqual(@as(u8, 1), m.getData(a.@"0").?);
+    try std.testing.expectEqual(@as(u8, 3), m.getData(c_.@"0").?);
+}
+
+test "ids are reused after removal" {
+    const Manager = IdentifierManager(u8, 4);
+    var m = try Manager.init(std.testing.allocator);
+    defer m.deinit(std.testing.allocator);
+
+    const a = try m.register(42);
+    try m.remove(a.@"0");
+
+    const b = try m.register(99);
+
+    try std.testing.expectEqual(a.@"0", b.@"0");
+    try std.testing.expectEqual(@as(u8, 99), m.getData(b.@"0").?);
+}
+
+test "lastRegistered returns last live element" {
+    const Manager = IdentifierManager(u8, 8);
+    var m = try Manager.init(std.testing.allocator);
+    defer m.deinit(std.testing.allocator);
+
+    _ = try m.register(1);
+    const b = try m.register(2);
+
+    const last = m.lastRegistered() orelse @panic("No last registered?");
+    try std.testing.expectEqual(b.@"0", last.@"0");
+    try std.testing.expectEqual(@as(usize, 1), last.@"1");
+}
+
+test "getDataPtr allows mutation" {
+    const Manager = IdentifierManager(u8, 8);
+    var m = try Manager.init(std.testing.allocator);
+    defer m.deinit(std.testing.allocator);
+
+    const id = try m.register(10);
+
+    const ptr = m.getDataPtr(id.@"0") orelse unreachable;
+    ptr.* = 42;
+
+    try std.testing.expectEqual(@as(u8, 42), m.getData(id.@"0").?);
+}
+
+test "getDataPtr mutation persists across operations" {
+    const Manager = IdentifierManager(u8, 8);
+    var m = try Manager.init(std.testing.allocator);
+    defer m.deinit(std.testing.allocator);
+
+    const a = try m.register(1);
+    const b = try m.register(2);
+
+    const a_ptr = m.getDataPtr(a.@"0") orelse unreachable;
+    a_ptr.* = 99;
+
+    // unrelated removal
+    try m.remove(b.@"0");
+
+    try std.testing.expectEqual(@as(u8, 99), m.getData(a.@"0").?);
+}
 pub const ComponentDecl = struct { [:0]const u8, type };
 pub const Entity = u32;
 
@@ -268,11 +365,11 @@ pub fn Ecs(
         };
 
         const SystemManager = struct {
-            all: IdentifierManager(Options.max_systems, System),
+            all: IdentifierManager(System, Options.max_systems),
             schedules: std.AutoHashMap(SysSchedule, std.AutoHashMap(u32, void)),
             fn init(allocator: Allocator) !@This() {
                 return .{
-                    .all = try IdentifierManager(Options.max_systems, System).init(allocator),
+                    .all = try IdentifierManager(System, Options.max_systems).init(allocator),
                     .schedules = std.AutoHashMap(SysSchedule, std.AutoHashMap(u32, void)).init(allocator),
                 };
             }
@@ -415,7 +512,7 @@ pub fn Ecs(
                     .query => |q| {
                         var entity_iter = self.entities.manager.identifier_map.valueIterator();
                         while (entity_iter.next()) |entity| {
-                            const idx = self.entities.manager.index_map.get(entity.*) orelse @panic("NO INDEX FOR ENTITY??");
+                            const idx = self.entities.manager.index_map.get(entity.*.id) orelse @panic("NO INDEX FOR ENTITY??");
                             const sig = self.entities.manager.data[idx] orelse @panic("NO SIGNATURE FOR ENTITY??");
 
                             var is_match = true;
@@ -427,7 +524,7 @@ pub fn Ecs(
                                 is_not_match = is_not.rule.cmpFn()(sig, is_not.sig);
 
                             if (is_match and !is_not_match)
-                                try all.append(self.allocator, try self.entityHandle(entity.*));
+                                try all.append(self.allocator, try self.entityHandle(entity.*.id));
                         }
                         if (all.items.len > 0)
                             break :get_entities;
@@ -655,7 +752,7 @@ pub fn Ecs(
 
                 const last_registered_opt = self.ecs.entities.manager.lastRegistered();
 
-                try self.ecs.entities.manager.remove(self.ecs.allocator, self.identifier);
+                try self.ecs.entities.manager.remove(self.identifier);
 
                 // Removing the entity will move the last inserted entity
                 // We need to update the component data for this moved entity
@@ -666,14 +763,14 @@ pub fn Ecs(
                         // The index we pass here is the *same* index of the removed entity
                         // because the `remove` method moves the last inserted entity into the index of the removed entity
                         const ent = self.ecs.entities.manager.identifier_map.get(idx) orelse @panic("No identifier at that index?");
-                        if (last.@"0" != ent) {
+                        if (last.@"0" != ent.id) {
                             std.debug.panic(
                                 \\ Expected last entity inserted to match gotten entity
                                 \\ Expected: {}
                                 \\ Got: {}
-                            , .{ last.@"0", ent });
+                            , .{ last.@"0", ent.id });
                         }
-                        const sig = self.ecs.entities.manager.getData(ent) orelse @panic("No entity signature?");
+                        const sig = self.ecs.entities.manager.getData(ent.id) orelse @panic("No entity signature?");
                         var bit_idx_iter = sig.iterator(.{});
                         while (bit_idx_iter.next()) |i| {
                             const comp_enum: ComponentTag = @enumFromInt(i);
@@ -714,10 +811,10 @@ pub fn Ecs(
         };
 
         const EntityManager = struct {
-            manager: IdentifierManager(Options.max_entities, Signature),
+            manager: IdentifierManager(Signature, Options.max_entities),
 
             fn init(allocator: Allocator) @This() {
-                return .{ .manager = IdentifierManager(Options.max_entities, Signature).init(allocator) catch @panic("Could not create IdentifierManager for Entities") };
+                return .{ .manager = IdentifierManager(Signature, Options.max_entities).init(allocator) catch @panic("Could not create IdentifierManager for Entities") };
             }
 
             /// Creates an empty with an empty `Signature`

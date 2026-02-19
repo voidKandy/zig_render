@@ -14,8 +14,8 @@ const Vec2 = core.math.Vec2;
 const Vec3 = core.math.Vec3;
 
 mesh_ids: []ResourceManager.ResourceID = undefined,
-/// for now, a single texture is shared by all meshes
-texture_id: ResourceManager.ResourceID = undefined,
+/// for now, a single image is shared by all meshes
+image_id: ResourceManager.ResourceID = undefined,
 sampler_id: ResourceManager.ResourceID = undefined,
 pipeline: vk.Pipeline = undefined,
 layout: vk.PipelineLayout = undefined,
@@ -32,7 +32,7 @@ pub fn init(
     var mesh_ids = std.ArrayList(ResourceManager.ResourceID).initCapacity(allocs.std, resources.len) catch @panic("OOM");
     for (0..resources.len) |i| {
         switch (resources[i]) {
-            .texture => self.texture_id = resources[i],
+            .image => self.image_id = resources[i],
             .sampler => self.sampler_id = resources[i],
             .mesh3D => mesh_ids.appendAssumeCapacity(resources[i]),
             else => @panic("UNEXPECTED RESOURCE TYPE"),
@@ -47,7 +47,7 @@ pub fn init(
             // need a way to pass descriptor set
             // BAD
             // this key is set in the function that creates bound descriptors. this is a logic leak
-            .pSetLayouts = &init_data.descriptors.get("camera_data").?.descriptor_set_layout,
+            .pSetLayouts = &init_data.descriptor_set_layout,
             // .pushConstantRangeCount = 1,
             // .pPushConstantRanges = &push_constant,
         };
@@ -90,9 +90,7 @@ pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffe
         self.layout,
         0,
         1,
-        // BAD
-        // this key is set in the function that creates bound descriptors. this is a logic leak
-        &draw_data.descriptors.get("camera_data").?.descriptor_set,
+        &draw_data.descriptor_set,
         0,
         null,
     );

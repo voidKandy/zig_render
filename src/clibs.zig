@@ -179,6 +179,46 @@ pub const sdl = struct {
     pub const WINDOW_FULLSCREEN = c.SDL_WINDOW_FULLSCREEN;
     pub const WINDOW_RESIZABLE = c.SDL_WINDOW_RESIZABLE;
     pub const WINDOW_VULKAN = c.SDL_WINDOW_VULKAN;
+
+    pub const Keycode = c.SDL_Keycode;
+
+    pub const K_0 = c.SDLK_0;
+    pub const K_1 = c.SDLK_1;
+    pub const K_2 = c.SDLK_2;
+    pub const K_3 = c.SDLK_3;
+    pub const K_4 = c.SDLK_4;
+    pub const K_5 = c.SDLK_5;
+    pub const K_6 = c.SDLK_6;
+    pub const K_7 = c.SDLK_7;
+    pub const K_8 = c.SDLK_8;
+    pub const K_9 = c.SDLK_9;
+
+    pub const K_A = c.SDLK_A;
+    pub const K_B = c.SDLK_B;
+    pub const K_C = c.SDLK_C;
+    pub const K_D = c.SDLK_D;
+    pub const K_E = c.SDLK_E;
+    pub const K_F = c.SDLK_F;
+    pub const K_G = c.SDLK_G;
+    pub const K_H = c.SDLK_H;
+    pub const K_I = c.SDLK_I;
+    pub const K_J = c.SDLK_J;
+    pub const K_K = c.SDLK_K;
+    pub const K_L = c.SDLK_L;
+    pub const K_M = c.SDLK_M;
+    pub const K_N = c.SDLK_N;
+    pub const K_O = c.SDLK_O;
+    pub const K_P = c.SDLK_P;
+    pub const K_Q = c.SDLK_Q;
+    pub const K_R = c.SDLK_R;
+    pub const K_S = c.SDLK_S;
+    pub const K_T = c.SDLK_T;
+    pub const K_U = c.SDLK_U;
+    pub const K_V = c.SDLK_V;
+    pub const K_W = c.SDLK_W;
+    pub const K_X = c.SDLK_X;
+    pub const K_Y = c.SDLK_Y;
+    pub const K_Z = c.SDLK_Z;
 };
 
 /// VMA types

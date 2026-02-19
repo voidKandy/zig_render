@@ -1,6 +1,7 @@
 const std = @import("std");
 const root = @import("root.zig");
-const checkVk = root.vulkan_init.checkVk;
+const vki = root.vulkan_init;
+const checkVk = vki.checkVk;
 const c = @import("clibs.zig");
 const vk = c.vk;
 
@@ -14,7 +15,7 @@ pub const AllocatedBuffer = struct {
         usage: c.vk.BufferUsageFlags,
         memory_usage: c.vma.MemoryUsage,
         flags: c.vma.AllocationCreateFlags,
-    ) AllocatedBuffer {
+    ) @This() {
         const buffer_ci = c.vk.BufferCreateInfo{
             .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = alloc_size,
@@ -34,11 +35,45 @@ pub const AllocatedBuffer = struct {
 };
 
 pub const AllocatedImage = struct {
-    allocation: c.vma.Allocation,
-    image: vk.Image,
-    view: vk.ImageView,
+    allocation: c.vma.Allocation = undefined,
+    image: vk.Image = undefined,
+    view: vk.ImageView = undefined,
     extent: vk.Extent3D,
     format: vk.Format,
+
+    pub fn create(
+        vma_a: c.vma.Allocator,
+        device: vk.Device,
+        format: vk.Format,
+        extent: vk.Extent3D,
+        usages: vk.ImageUsageFlags,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) @This() {
+        var image: @This() = .{
+            .format = format,
+            .extent = extent,
+        };
+
+        const ci = vki.imageCreateInfo(image.format, usages, image.extent);
+
+        const ai = c.vma.AllocationCreateInfo{
+            .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        };
+
+        checkVk(c.vma.CreateImage(vma_a, &ci, &ai, &image.image, &image.allocation, null)) catch
+            @panic("failed to create draw image");
+        const view_ci = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
+
+        checkVk(vk.CreateImageView(device, &view_ci, alloc_cbs, &image.view)) catch @panic("failed to create image view");
+
+        return image;
+    }
+
+    pub fn deinit(self: @This(), vma_a: c.vma.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+        vk.DestroyImageView(device, self.view, alloc_cbs);
+        c.vma.DestroyImage(vma_a, self.image, self.allocation);
+    }
 };
 
 pub fn findMemoryType(physical_device: vk.PhysicalDevice, type_filter: u32, properties: vk.MemoryPropertyFlags) u32 {

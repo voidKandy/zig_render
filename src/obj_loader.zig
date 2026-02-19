@@ -67,14 +67,14 @@ const ParseContext = struct {
     line_content: []const u8,
     filename: []const u8,
 
-    objects: std.ArrayListUnmanaged(Object) = .{},
+    objects: std.ArrayList(Object) = .{},
 
     object_name: []const u8 = "",
-    vertices: std.ArrayList([3]f32) = std.ArrayList([3]f32){},
-    normals: std.ArrayList([3]f32) = std.ArrayList([3]f32){},
-    uvs: std.ArrayList([2]f32) = std.ArrayList([2]f32){},
-    face_vertices: std.ArrayList(u32) = std.ArrayList(u32){},
-    indices: std.ArrayList(Index) = std.ArrayList(Index){},
+    vertices: std.ArrayList([3]f32) = .{},
+    normals: std.ArrayList([3]f32) = .{},
+    uvs: std.ArrayList([2]f32) = .{},
+    face_vertices: std.ArrayList(u32) = .{},
+    indices: std.ArrayList(Index) = .{},
     face_parsing_state: FaceParsingState = .undefined,
 
     fn deinit(self: *ParseContext) void {

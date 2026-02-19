@@ -22,56 +22,6 @@ const Vec3 = core.math.Vec3;
 const Vec4 = core.math.Vec4;
 const Mat4 = core.math.Mat4;
 
-fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.StringHashMap(BoundDescriptor) {
-    var map = std.StringHashMap(BoundDescriptor).init(engine.allocs.std);
-    const camera = tools.Camera{};
-    const bound_camera = tools.Camera.createBoundDescriptor(camera, &engine.allocs, engine.logical_device.handle, engine.alloc_cbs);
-    try map.put("camera_data", bound_camera);
-
-    const camera_data_info = vk.DescriptorBufferInfo{
-        .buffer = bound_camera.data.buffer,
-        .offset = 0,
-        .range = @sizeOf(tools.Camera.Data),
-    };
-
-    const camera_data_write = vk.WriteDescriptorSet{
-        .dstBinding = 0,
-        .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = bound_camera.descriptor_set,
-        .dstArrayElement = 0,
-        .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = 1,
-        .pBufferInfo = &camera_data_info,
-    };
-
-    // BAD!!
-    // This exture and sampler leaks to Scene3D AND Camera
-    const texture_id = engine.resources.getId(.texture, 0).?;
-    const sampler_id = engine.resources.getId(.sampler, 0).?;
-
-    const img_info = vk.DescriptorImageInfo{
-        .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        .imageView = engine.resources.query(texture_id).?.texture.image_view,
-        .sampler = engine.resources.query(sampler_id).?.sampler,
-    };
-
-    const img_write = vk.WriteDescriptorSet{
-        .dstBinding = 1,
-        .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = bound_camera.descriptor_set,
-        .dstArrayElement = 0,
-        .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 1,
-        .pImageInfo = &img_info,
-    };
-
-    const writes = &[_]vk.WriteDescriptorSet{ camera_data_write, img_write };
-
-    vk.UpdateDescriptorSets(engine.logical_device.handle, writes.len, writes, 0, null);
-
-    return map;
-}
-
 pub fn main() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() == .leak) {
@@ -103,6 +53,63 @@ pub fn main() void {
     engine.run();
 }
 
+// / very y
+fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.StringHashMap(BoundDescriptor) {
+    var map = std.StringHashMap(BoundDescriptor).init(engine.allocs.std);
+    var writer = try core.descriptor.Writer.init(engine.allocs.std);
+    defer writer.deinit(engine.allocs.std);
+    var builder = core.descriptor.LayoutBuilder.init(engine.allocs.std);
+    defer builder.deinit(engine.allocs.std);
+
+    const camera = tools.Camera{};
+
+    // this is migth be an unneccsarry abstraction
+    const bound_camera = core.BoundDescriptor.init(
+        tools.Camera.GPUData,
+        tools.Camera,
+        &engine.allocs,
+        vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        vk.SHADER_STAGE_VERTEX_BIT,
+        vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        c.vma.MEMORY_USAGE_CPU_TO_GPU,
+        camera,
+        &tools.Camera.control,
+    );
+
+    builder.addBinding(engine.allocs.std, 0, bound_camera.descriptor_type, bound_camera.descriptor_stage);
+    builder.addBinding(engine.allocs.std, 1, vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, vk.SHADER_STAGE_FRAGMENT_BIT);
+
+    engine.descriptor_set_layout = builder.build(engine.logical_device.handle, null, 0, engine.alloc_cbs);
+    engine.descriptor_set = engine.allocs.global_descriptor.allocate(engine.logical_device.handle, engine.descriptor_set_layout, null);
+
+    writer.writeBuffer(engine.allocs.std, 0, bound_camera.data.buffer, @sizeOf(tools.Camera.GPUData), 0, bound_camera.descriptor_type);
+
+    try map.put("camera_data", bound_camera);
+
+    // BAD!!
+    // This exture and sampler leaks to Scene3D AND Camera
+    // maybe textures should be bundled with samplers in a one - to - many relationship
+    // that way this could be done programaitically
+    // For now, this is fine
+    const image_id = engine.resources.getId(.image, 1).?;
+    const sampler_id = engine.resources.getId(.sampler, 0).?;
+    writer.writeImage(
+        engine.allocs.std,
+        1,
+        engine.resources.query(image_id).?.image.view,
+        engine.resources.query(sampler_id).?.sampler,
+        vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+    );
+
+    writer.updateSet(
+        engine.logical_device.handle,
+        engine.descriptor_set,
+    );
+
+    return map;
+}
+
 fn initResources(engine: *core.VulkanEngine) anyerror!ResourceManager {
     var resources = core.ResourceManager.init(engine.allocs.std) catch @panic("OOM");
 
@@ -123,7 +130,7 @@ fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!PipelineObjManager {
     const init_data = PipelineObject.InitData{
         .main_render_pass = engine.main_render_pass,
         .swapchain_extent = engine.swapchain.extent,
-        .descriptors = engine.bound_descriptors,
+        .descriptor_set_layout = engine.descriptor_set_layout,
         .resources = engine.resources,
     };
 
@@ -152,7 +159,7 @@ fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!PipelineObjManager {
             resources[j] = engine.resources.getId(.mesh3D, i).?;
             j += 1;
         }
-        resources[j] = engine.resources.getId(.texture, 0).?;
+        resources[j] = engine.resources.getId(.image, 0).?;
         j += 1;
         resources[j] = engine.resources.getId(.sampler, 0).?;
 
@@ -310,11 +317,12 @@ fn initMeshes(
                 return h;
             }
         };
-        var lost_empire = core.obj_loader.parseFile(allocs.std, "assets/lost_empire.obj") catch @panic("failed to read lost_empire.obj");
-        defer lost_empire.deinit();
+        var viking_room = core.obj_loader.parseFile(allocs.std, "assets/viking_room.obj") catch @panic("failed to read lost_empire.obj");
+        defer viking_room.deinit();
+
         var uniques = std.AutoHashMap(u64, u16).init(allocs.std);
-        var indices = std.ArrayList(u16).initCapacity(allocs.std, lost_empire.vertices.len) catch @panic("OOM");
-        var vertices = std.ArrayList(mesh_mod.Vertex3D).initCapacity(allocs.std, lost_empire.vertices.len) catch @panic("OOM");
+        var indices = std.ArrayList(u16).initCapacity(allocs.std, viking_room.vertices.len) catch @panic("OOM");
+        var vertices = std.ArrayList(mesh_mod.Vertex3D).initCapacity(allocs.std, viking_room.vertices.len) catch @panic("OOM");
         defer {
             indices.deinit(allocs.std);
             vertices.deinit(allocs.std);
@@ -322,29 +330,26 @@ fn initMeshes(
         }
 
         var current_index: u16 = 0;
-        for (0..lost_empire.vertices.len - 1) |i| {
-            const has_uv = i >= lost_empire.uvs.len;
-            const has_normal = i >= lost_empire.normals.len;
+        for (viking_room.objects) |object| {
+            for (object.indices) |idx| {
+                const vertex = mesh_mod.Vertex3D{
+                    .position = Vec3.fromSizedArray(viking_room.vertices[idx.vertex]),
+                    .uv = Vec2.fromSizedArray(viking_room.uvs[idx.uv]),
+                    .normal = Vec3.fromSizedArray(viking_room.normals[idx.normal]),
+                    .color = Vec3.ZERO,
+                };
 
-            const vertex = mesh_mod.Vertex3D{
-                .position = math_mod.Vec3.fromSizedArray(lost_empire.vertices[i]),
-                .uv = if (has_uv) Vec2.ZERO else Vec2.fromSizedArray(lost_empire.uvs[i]),
-                .normal = if (has_normal) Vec3.ZERO else Vec3.fromSizedArray(lost_empire.normals[i]),
-                .color = Vec3.ZERO,
-                // .color = if (i > lost_empire.colors.len) Vec2.ZERO else Vec2.fromSizedArray(lost_empire[i]),
-            };
+                const hash = Vertex3DHash.hash(vertex);
+                const entry = uniques.getOrPut(hash) catch @panic("OOM");
 
-            const entry = uniques.getOrPut(
-                // vertex
-                Vertex3DHash.hash(vertex)) catch @panic("OOM");
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = current_index;
+                    vertices.append(allocs.std, vertex) catch @panic("OOM");
+                    current_index += 1;
+                }
 
-            if (!entry.found_existing) {
-                entry.value_ptr.* = current_index;
-                vertices.append(allocs.std, vertex) catch @panic("OOM");
-                current_index += 1;
+                indices.append(allocs.std, entry.value_ptr.*) catch @panic("OOM");
             }
-
-            indices.append(allocs.std, entry.value_ptr.*) catch @panic("OOM");
         }
 
         var mesh_3d = mesh_mod.Mesh3D.init(allocs.std, vertices.items, indices.items) catch @panic("failed to create mesh");
@@ -361,45 +366,25 @@ fn initBackgroundDrawImage(
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) ResourceManager.Resource {
-    var image: vma_usage.AllocatedImage = undefined;
-    image.format = core.VulkanEngine.MAIN_RENDER_PASS_IMAGE_FORMAT;
-    image.extent = vk.Extent3D{
-        .width = swapchain.extent.width,
-        .height = swapchain.extent.height,
-        .depth = 1,
-    };
-
     const usages: vk.ImageUsageFlags =
         vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
         vk.IMAGE_USAGE_TRANSFER_DST_BIT |
         vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-    const ci = vki.imageCreateInfo(image.format, usages, image.extent);
-
-    const ai = c.vma.AllocationCreateInfo{
-        .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-        .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-    };
-
-    checkVk(c.vma.CreateImage(allocs.vma, &ci, &ai, &image.image, &image.allocation, null)) catch
-        @panic("failed to create draw image");
-
-    //build a image-view for the draw image to use for rendering
-    const render_view_info = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
-
-    checkVk(vk.CreateImageView(device, &render_view_info, alloc_cbs, &image.view)) catch @panic("failed to create image view");
-
-    return .{ .image = image };
+    return .{ .image = vma_usage.AllocatedImage.create(allocs.vma, device, core.VulkanEngine.MAIN_RENDER_PASS_IMAGE_FORMAT, vk.Extent3D{
+        .width = swapchain.extent.width,
+        .height = swapchain.extent.height,
+        .depth = 1,
+    }, usages, alloc_cbs) };
 }
 
-/// Currently unused
 fn initTextureImage(
     allocs: core.VulkanEngine.Allocators,
     ctx: *vki.UploadContext,
     logical_device: vki.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) ResourceManager.Resource {
-    const test_img = texs.loadImageFromFile(allocs.vma, ctx, logical_device, "assets/test_img.jpg") catch @panic("Failed to load image");
+    var test_img = texs.loadImageFromFile(allocs.vma, ctx, logical_device, "assets/test_img.jpg", alloc_cbs) catch @panic("Failed to load image");
 
     const image_view_ci = vk.ImageViewCreateInfo{
         .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -420,18 +405,9 @@ fn initTextureImage(
             .layerCount = 1,
         },
     };
+    checkVk(vk.CreateImageView(logical_device.handle, &image_view_ci, alloc_cbs, &test_img.view)) catch @panic("Failed to create image view");
 
-    var test_texture = texs.Texture{
-        .image = .{
-            .allocation = test_img.allocation,
-            .image = test_img.image,
-        },
-        .image_view = null,
-    };
-
-    checkVk(vk.CreateImageView(logical_device.handle, &image_view_ci, alloc_cbs, &test_texture.image_view)) catch @panic("Failed to create image view");
-
-    return .{ .texture = test_texture };
+    return .{ .image = test_img };
 }
 
 fn initTextureSampler(device: vk.Device, physical_device: vki.PhysicalDevice) ResourceManager.Resource {

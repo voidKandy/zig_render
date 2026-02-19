@@ -7,7 +7,7 @@ const checkVk = vki.checkVk;
 const Vec3 = core.math.Vec3;
 const Mat4 = core.math.Mat4;
 
-pub const Data = struct {
+pub const GPUData = struct {
     model: Mat4,
     view: Mat4,
     proj: Mat4,
@@ -31,65 +31,7 @@ const Mode = enum {
     user_input,
 };
 
-pub fn createBoundDescriptor(
-    self: @This(),
-    allocs: *core.VulkanEngine.Allocators,
-    device: vk.Device,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) core.BoundDescriptor {
-    var builder = core.descriptor.LayoutBuilder.init(allocs.std);
-    defer builder.deinit(allocs.std);
-    builder.addBinding(allocs.std, 0, vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER, vk.SHADER_STAGE_VERTEX_BIT);
-    builder.addBinding(allocs.std, 1, vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, vk.SHADER_STAGE_FRAGMENT_BIT);
-    const layout = builder.build(device, null, 0, alloc_cbs);
-    const set = allocs.global_descriptor.allocate(device, layout, null);
-
-    const bound = core.BoundDescriptor.init(
-        Data,
-        @This(),
-        allocs,
-        set,
-        layout,
-        self,
-        controlCamera,
-    );
-
-    return bound;
-}
-
-/// DEAD CODE
-/// MEANT FOR REFERENCE
-fn createDescriptorSetLayout(device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) vk.DescriptorSetLayout {
-    var layout: vk.DescriptorSetLayout = undefined;
-
-    const ubo_layout_binding = vk.DescriptorSetLayoutBinding{
-        .binding = 0,
-        .descriptorCount = 1,
-        .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-        .pImmutableSamplers = null,
-    };
-    const sampler_layout_binding = vk.DescriptorSetLayoutBinding{
-        .binding = 1,
-        .descriptorCount = 1,
-        .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
-        .pImmutableSamplers = null,
-    };
-
-    const bindings = &[_]vk.DescriptorSetLayoutBinding{ ubo_layout_binding, sampler_layout_binding };
-
-    const ci = vk.DescriptorSetLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = bindings.len,
-        .pBindings = bindings,
-    };
-
-    checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &layout)) catch @panic("failed to create descriptor set layout");
-    return layout;
-}
-
-pub fn controlCamera(self: *@This(), engine: core.VulkanEngine, desc: *core.BoundDescriptor) void {
+pub fn control(self: *@This(), engine: core.VulkanEngine, desc: *core.BoundDescriptor) void {
     const State = struct {
         /// for rotation so i decided not to store it in camera
         var start: i128 = 0;
@@ -116,12 +58,12 @@ pub fn controlCamera(self: *@This(), engine: core.VulkanEngine, desc: *core.Boun
         @as(f32, @floatFromInt(engine.swapchain.extent.height));
 
     var ubo = switch (self.mode) {
-        .rotate_around => Data{
+        .rotate_around => GPUData{
             .model = Mat4.IDENTITY.rotate(self.target, time * 1.0),
             .view = Mat4.lookAt(self.eye, Vec3.ZERO, Vec3.UP),
             .proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
-        .user_input => Data{
+        .user_input => GPUData{
             .model = Mat4.IDENTITY,
             .view = Mat4.lookAt(self.eye, Vec3.ZERO, Vec3.UP),
             .proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
@@ -130,6 +72,25 @@ pub fn controlCamera(self: *@This(), engine: core.VulkanEngine, desc: *core.Boun
 
     ubo.proj.j.y *= -1;
 
-    const aligned_data: *Data = @ptrCast(@alignCast(desc.mapped));
+    const aligned_data: *GPUData = @ptrCast(@alignCast(desc.mapped));
     aligned_data.* = ubo;
+}
+
+pub fn writeSet(set: vk.DescriptorSet, desc: *core.BoundDescriptor) vk.WriteDescriptorSet {
+    // const camera_data_info = ;
+
+    return vk.WriteDescriptorSet{
+        .dstBinding = 0,
+        .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = set,
+        .dstArrayElement = 0,
+        .descriptorType = desc.descriptor_type,
+        .descriptorCount = 1,
+        .pBufferInfo = &vk.DescriptorBufferInfo{
+            .buffer = desc.data.buffer,
+            .offset = 0,
+            // there is an opportunity here to do this on the BoundDescriptor struct rather than outside
+            .range = @sizeOf(GPUData),
+        },
+    };
 }

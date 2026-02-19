@@ -9,17 +9,20 @@ const log = std.log.scoped(.textures);
 
 pub const Texture = struct {
     /// BAD
-    image: struct {
-        allocation: c.vma.Allocation,
-        image: vk.Image,
-    },
+    allocation: c.vma.Allocation,
+    image: vk.Image,
     image_view: vk.ImageView,
 };
 
-pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadContext, device: vk_init.LogicalDevice, filepath: []const u8) !struct {
-    allocation: c.vma.Allocation,
-    image: vk.Image,
-} {
+const Error = std.fmt.BufPrintError || vk_init.VkError || error{FailedToLoadImage};
+
+pub fn loadImageFromFile(
+    vma_a: c.vma.Allocator,
+    upload_ctx: *vk_init.UploadContext,
+    device: vk_init.LogicalDevice,
+    filepath: []const u8,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) Error!vma_usage.AllocatedImage {
     var width: c_int = undefined;
     var height: c_int = undefined;
     var channels: c_int = undefined;
@@ -65,31 +68,39 @@ pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadCont
         .height = @as(c_uint, @intCast(height)),
         .depth = 1,
     };
+    const image = vma_usage.AllocatedImage.create(
+        vma_a,
+        device.handle,
+        vk.FORMAT_R8G8B8A8_SRGB,
+        extent,
+        vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
+        alloc_cbs,
+    );
 
-    const img_info = vk.ImageCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = vk.IMAGE_TYPE_2D,
-        .format = vk.FORMAT_R8G8B8A8_SRGB,
-        .extent = extent,
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = vk.SAMPLE_COUNT_1_BIT,
-        .tiling = vk.IMAGE_TILING_OPTIMAL,
-        .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
-    };
+    // const img_info = vk.ImageCreateInfo{
+    //     .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+    //     .imageType = vk.IMAGE_TYPE_2D,
+    //     .format = vk.FORMAT_R8G8B8A8_SRGB,
+    //     .extent = extent,
+    //     .mipLevels = 1,
+    //     .arrayLayers = 1,
+    //     .samples = vk.SAMPLE_COUNT_1_BIT,
+    //     .tiling = vk.IMAGE_TILING_OPTIMAL,
+    //     .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
+    // };
 
-    const alloc_ci = c.vma.AllocationCreateInfo{
-        .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-    };
+    // const alloc_ci = c.vma.AllocationCreateInfo{
+    //     .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
+    // };
 
-    var image: vk.Image = undefined;
-    var allocation: c.vma.Allocation = undefined;
-    try checkVk(c.vma.CreateImage(vma_a, &img_info, &alloc_ci, &image, &allocation, null));
-    if (allocation == null) {
-        return error.FailedToCreateImage;
-    }
+    // var image: vk.Image = undefined;
+    // var allocation: c.vma.Allocation = undefined;
+    // try checkVk(c.vma.CreateImage(vma_a, &img_info, &alloc_ci, &image, &allocation, null));
+    // if (allocation == null) {
+    //     return error.FailedToCreateImage;
+    // }
 
-    log.info("Create vkimage and gpu memory for image: {s}", .{filepath});
+    // log.info("Create vkimage and gpu memory for image: {s}", .{filepath});
 
     // Tranfer CPU memory to GPU memory
     //
@@ -181,13 +192,10 @@ pub fn loadImageFromFile(vma_a: c.vma.Allocator, upload_ctx: *vk_init.UploadCont
             );
         }
     }{
-        .image = image,
+        .image = image.image,
         .extent = extent,
         .staging_buffer = staging_buffer,
     });
 
-    return .{
-        .image = image,
-        .allocation = allocation,
-    };
+    return image;
 }
