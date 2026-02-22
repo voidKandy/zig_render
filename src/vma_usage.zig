@@ -41,13 +41,14 @@ pub const AllocatedImage = struct {
     extent: vk.Extent3D,
     format: vk.Format,
 
-    pub fn create(
+    /// Image view must still be created after AllocatedImage is initialized
+    /// Do this by initializing some create info
+    /// and then vk.CreateImageView
+    pub fn init(
         vma_a: c.vma.Allocator,
-        device: vk.Device,
         format: vk.Format,
         extent: vk.Extent3D,
         usages: vk.ImageUsageFlags,
-        alloc_cbs: ?*vk.AllocationCallbacks,
     ) @This() {
         var image: @This() = .{
             .format = format,
@@ -63,9 +64,6 @@ pub const AllocatedImage = struct {
 
         checkVk(c.vma.CreateImage(vma_a, &ci, &ai, &image.image, &image.allocation, null)) catch
             @panic("failed to create draw image");
-        const view_ci = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
-
-        checkVk(vk.CreateImageView(device, &view_ci, alloc_cbs, &image.view)) catch @panic("failed to create image view");
 
         return image;
     }

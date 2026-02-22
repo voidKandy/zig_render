@@ -371,11 +371,16 @@ fn initBackgroundDrawImage(
         vk.IMAGE_USAGE_TRANSFER_DST_BIT |
         vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-    return .{ .image = vma_usage.AllocatedImage.create(allocs.vma, device, core.VulkanEngine.MAIN_RENDER_PASS_IMAGE_FORMAT, vk.Extent3D{
+    var image = vma_usage.AllocatedImage.init(allocs.vma, core.VulkanEngine.MAIN_RENDER_PASS_IMAGE_FORMAT, vk.Extent3D{
         .width = swapchain.extent.width,
         .height = swapchain.extent.height,
         .depth = 1,
-    }, usages, alloc_cbs) };
+    }, usages);
+    const view_ci = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
+
+    checkVk(vk.CreateImageView(device, &view_ci, alloc_cbs, &image.view)) catch @panic("failed to create image view");
+
+    return .{ .image = image };
 }
 
 fn initTextureImage(
@@ -384,7 +389,7 @@ fn initTextureImage(
     logical_device: vki.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) ResourceManager.Resource {
-    var test_img = texs.loadImageFromFile(allocs.vma, ctx, logical_device, "assets/test_img.jpg", alloc_cbs) catch @panic("Failed to load image");
+    var test_img = texs.loadImageFromFile(allocs.vma, ctx, logical_device, "assets/test_img.jpg") catch @panic("Failed to load image");
 
     const image_view_ci = vk.ImageViewCreateInfo{
         .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,

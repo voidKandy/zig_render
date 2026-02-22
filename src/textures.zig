@@ -21,7 +21,6 @@ pub fn loadImageFromFile(
     upload_ctx: *vk_init.UploadContext,
     device: vk_init.LogicalDevice,
     filepath: []const u8,
-    alloc_cbs: ?*vk.AllocationCallbacks,
 ) Error!vma_usage.AllocatedImage {
     var width: c_int = undefined;
     var height: c_int = undefined;
@@ -68,14 +67,14 @@ pub fn loadImageFromFile(
         .height = @as(c_uint, @intCast(height)),
         .depth = 1,
     };
-    const image = vma_usage.AllocatedImage.create(
+    const image = vma_usage.AllocatedImage.init(
         vma_a,
-        device.handle,
         vk.FORMAT_R8G8B8A8_SRGB,
         extent,
         vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
-        alloc_cbs,
     );
+
+    // defer image.deinit(vma_a, device.handle, alloc_cbs);
 
     // const img_info = vk.ImageCreateInfo{
     //     .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
