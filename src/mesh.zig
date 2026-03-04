@@ -4,6 +4,8 @@ const vma_usage = root.vma_usage;
 const AllocatedBuffer = vma_usage.AllocatedBuffer;
 const checkVk = root.vulkan_init.checkVk;
 const m3d = @import("math3d.zig");
+const checkTol = @import("tiny_obj_loader.zig").checkTol;
+// const obj_loader = @import("obj_loader.zig");
 const c = @import("clibs.zig");
 const vk = c.vk;
 
@@ -178,46 +180,57 @@ pub const Vertex3D = struct {
             },
         },
         .attributes = &.{
-            std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
+            c.vk.VertexInputAttributeDescription{
                 .location = 0,
                 .binding = 0,
                 .format = c.vk.FORMAT_R32G32B32_SFLOAT,
                 .offset = @offsetOf(Vertex3D, "position"),
-            }),
-            std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
+            },
+            c.vk.VertexInputAttributeDescription{
                 .location = 1,
                 .binding = 0,
                 .format = c.vk.FORMAT_R32G32B32_SFLOAT,
                 .offset = @offsetOf(Vertex3D, "normal"),
-            }),
-            std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
+            },
+            c.vk.VertexInputAttributeDescription{
                 .location = 2,
                 .binding = 0,
                 .format = c.vk.FORMAT_R32G32B32_SFLOAT,
                 .offset = @offsetOf(Vertex3D, "color"),
-            }),
-            std.mem.zeroInit(c.vk.VertexInputAttributeDescription, .{
+            },
+            c.vk.VertexInputAttributeDescription{
                 .location = 3,
                 .binding = 0,
                 .format = c.vk.FORMAT_R32G32_SFLOAT,
                 .offset = @offsetOf(Vertex3D, "uv"),
-            }),
+            },
         },
     };
 };
 
 pub const Mesh3D = struct {
     vertices: []Vertex3D,
-    vertex_buffer: AllocatedBuffer = undefined,
     indices: []u16,
+    /// vertex & index buffers are not present until `upload` method is called
+    vertex_buffer: AllocatedBuffer = undefined,
     index_buffer: AllocatedBuffer = undefined,
+    const Self = @This();
 
-    pub const PushConstants = struct {
-        data: Vec4 = undefined,
-        render_matrix: m3d.Mat4,
-    };
+    pub fn init(a: std.mem.Allocator, vertices: []const Vertex3D, indices: []const u16) std.mem.Allocator.Error!Self {
+        return .{
+            .vertices = try a.dupe(Vertex3D, vertices),
+            .indices = try a.dupe(u16, indices),
+        };
+    }
 
-    pub fn upload(self: *@This(), vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.LogicalDevice) void {
+    pub fn deinit(self: Self, allocator: std.mem.Allocator, vma_a: c.vma.Allocator) void {
+        c.vma.DestroyBuffer(vma_a, self.index_buffer.buffer, self.index_buffer.allocation);
+        c.vma.DestroyBuffer(vma_a, self.vertex_buffer.buffer, self.vertex_buffer.allocation);
+        allocator.free(self.vertices);
+        allocator.free(self.indices);
+    }
+
+    pub fn upload(self: *Self, vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.LogicalDevice) void {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex3D),
             self.indices.len * @sizeOf(u16),
@@ -315,55 +328,95 @@ pub const Mesh3D = struct {
             .size = idx_alloc_size,
         });
     }
+
+    pub fn loadFromObj(a: std.mem.Allocator, filepath: []const u8) Mesh3D {
+        // const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
+        // defer file.close();
+        // const end_pos = try file.getEndPos();
+        // const content = try file.readToEndAlloc(a, end_pos);
+        var attributes = c.tol.Attributes{};
+        // const shapes: [][]?c.tol.Shape = a.alloc([]?c.tol.Shape, 1024) catch @panic("OOM");
+        const shapes: [*]?*c.tol.Shape = (a.alloc(?*c.tol.Shape, 1024) catch ("OOM")).ptr;
+        //the slicing is required because [*] is unknown length
+        for (shapes[0..1024]) |*ele| ele.* = a.create(c.tol.shape) catch unreachable;
+        // const shapes = [_][]?*const c.tol.Shape{};
+        // var shapes_c: [*c][*]c.tol.Shape = &shapes;
+        var num_shapes: usize = 0;
+
+        // const materials: [][]?c.tol.Material = a.alloc([]?c.tol.Material, 1024) catch @panic("OOM");
+        const materials: [*]?*c.tol.Material = (a.alloc(?*c.tol.Material, 1024) catch ("OOM")).ptr;
+        for (materials[0..1024]) |*ele| ele.* = a.create(c.tol.shape) catch unreachable;
+        // var materials_c: [*c][*c]c.tol.Material = &materials;
+        var num_materials: usize = 0;
+        const c_path = a.dupeZ(u8, filepath) catch @panic("OOM");
+        defer a.free(c_path);
+
+        // safe to call
+        const result = c.tol.parseObject(
+            &attributes,
+            shapes.ptr,
+            // @as([*][*]c.tol.Shape, shapes.ptr),
+            &num_shapes,
+            materials.ptr,
+            // @as([*][*]c.tol.Material, materials.ptr),
+            &num_materials,
+            c_path.ptr,
+            null,
+            null,
+            0,
+        );
+        checkTol(result) catch @panic("failed to parse object");
+
+        // var obj_mesh = obj_loader.parseFile(a, filepath) catch |err| {
+        //     std.log.err("Failed to load obj file: {s}", .{@errorName(err)});
+        //     unreachable;
+        // };
+        // defer obj_mesh.deinit();
+
+        var vertices = std.ArrayList(Vertex3D).initCapacity(a, attributes.num_vertices) catch @panic("out of memory");
+        _ = &vertices;
+
+        // for (obj_mesh.objects) |object| {
+        //     var index_count: usize = 0;
+        //     for (object.face_vertices) |face_vx_count| {
+        //         if (face_vx_count < 3) {
+        //             @panic("Face has fewer than 3 vertices. Not a valid polygon.");
+        //         }
+
+        //         for (0..face_vx_count) |vx_index| {
+        //             const obj_index = object.indices[index_count];
+        //             const pos = obj_mesh.vertices[obj_index.vertex];
+        //             const nml = obj_mesh.normals[obj_index.normal];
+        //             const uvs = obj_mesh.uvs[obj_index.uv];
+
+        //             const vx = Vertex3D{
+        //                 .position = Vec3.make(pos[0], pos[1], pos[2]),
+        //                 .normal = Vec3.make(nml[0], nml[1], nml[2]),
+        //                 .color = Vec3.make(nml[0], nml[1], nml[2]),
+        //                 .uv = Vec2.make(uvs[0], 1.0 - uvs[1]),
+        //             };
+
+        //             // Triangulate the polygon
+        //             if (vx_index > 2) {
+        //                 const v0 = vertices.items[vertices.items.len - 3];
+        //                 const v1 = vertices.items[vertices.items.len - 1];
+        //                 vertices.append(a, v0) catch @panic("OOM");
+        //                 vertices.append(a, v1) catch @panic("OOM");
+        //             }
+
+        //             vertices.append(a, vx) catch @panic("OOM");
+
+        //             index_count += 1;
+        //         }
+        //     }
+        // }
+        return Mesh3D.init(a, vertices.items, &[_]u16{}) catch @panic("");
+    }
 };
 
-const obj_loader = @import("obj_loader.zig");
-
-pub fn load_from_obj(a: std.mem.Allocator, filepath: []const u8) Mesh3D {
-    var obj_mesh = obj_loader.parse_file(a, filepath) catch |err| {
-        std.log.err("Failed to load obj file: {s}", .{@errorName(err)});
-        unreachable;
-    };
-    defer obj_mesh.deinit();
-
-    var vertices = std.ArrayList(Vertex3D){};
-
-    for (obj_mesh.objects) |object| {
-        var index_count: usize = 0;
-        for (object.face_vertices) |face_vx_count| {
-            if (face_vx_count < 3) {
-                @panic("Face has fewer than 3 vertices. Not a valid polygon.");
-            }
-
-            for (0..face_vx_count) |vx_index| {
-                const obj_index = object.indices[index_count];
-                const pos = obj_mesh.vertices[obj_index.vertex];
-                const nml = obj_mesh.normals[obj_index.normal];
-                const uvs = obj_mesh.uvs[obj_index.uv];
-
-                const vx = Vertex3D{
-                    .position = Vec3.make(pos[0], pos[1], pos[2]),
-                    .normal = Vec3.make(nml[0], nml[1], nml[2]),
-                    .color = Vec3.make(nml[0], nml[1], nml[2]),
-                    .uv = Vec2.make(uvs[0], 1.0 - uvs[1]),
-                };
-
-                // Triangulate the polygon
-                if (vx_index > 2) {
-                    const v0 = vertices.items[vertices.items.len - 3];
-                    const v1 = vertices.items[vertices.items.len - 1];
-                    vertices.append(a, v0) catch @panic("OOM");
-                    vertices.append(a, v1) catch @panic("OOM");
-                }
-
-                vertices.append(a, vx) catch @panic("OOM");
-
-                index_count += 1;
-            }
-        }
-    }
-
-    return Mesh3D{
-        .vertices = vertices.toOwnedSlice(a) catch @panic("Failed to make owned slice"),
-    };
+test "obj" {
+    const obj = @import("obj_loader.zig");
+    var mesh = try obj.parseFile(std.testing.allocator, "assets/lost_empire.obj");
+    mesh.deinit();
+    // _ = Mesh3D.loadFromObj(std.testing.allocator, "assets/lost_empire.obj");
 }

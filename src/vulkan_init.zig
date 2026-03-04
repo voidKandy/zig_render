@@ -7,6 +7,129 @@ const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.vulkan_init);
 const Mat4 = @import("math3d.zig").Mat4;
 
+pub fn defaultColorBlendAttachmentState() vk.PipelineColorBlendAttachmentState {
+    return .{
+        .colorWriteMask = vk.COLOR_COMPONENT_R_BIT | vk.COLOR_COMPONENT_G_BIT |
+            vk.COLOR_COMPONENT_B_BIT | vk.COLOR_COMPONENT_A_BIT,
+        .blendEnable = vk.FALSE,
+    };
+}
+
+pub fn pipelineLayoutCreateInfo() vk.PipelineLayoutCreateInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = null,
+
+        .flags = 0,
+        .setLayoutCount = 0,
+        .pSetLayouts = null,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = null,
+    };
+}
+
+pub fn renderingInfo(render_extent: vk.Extent2D, color_attachment: ?vk.RenderingAttachmentInfo, depth_attachment: ?vk.RenderingAttachmentInfo) vk.RenderingInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_RENDERING_INFO,
+        .pNext = null,
+
+        .renderArea = vk.Rect2D{
+            .offset = vk.Offset2D{
+                .x = 0,
+                .y = 0,
+            },
+            .extent = render_extent,
+        },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = if (color_attachment) |a| &a else &std.mem.zeroes(vk.RenderingAttachmentInfo),
+        .pDepthAttachment = if (depth_attachment) |a| &a else &std.mem.zeroes(vk.RenderingAttachmentInfo),
+        .pStencilAttachment = null,
+    };
+}
+
+pub fn colorAttachmentInfo(view: vk.ImageView, clear: ?vk.ClearValue, layout: vk.ImageLayout) vk.RenderingAttachmentInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .pNext = null,
+
+        .imageView = view,
+        .imageLayout = layout,
+        .loadOp = if (clear) |_| vk.ATTACHMENT_LOAD_OP_CLEAR else vk.ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
+        .clearValue = if (clear) |cl| cl else std.mem.zeroes(vk.ClearValue),
+    };
+}
+
+pub fn depthAttachmentInfo(view: vk.ImageView, layout: vk.ImageLayout) vk.RenderingAttachmentInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .pNext = null,
+
+        .imageView = view,
+        .imageLayout = layout,
+        .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
+        .clearValue = .{ .depthStencil = .{
+            .depth = 0.0,
+        } },
+    };
+}
+pub fn imageSubresourceRange(aspect_mask: vk.ImageAspectFlags) vk.ImageSubresourceRange {
+    return .{
+        .aspectMask = aspect_mask,
+        .baseMipLevel = 0,
+        .levelCount = vk.REMAINING_MIP_LEVELS,
+        .baseArrayLayer = 0,
+        .layerCount = vk.REMAINING_ARRAY_LAYERS,
+    };
+}
+
+pub fn imageCreateInfo(format: vk.Format, usage_flags: vk.ImageUsageFlags, extent: vk.Extent3D) vk.ImageCreateInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = null,
+        .imageType = vk.IMAGE_TYPE_2D,
+        .format = format,
+        .extent = extent,
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        //for MSAA. we will not be using it by default, so default it to 1 sample per pixel.
+        .samples = vk.SAMPLE_COUNT_1_BIT,
+        //optimal tiling, which means the image is stored on the best gpu format
+        .tiling = vk.IMAGE_TILING_OPTIMAL,
+        .usage = usage_flags,
+    };
+}
+
+pub fn imageViewCreateInfo(format: vk.Format, image: vk.Image, aspect_flags: vk.ImageAspectFlags) vk.ImageViewCreateInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = null,
+
+        .viewType = vk.IMAGE_VIEW_TYPE_2D,
+        .image = image,
+        .format = format,
+        .subresourceRange = .{
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+            .aspectMask = aspect_flags,
+        },
+    };
+}
+
+pub fn pipelineShaderStageCreateInfo(stage: vk.ShaderStageFlagBits, shader_module: vk.ShaderModule, entry: [:0]const u8) vk.PipelineShaderStageCreateInfo {
+    return .{
+        .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = null,
+        .stage = stage,
+        .module = shader_module,
+        .pName = entry,
+    };
+}
+
 pub const UploadContext = struct {
     upload_fence: c.vk.Fence = null,
     command_pool: c.vk.CommandPool = null,
@@ -46,6 +169,7 @@ pub const UploadContext = struct {
         vk.DestroyFence(device, self.upload_fence, vk_alloc_cbs);
     }
 
+    /// `submit_ctx` must be a struct with a `submit` function.
     pub fn immediateSubmit(self: *@This(), device: LogicalDevice, submit_ctx: anytype) void {
         // Check the context is good
         comptime {
@@ -81,7 +205,7 @@ pub const UploadContext = struct {
             }
 
             if (submit_fn_info.@"fn".params[0].type != Context) {
-                @compileError("Context submit method first parameter should be of type: " ++ @typeName(Context));
+                @compileError("Context submit method first parameter should be of type: " ++ @typeName(Context) ++ " instead got: " ++ @typeName(submit_fn_info.@"fn".params[0].type.?));
             }
 
             if (submit_fn_info.@"fn".params[1].type != c.vk.CommandBuffer) {
@@ -511,6 +635,7 @@ pub const PhysicalDevice = struct {
             try checkVk(vk.EnumerateDeviceExtensionProperties(self.handle, null, &device_extension_count, device_extensions.ptr));
 
             _ = blk: for (opts.required_extensions) |req_ext| {
+                log.warn("Checking for ext: {s}\n", .{req_ext});
                 for (device_extensions) |device_ext| {
                     const device_ext_name: [*c]const u8 = @ptrCast(device_ext.extensionName[0..]);
                     if (std.mem.eql(u8, std.mem.span(req_ext), std.mem.span(device_ext_name))) {
@@ -535,6 +660,7 @@ const DeviceCreateOpts = struct {
     alloc_cb: ?*const vk.AllocationCallbacks = null,
     /// Optional pnext chain for VkDeviceCreateInfo.
     pnext: ?*const anyopaque = null,
+    device_extensions: []const [*c]const u8 = &.{},
 };
 
 /// Result from the creation of a logical device.
@@ -575,11 +701,11 @@ pub const LogicalDevice = struct {
             });
         }
 
-        const device_extensions: []const [*c]const u8 = &.{
-            "VK_KHR_swapchain",
-            // for Mac
-            vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
-        };
+        // const device_extensions: []const [*c]const u8 = &.{
+        //     "VK_KHR_swapchain",
+        //     // for Mac
+        //     vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
+        // };
 
         const device_info = vk.DeviceCreateInfo{
             .sType = vk.STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -588,8 +714,8 @@ pub const LogicalDevice = struct {
             .pQueueCreateInfos = queue_create_infos.items.ptr,
             .enabledLayerCount = 0,
             .ppEnabledLayerNames = null,
-            .enabledExtensionCount = @as(u32, @intCast(device_extensions.len)),
-            .ppEnabledExtensionNames = device_extensions.ptr,
+            .enabledExtensionCount = @as(u32, @intCast(opts.device_extensions.len)),
+            .ppEnabledExtensionNames = opts.device_extensions.ptr,
             .pEnabledFeatures = &opts.features,
         };
 
@@ -616,9 +742,6 @@ pub const LogicalDevice = struct {
 };
 
 pub const DepthResource = struct {
-    allocation: vma_usage.AllocatedImage,
-    view: vk.ImageView,
-
     pub fn findDepthFormat(device: PhysicalDevice) vk.Format {
         return device.findSupportedFormat(
             &[_]vk.Format{ vk.FORMAT_D32_SFLOAT, vk.FORMAT_D32_SFLOAT_S8_UINT, vk.FORMAT_D24_UNORM_S8_UINT },
@@ -627,31 +750,49 @@ pub const DepthResource = struct {
         ) catch @panic("failed to find depth format");
     }
 
+    pub fn transition(
+        cmd: vk.CommandBuffer,
+        image: vma_usage.AllocatedImage,
+    ) void {
+        @import("vulkan_util.zig").transitionImageLayout(
+            cmd,
+            image.image,
+            vk.IMAGE_LAYOUT_UNDEFINED,
+            vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            0,
+            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        );
+    }
+
     pub fn init(
         vma_a: c.vma.Allocator,
         physical_device: PhysicalDevice,
         logical_device: vk.Device,
         swapchain_extent: vk.Extent2D,
         vk_alloc_cbs: ?*vk.AllocationCallbacks,
-    ) @This() {
+    ) vma_usage.AllocatedImage {
         const depth_format = findDepthFormat(physical_device);
-        var allocation: vma_usage.AllocatedImage = undefined;
-        var image_view: vk.ImageView = undefined;
+        const extent = vk.Extent3D{
+            .depth = 1,
+            .height = swapchain_extent.height,
+            .width = swapchain_extent.width,
+        };
+        const usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        var image: vma_usage.AllocatedImage = undefined;
 
         const ci = vk.ImageCreateInfo{
             .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .imageType = vk.IMAGE_TYPE_2D,
             .format = depth_format,
-            .extent = vk.Extent3D{
-                .depth = 1,
-                .height = swapchain_extent.height,
-                .width = swapchain_extent.width,
-            },
+            .extent = extent,
             .mipLevels = 1,
             .arrayLayers = 1,
             .samples = vk.SAMPLE_COUNT_1_BIT,
             .tiling = vk.IMAGE_TILING_OPTIMAL,
-            .usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .usage = usage,
             .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
             .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
         };
@@ -665,14 +806,14 @@ pub const DepthResource = struct {
             vma_a,
             &ci,
             &ai,
-            &allocation.image,
-            &allocation.allocation,
+            &image.image,
+            &image.allocation,
             null,
         )) catch @panic("failed to create image");
 
         const depth_image_view_ci = vk.ImageViewCreateInfo{
             .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = allocation.image,
+            .image = image.image,
             .viewType = vk.IMAGE_VIEW_TYPE_2D,
             .format = depth_format,
             .subresourceRange = .{
@@ -688,32 +829,10 @@ pub const DepthResource = struct {
             logical_device,
             &depth_image_view_ci,
             vk_alloc_cbs,
-            &image_view,
+            &image.view,
         )) catch @panic("Failed to create depth image view");
 
-        // apparently redundant because this is done in the render pass
-        // texs.transitionImageLayout(
-        //     &self.upload_context,
-        //     self.logical_device,
-        //     self.depth_image.image,
-        //     depth_format,
-        //     vk.IMAGE_LAYOUT_UNDEFINED,
-        //     vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        // );
-        return @This(){
-            .allocation = allocation,
-            .view = image_view,
-        };
-    }
-
-    pub fn deinit(
-        self: @This(),
-        vma_a: c.vma.Allocator,
-        device: vk.Device,
-        vk_alloc_cbs: ?*vk.AllocationCallbacks,
-    ) void {
-        vk.DestroyImageView(device, self.view, vk_alloc_cbs);
-        c.vma.DestroyImage(vma_a, self.allocation.image, self.allocation.allocation);
+        return image;
     }
 };
 
@@ -739,10 +858,11 @@ pub const Swapchain = struct {
     /// one finish semaphore per swapchain image
     render_semaphores: []c.vk.Semaphore = &.{},
     image_views: []vk.ImageView = &.{},
+    // removed
     framebuffers: []vk.Framebuffer = &.{},
     format: vk.Format = undefined,
     extent: vk.Extent2D = undefined,
-    depth_resource: ?DepthResource = null,
+    depth_resource: ?vma_usage.AllocatedImage = null,
 
     pub fn create(a: Allocator, vma_a: c.vma.Allocator, opts: SwapchainCreateOpts) !@This() {
         const support_info = try SwapchainSupportInfo.init(a, opts.physical_device.handle, opts.surface);
@@ -768,7 +888,7 @@ pub const Swapchain = struct {
             .imageColorSpace = vk.COLOR_SPACE_SRGB_NONLINEAR_KHR,
             .imageExtent = extent,
             .imageArrayLayers = 1,
-            .imageUsage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageUsage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_TRANSFER_SRC_BIT | vk.IMAGE_USAGE_TRANSFER_DST_BIT,
             .preTransform = support_info.capabilities.currentTransform,
             .compositeAlpha = vk.COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
             .presentMode = present_mode,
@@ -846,9 +966,8 @@ pub const Swapchain = struct {
             vk.DestroySemaphore(device, self.render_semaphores[k], vk_alloc_cbs);
         }
 
-        if (self.depth_resource) |b| {
+        if (self.depth_resource) |b|
             b.deinit(vma_a, device, vk_alloc_cbs);
-        }
 
         a.free(self.images);
         a.free(self.image_views);
@@ -870,16 +989,9 @@ pub const Swapchain = struct {
         }
         _ = vk.DeviceWaitIdle(opts.logical_device);
 
-        // maybe this fn should take a ptr to opts?
-        // opts.window_height = height;
-        // opts.window_width = width;
-
-        // opts.old_swapchain = self.handle;
-
         const new_swapchain = Swapchain.create(a, vma_a, opts) catch @panic("failed to create swapchain in recreate fn!");
         self.deinit(a, vma_a, opts.logical_device, vk_alloc_cbs);
         self.* = new_swapchain;
-        // self.createImageViews();
         self.createFramebuffers(
             a,
             opts.logical_device,
@@ -920,7 +1032,7 @@ pub const Swapchain = struct {
     }
 
     fn createImageView(device: vk.Device, image: vk.Image, format: vk.Format, aspect_flags: vk.ImageAspectFlags, alloc_cb: ?*vk.AllocationCallbacks) !vk.ImageView {
-        const view_info = std.mem.zeroInit(vk.ImageViewCreateInfo, .{
+        const view_info = vk.ImageViewCreateInfo{
             .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .image = image,
             .viewType = vk.IMAGE_VIEW_TYPE_2D,
@@ -938,7 +1050,7 @@ pub const Swapchain = struct {
                 .baseArrayLayer = 0,
                 .layerCount = 1,
             },
-        });
+        };
 
         var image_view: vk.ImageView = undefined;
         try checkVk(vk.CreateImageView(device, &view_info, alloc_cb, &image_view));
@@ -983,7 +1095,10 @@ const SwapchainSupportInfo = struct {
         // TODO: Add support for specifying desired format.
         _ = opts;
         for (self.formats) |format| {
-            if (format.format == vk.FORMAT_B8G8R8A8_SRGB and
+            if (format.format ==
+                vk.FORMAT_R16G16B16A16_SFLOAT
+                    // vk.FORMAT_B8G8R8A8_SRGB
+            and
                 format.colorSpace == vk.COLOR_SPACE_SRGB_NONLINEAR_KHR)
             {
                 return format.format;
