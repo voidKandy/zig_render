@@ -71,7 +71,7 @@ pub fn create(
                 @as(*T, @ptrCast(@alignCast(p))).draw(dat, cmd);
             }
         }.d,
-        .drawImguiFunc = if (@hasDecl(T, @tagName(.drawImgui))) &struct {
+        .drawImguiFunc = if (@hasDecl(T, "drawImgui")) &struct {
             fn d(p: *anyopaque) void {
                 @as(*T, @ptrCast(@alignCast(p))).drawImgui();
             }

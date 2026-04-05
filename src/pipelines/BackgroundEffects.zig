@@ -1,20 +1,20 @@
 const std = @import("std");
 const log = std.log.scoped(.BackgroundEffects);
-const core = @import("core");
-const util = core.vulkan_util;
-const mesh_mod = core.mesh;
-const c = core.clibs;
-const PipelineObject = core.PipelineObject;
-const ResourceManager = core.ResourceManager;
-const descriptor = core.descriptor;
-const PipelineBuilder = core.PipelineBuilder;
-const vki = core.vulkan_init;
-const vma_usage = core.vma_usage;
+const engine = @import("../root.zig");
+const util = engine.vulkan_util;
+const mesh_mod = engine.mesh;
+const c = engine.clibs;
+const PipelineObject = engine.PipelineObject;
+const ResourceManager = engine.ResourceManager;
+const descriptor = engine.descriptor;
+const PipelineBuilder = engine.PipelineBuilder;
+const vki = engine.vulkan_init;
+const vma_usage = engine.vma_usage;
 const vk = c.vk;
 const vma = c.vma;
 const checkVk = vki.checkVk;
 const Allocator = std.mem.Allocator;
-const Vec4 = core.math.Vec4;
+const Vec4 = engine.math.Vec4;
 
 /// potentially bad that this is managed externally
 const ComputePushConstants = struct {
@@ -38,7 +38,7 @@ descriptor_set: vk.DescriptorSet = undefined,
 
 pub fn init(
     self: *@This(),
-    allocs: *core.VulkanEngine.Allocators,
+    allocs: *engine.VulkanEngine.Allocators,
     init_data: PipelineObject.InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
@@ -79,7 +79,7 @@ pub fn drawImgui(self: *@This()) void {
 
 pub fn deinit(
     self: *@This(),
-    _: *core.VulkanEngine.Allocators,
+    _: *engine.VulkanEngine.Allocators,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
@@ -191,7 +191,7 @@ const GRADIENT_EFFECT_NAME = "gradient";
 const SKY_EFFECT_NAME = "sky";
 fn initDescriptorSet(
     self: *@This(),
-    allocs: *core.VulkanEngine.Allocators,
+    allocs: *engine.VulkanEngine.Allocators,
     device: vk.Device,
     draw_image_view: vk.ImageView,
     alloc_cbs: ?*vk.AllocationCallbacks,
@@ -248,9 +248,9 @@ fn initPipeline(
     checkVk(vk.CreatePipelineLayout(device, &compute_layout, alloc_cbs, &self.pipeline_layout)) catch
         @panic("failed to create compute pipeline layout");
 
-    const gradient_shader = core.shaders.createShaderModule("gradient_color.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
+    const gradient_shader = engine.shaders.createShaderModule("gradient_color.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(device, gradient_shader, alloc_cbs);
-    const sky_shader = core.shaders.createShaderModule("sky.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
+    const sky_shader = engine.shaders.createShaderModule("sky.comp", device, alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(device, sky_shader, alloc_cbs);
 
     const stage_info = vk.PipelineShaderStageCreateInfo{

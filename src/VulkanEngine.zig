@@ -35,7 +35,6 @@ alloc_cbs: ?*vk.AllocationCallbacks,
 resources: ResourceManager = undefined,
 createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
 pipeline_objects: PipelineObjManager = undefined,
-createPipelineObjectsFn: *const fn (*@This()) anyerror!PipelineObjManager,
 
 bound_descriptors: std.StringHashMap(BoundDescriptor) = undefined,
 descriptor_set: vk.DescriptorSet = undefined,
@@ -64,13 +63,11 @@ pub fn init(
     alloc_cbs: ?*vk.AllocationCallbacks,
     createBoundDescriptorsFn: *const fn (*@This()) anyerror!std.StringHashMap(BoundDescriptor),
     createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
-    createPipelineObjectsFn: *const fn (*@This()) anyerror!PipelineObjManager,
 ) Self {
     return .{
         .alloc_cbs = alloc_cbs,
         .allocs = .{ .std = a },
         .createResourcesFn = createResourcesFn,
-        .createPipelineObjectsFn = createPipelineObjectsFn,
         .createBoundDescriptorsFn = createBoundDescriptorsFn,
     };
 }
@@ -248,7 +245,7 @@ fn initVulkan(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
-    self.pipeline_objects = self.createPipelineObjectsFn(self) catch @panic("failed to create pipeline objects");
+    self.pipeline_objects = root.pipelines.initPipelines(self) catch @panic("failed to create pipeline objects");
 
     self.initImgui();
 }

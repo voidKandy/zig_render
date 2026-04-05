@@ -1,56 +1,39 @@
 const std = @import("std");
-const core = @import("core");
-const mesh_mod = core.mesh;
-const c = core.clibs;
-const PipelineObject = core.PipelineObject;
-const PipelineBuilder = core.PipelineBuilder;
-const ResourceManager = core.ResourceManager;
-const vki = core.vulkan_init;
+const engine = @import("../root.zig");
+const mesh_mod = engine.mesh;
+const c = engine.clibs;
+const PipelineObject = engine.PipelineObject;
+const PipelineBuilder = engine.PipelineBuilder;
+const ResourceManager = engine.ResourceManager;
+const vki = engine.vulkan_init;
 const vk = c.vk;
 const vma = c.vma;
 const checkVk = vki.checkVk;
 const Allocator = std.mem.Allocator;
-const Vec2 = core.math.Vec2;
-const Vec3 = core.math.Vec3;
+const Vec2 = engine.math.Vec2;
+const Vec3 = engine.math.Vec3;
 
-mesh_ids: []ResourceManager.ResourceID = undefined,
-/// for now, a single image is shared by all meshes
-image_id: ResourceManager.ResourceID = undefined,
-sampler_id: ResourceManager.ResourceID = undefined,
+mesh_id: ResourceManager.ResourceID = undefined,
+render_pass_id: ResourceManager.ResourceID = undefined,
 pipeline: vk.Pipeline = undefined,
 layout: vk.PipelineLayout = undefined,
+
 const Self = @This();
 
 pub fn init(
     self: *Self,
-    allocs: *core.VulkanEngine.Allocators,
+    allocs: *engine.VulkanEngine.Allocators,
     init_data: PipelineObject.InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) anyerror!void {
-    var mesh_ids = std.ArrayList(ResourceManager.ResourceID).initCapacity(allocs.std, resources.len) catch @panic("OOM");
-    for (0..resources.len) |i| {
-        switch (resources[i]) {
-            .image => self.image_id = resources[i],
-            .sampler => self.sampler_id = resources[i],
-            .mesh3D => mesh_ids.appendAssumeCapacity(resources[i]),
-            else => @panic("UNEXPECTED RESOURCE TYPE"),
-        }
-    }
-    self.mesh_ids = mesh_ids.toOwnedSlice(allocs.std) catch @panic("OOM");
+    if (resources.len != 1) return error.UnexpectedResourcesLength;
+    if (resources[0] != .mesh3D) return error.UnexpectedResourceType;
+    self.mesh_id = resources[0];
 
     {
-        const ci = vk.PipelineLayoutCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-            .setLayoutCount = 1,
-            // need a way to pass descriptor set
-            // BAD
-            // this key is set in the function that creates bound descriptors. this is a logic leak
-            .pSetLayouts = &init_data.descriptor_set_layout,
-            // .pushConstantRangeCount = 1,
-            // .pPushConstantRanges = &push_constant,
-        };
+        const ci = vki.pipelineLayoutCreateInfo();
         checkVk(vk.CreatePipelineLayout(device.handle, &ci, alloc_cbs, &self.layout)) catch
             @panic("failed to create triangle pipeline layout");
     }
@@ -60,6 +43,7 @@ pub fn init(
 
 pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
     vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
+    const mesh_resource = draw_data.resources.query(self.mesh_id) orelse @panic("NO MESH?");
 
     const viewport = vk.Viewport{
         .x = 0,
@@ -82,29 +66,13 @@ pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffe
         },
     };
 
-    vk.CmdSetScissor(cmd, 0, 1, &scissor);
-
-    vk.CmdBindDescriptorSets(
-        cmd,
-        vk.PIPELINE_BIND_POINT_GRAPHICS,
-        self.layout,
-        0,
-        1,
-        &draw_data.descriptor_set,
-        0,
-        null,
-    );
-
     const offset: u64 = 0;
-    for (self.mesh_ids) |id| {
-        const mesh_resource = draw_data.resources.query(id) orelse @panic("NO MESH?");
-        vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh_resource.mesh3D.vertex_buffer.buffer, &offset);
-        vk.CmdDraw(cmd, @as(u32, @intCast(mesh_resource.mesh3D.vertices.len)), 1, 0, 0);
-    }
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh_resource.mesh3D.vertex_buffer.buffer, &offset);
+    vk.CmdSetScissor(cmd, 0, 1, &scissor);
+    vk.CmdDraw(cmd, @as(u32, @intCast(mesh_resource.mesh3D.vertices.len)), 1, 0, 0);
 }
 
-pub fn deinit(self: *Self, a: *core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-    a.std.free(self.mesh_ids);
+pub fn deinit(self: *Self, _: *engine.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
 }
@@ -119,15 +87,15 @@ fn createPipeline(
 ) vk.Pipeline {
     var builder = PipelineBuilder.init(a, alloc_cbs);
     defer builder.deinit();
-    const vert_shader = core.shaders.createShaderModule(
-        "uniform_buffer.vert",
+    const vert_shader = engine.shaders.createShaderModule(
+        "colored_triangle.vert",
         device,
         alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(device, vert_shader, alloc_cbs);
 
-    const frag_shader = core.shaders.createShaderModule(
-        "triangle.frag",
+    const frag_shader = engine.shaders.createShaderModule(
+        "colored_triangle.frag",
         device,
         alloc_cbs,
     ) orelse @panic("failed to create frag shader module");
@@ -168,5 +136,7 @@ fn createPipeline(
     builder.disableBlending();
 
     // builder.setColorAttachmentFormat(self.draw_image.format);
+    // builder.setDepthFormat(vk.FORMAT_UNDEFINED);
+
     return builder.build(device, render_pass);
 }

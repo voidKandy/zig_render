@@ -9,34 +9,47 @@ const mesh_mod = @import("mesh.zig");
 const IdentifierManager = @import("ecs.zig").IdentifierManager;
 
 pub const Type = enum {
-    mesh3D,
+    mesh,
     sampler,
     image,
     buffer,
 };
 
 pub const ResourceID = union(Type) {
-    mesh3D: u32,
+    mesh: u32,
     sampler: u32,
     image: u32,
     buffer: u32,
 };
 
 pub const Resource = union(Type) {
-    mesh3D: mesh_mod.Mesh3D,
+    mesh: Mesh,
     sampler: vk.Sampler,
     image: vma_usage.AllocatedImage,
     buffer: vma_usage.AllocatedBuffer,
 };
 
 pub const ResourcePtr = union(Type) {
-    mesh3D: *mesh_mod.Mesh3D,
+    mesh: *Mesh,
     sampler: *vk.Sampler,
     image: *vma_usage.AllocatedImage,
     buffer: *vma_usage.AllocatedBuffer,
 };
 
-mesh3D_manager: IdentifierManager(mesh_mod.Mesh3D, 48),
+const ImageSampler = struct {
+    image_id: u32,
+    sampler_id: u32,
+};
+
+pub const Material = union(enum) {
+    image_sampler: ImageSampler,
+    // color:
+
+};
+
+const Mesh = struct { mesh: mesh_mod.Mesh3D, material: Material };
+
+mesh_manager: IdentifierManager(Mesh, 48),
 // texture_manager: IdentifierManager(texs.Texture, 48),
 sampler_manager: IdentifierManager(vk.Sampler, 48),
 image_manager: IdentifierManager(vma_usage.AllocatedImage, 48),
@@ -45,7 +58,7 @@ const Self = @This();
 
 pub fn init(a: Allocator) (std.posix.OpenError || Allocator.Error)!Self {
     return Self{
-        .mesh3D_manager = try .init(a),
+        .mesh_manager = try .init(a),
         .image_manager = try .init(a),
         .sampler_manager = try .init(a),
         .buffer_manager = try .init(a),
@@ -56,11 +69,11 @@ pub fn init(a: Allocator) (std.posix.OpenError || Allocator.Error)!Self {
 /// type T has extra cleanup that needs to be done, it will not be done
 /// This might be fine
 pub fn deinit(self: *Self, a: Allocator, vma_a: vma.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-    for (self.mesh3D_manager.data) |mesh_opt| if (mesh_opt) |mesh|
-        mesh.deinit(a, vma_a)
+    for (self.mesh_manager.data) |mesh_opt| if (mesh_opt) |mesh|
+        mesh.mesh.deinit(a, vma_a)
     else
         break;
-    self.mesh3D_manager.deinit(a);
+    self.mesh_manager.deinit(a);
 
     // for (self.texture_manager.data) |tx_opt| if (tx_opt) |tx| {
     //     vk.DestroyImageView(device, tx.image_view, alloc_cbs);
@@ -86,7 +99,7 @@ pub fn deinit(self: *Self, a: Allocator, vma_a: vma.Allocator, device: vk.Device
 
 pub fn getId(self: Self, t: Type, idx: usize) ?ResourceID {
     return switch (t) {
-        .mesh3D => .{ .mesh3D = self.mesh3D_manager.getId(idx) orelse return null },
+        .mesh => .{ .mesh = self.mesh_manager.getId(idx) orelse return null },
         // .texture => .{ .texture = self.texture_manager.getId(idx) orelse return null },
         .sampler => .{ .sampler = self.sampler_manager.getId(idx) orelse return null },
         .image => .{ .image = self.image_manager.getId(idx) orelse return null },
@@ -96,8 +109,8 @@ pub fn getId(self: Self, t: Type, idx: usize) ?ResourceID {
 
 pub fn insert(self: *Self, insrt: Resource) Allocator.Error!u32 {
     switch (insrt) {
-        .mesh3D => |mesh| {
-            const id, _ = try self.mesh3D_manager.register(mesh);
+        .mesh => |mesh| {
+            const id, _ = try self.mesh_manager.register(mesh);
             return id;
         },
         // .texture => |tx| {
@@ -121,7 +134,7 @@ pub fn insert(self: *Self, insrt: Resource) Allocator.Error!u32 {
 
 pub fn query(self: Self, qu: ResourceID) ?Resource {
     return switch (qu) {
-        .mesh3D => |id| .{ .mesh3D = self.mesh3D_manager.getData(id) orelse return null },
+        .mesh => |id| .{ .mesh = self.mesh_manager.getData(id) orelse return null },
         // .texture => |id| .{ .texture = self.texture_manager.getData(id) orelse return null },
         .sampler => |id| .{ .sampler = self.sampler_manager.getData(id) orelse return null },
         .image => |id| .{ .image = self.image_manager.getData(id) orelse return null },
@@ -131,7 +144,7 @@ pub fn query(self: Self, qu: ResourceID) ?Resource {
 
 pub fn queryPtr(self: *Self, qu: ResourceID) ?ResourcePtr {
     switch (qu) {
-        .mesh3D => |id| return .{ .mesh3D = try self.mesh3D_manager.getDataPtr(id) },
+        .mesh => |id| return .{ .mesh = try self.mesh_manager.getDataPtr(id) },
         // .texture => |id| return .{ .texture = try self.texture_manager.getDataPtr(id) },
         .sampler => |id| return .{ .sampler = try self.sampler_manager.getDataPtr(id) },
         .image => |id| return .{ .image = try self.image_manager.getDataPtr(id) },

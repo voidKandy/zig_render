@@ -46,14 +46,12 @@ pub fn main() void {
         null,
         &initDescriptors,
         &initResources,
-        &initPipelineObjects,
     );
     defer engine.deinit();
 
     engine.run();
 }
 
-// / very y
 fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.StringHashMap(BoundDescriptor) {
     var map = std.StringHashMap(BoundDescriptor).init(engine.allocs.std);
     var writer = try core.descriptor.Writer.init(engine.allocs.std);
@@ -113,113 +111,30 @@ fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.Strin
 fn initResources(engine: *core.VulkanEngine) anyerror!ResourceManager {
     var resources = core.ResourceManager.init(engine.allocs.std) catch @panic("OOM");
 
-    const meshes = initMeshes(engine.allocs, &engine.upload_context, engine.logical_device);
+    _ = resources.insert(initBackgroundDrawImage(engine.allocs, engine.swapchain, engine.logical_device.handle, engine.alloc_cbs)) catch @panic("Failed to initialize background draw image");
+    const image_id = resources.insert(initTextureImage(engine.allocs, &engine.upload_context, engine.logical_device, engine.alloc_cbs)) catch @panic("Failed to initialize texture image");
+    const sampler_id = resources.insert(initTextureSampler(engine.logical_device.handle, engine.physical_device)) catch @panic("Failed to initialize texture sampler");
+
+    const meshes = initMeshes(engine.allocs, &engine.upload_context, engine.logical_device, .{
+        .image_sampler = .{
+            .image_id = image_id,
+            .sampler_id = sampler_id,
+        },
+    });
     defer engine.allocs.std.free(meshes);
     for (meshes) |m|
         _ = resources.insert(m) catch @panic("Failed to initialize meshes");
-
-    _ = resources.insert(initBackgroundDrawImage(engine.allocs, engine.swapchain, engine.logical_device.handle, engine.alloc_cbs)) catch @panic("Failed to initialize background draw image");
-    _ = resources.insert(initTextureImage(engine.allocs, &engine.upload_context, engine.logical_device, engine.alloc_cbs)) catch @panic("Failed to initialize texture image");
-    _ = resources.insert(initTextureSampler(engine.logical_device.handle, engine.physical_device)) catch @panic("Failed to initialize texture sampler");
     return resources;
-}
-
-fn initPipelineObjects(engine: *core.VulkanEngine) anyerror!PipelineObjManager {
-    var pipeline_objects = PipelineObjManager.init(engine.allocs.std);
-
-    const init_data = PipelineObject.InitData{
-        .main_render_pass = engine.main_render_pass,
-        .swapchain_extent = engine.swapchain.extent,
-        .descriptor_set_layout = engine.descriptor_set_layout,
-        .resources = engine.resources,
-    };
-
-    {
-        // var entry = PipelineObject.create(tools.Triangle, engine.allocs.std) catch @panic("OOM");
-        // const resources = &[_]ResourceManager.ResourceID{engine.resources.getId(.mesh3D, 0).?};
-        // entry.init(
-        //     &engine.allocs,
-        //     init_data,
-        //     resources,
-        //     engine.logical_device,
-        //     engine.alloc_cbs,
-        // );
-        // pipeline_objects.insert(engine.allocs.std, .graphics, "meshes", "triangle", entry) catch @panic("OOM");
-    }
-
-    {
-        const mesh_count = init_data.resources.mesh3D_manager.count;
-        var resources = try engine.allocs.std.alloc(ResourceManager.ResourceID, mesh_count + 1);
-        defer engine.allocs.std.free(resources);
-
-        var j: usize = 0;
-        // we skip mesh 0 because that is triangle
-        // BAD
-        for (1..mesh_count) |i| {
-            resources[j] = engine.resources.getId(.mesh3D, i).?;
-            j += 1;
-        }
-        resources[j] = engine.resources.getId(.image, 0).?;
-        j += 1;
-        resources[j] = engine.resources.getId(.sampler, 0).?;
-
-        var entry = PipelineObject.create(tools.Scene3D, engine.allocs.std) catch @panic("OOM");
-        entry.init(
-            &engine.allocs,
-            init_data,
-            resources,
-            engine.logical_device,
-            engine.alloc_cbs,
-        );
-        pipeline_objects.insert(engine.allocs.std, .graphics, "meshes", "scene3D", entry) catch @panic("OOM");
-    }
-
-    {
-        const background_image = engine.resources.getId(.image, 0).?;
-        var entry = PipelineObject.create(tools.BackgroundEffects, engine.allocs.std) catch @panic("OOM");
-        entry.init(
-            &engine.allocs,
-            init_data,
-            &[_]ResourceManager.ResourceID{background_image},
-            engine.logical_device,
-            engine.alloc_cbs,
-        );
-        pipeline_objects.insert(engine.allocs.std, .compute, "background_image", null, entry) catch @panic("OOM");
-    }
-
-    return pipeline_objects;
 }
 
 fn initMeshes(
     allocs: core.VulkanEngine.Allocators,
     ctx: *vki.UploadContext,
     logical_device: vki.LogicalDevice,
+    /// for now all meshes share a material
+    material: ResourceManager.Material,
 ) []ResourceManager.Resource {
     const vertices_indices = [_]struct { []const mesh_mod.Vertex3D, []const u16 }{
-        .{
-            // this is a triangle
-            &[_]mesh_mod.Vertex3D{
-                .{
-                    .position = Vec3.make(-1.0, 1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
-                    .uv = Vec2.make(1.0, 0.0),
-                },
-                .{
-                    .position = Vec3.make(1.0, 1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
-                    .uv = Vec2.make(0.0, 1.0),
-                },
-                .{
-                    .position = Vec3.make(0.0, -1.0, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
-                    .uv = Vec2.make(1.0, 1.0),
-                },
-            },
-            &[_]u16{ 0, 1, 2 },
-        },
         .{
             &[_]mesh_mod.Vertex3D{
                 .{
@@ -284,7 +199,10 @@ fn initMeshes(
     for (vertices_indices) |vi| {
         var mesh = mesh_mod.Mesh3D.init(allocs.std, vi.@"0", vi.@"1") catch @panic("OOM");
         mesh.upload(allocs.vma, ctx, logical_device);
-        all_meshes.append(allocs.std, .{ .mesh3D = mesh }) catch @panic("OOM");
+        all_meshes.append(allocs.std, .{ .mesh = .{
+            .mesh = mesh,
+            .material = material,
+        } }) catch @panic("OOM");
     }
 
     {
@@ -352,9 +270,13 @@ fn initMeshes(
             }
         }
 
-        var mesh_3d = mesh_mod.Mesh3D.init(allocs.std, vertices.items, indices.items) catch @panic("failed to create mesh");
-        mesh_3d.upload(allocs.vma, ctx, logical_device);
-        all_meshes.append(allocs.std, .{ .mesh3D = mesh_3d }) catch @panic("OOM");
+        var mesh = mesh_mod.Mesh3D.init(allocs.std, vertices.items, indices.items) catch @panic("failed to create mesh");
+        mesh.upload(allocs.vma, ctx, logical_device);
+
+        all_meshes.append(allocs.std, .{ .mesh = .{
+            .mesh = mesh,
+            .material = material,
+        } }) catch @panic("OOM");
     }
 
     return all_meshes.toOwnedSlice(allocs.std) catch @panic("OOM");
