@@ -1,17 +1,17 @@
 const std = @import("std");
 const log = std.log.scoped(.VulkanEngine);
 const root = @import("root.zig");
-const vki = @import("vulkan_init.zig");
-const frames_mod = @import("frames.zig");
-const descriptor = @import("descriptor.zig");
-const c = @import("clibs.zig");
-const PipelineObject = @import("PipelineObject.zig");
-const BoundDescriptor = @import("BoundDescriptor.zig");
-const ResourceManager = @import("ResourceManager.zig");
-const Input = @import("Input.zig");
-const PipelineObjManager = @import("PipelineObjManager.zig");
-const vma_usage = @import("vma_usage.zig");
-const util = @import("vulkan_util.zig");
+const vki = root.vulkan_init;
+const frames_mod = root.frames;
+const descriptor = root.descriptor;
+const c = root.clibs;
+const BoundDescriptor = root.BoundDescriptor;
+const ResourceManager = root.ResourceManager;
+const Input = root.Input;
+const PipelineManager = root.pipelines.PipelineManager;
+const Pipeline = root.pipelines.Pipeline;
+const vma_usage = root.vma_usage;
+const util = root.vulkan_util;
 const vk = c.vk;
 const checkVk = vki.checkVk;
 const sdl = c.sdl;
@@ -34,7 +34,7 @@ alloc_cbs: ?*vk.AllocationCallbacks,
 
 resources: ResourceManager = undefined,
 createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
-pipeline_objects: PipelineObjManager = undefined,
+pipeline_objects: PipelineManager = undefined,
 
 bound_descriptors: std.StringHashMap(BoundDescriptor) = undefined,
 descriptor_set: vk.DescriptorSet = undefined,
@@ -425,7 +425,7 @@ fn recordCommandBuffer(self: *Self, command_buffer: vk.CommandBuffer, image_idx:
     checkVk(vk.BeginCommandBuffer(command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(command_buffer)) catch @panic("failed to record command buffer");
 
-    const draw_data = PipelineObject.DrawData{
+    const draw_data = Pipeline.DrawData{
         .resources = self.resources,
         .swapchain = self.swapchain,
         .image_index = image_idx,

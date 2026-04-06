@@ -1,29 +1,24 @@
+/// The `Pipeline` struct represents some render pipeline and all objects associated with it.
+/// It contains a draw function, an optional drawImgui function, an initialize function, a cleanup function, and a pointer to user data.
+/// The `create` function initializes an instance of `T` and returns a `Pipeline` with the appropriate function pointers and data pointer.
+/// The `draw` function calls the draw function of the `Pipeline` instance.
+/// The `drawImgui` function calls the drawImgui function of the `Pipeline` instance if it exists.
+/// The `init` function calls the initialize function of the `Pipeline` instance.
+/// The `deinit` function calls the cleanup function of the `Pipeline` instance.
+///
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const log = std.log.scoped(.PipelineObject);
-const c = @import("clibs.zig");
-const root = @import("root.zig");
+const log = std.log.scoped(.Pipeline);
+const engine = @import("../root.zig");
+const c = engine.clibs;
 const PipelineBuilder = @import("PipelineBuilder.zig");
-const ResourceManager = @import("ResourceManager.zig");
-const descriptor = @import("descriptor.zig");
-const vki = @import("vulkan_init.zig");
-const Allocators = root.VulkanEngine.Allocators;
+const ResourceManager = engine.ResourceManager;
+const descriptor = engine.descriptor;
+const vki = engine.vulkan_init;
+const Allocators = engine.VulkanEngine.Allocators;
 const vk = c.vk;
 const vma = c.vma;
 
-/// The `PipelineObject` struct represents some render pipeline and all objects associated with it.
-/// It contains a draw function, an optional drawImgui function, an initialize function, a cleanup function, and a pointer to user data.
-/// The `create` function initializes an instance of `T` and returns a `PipelineNode` with the appropriate function pointers and data pointer.
-/// The `draw` function calls the draw function of the `PipelineNode` instance.
-/// The `drawImgui` function calls the drawImgui function of the `PipelineNode` instance if it exists.
-/// The `init` function calls the initialize function of the `PipelineNode` instance.
-/// The `deinit` function calls the cleanup function of the `PipelineNode` instance.
-///
-/// This makes it very easy to create and manage render pipelines as well as their data.
-///
-/// I forsee that at some point, this should be refactored to use some querying mechanism against some global data instead of managing its
-/// own data.
-/// This way, pipelines could share data and resources could be managed more efficiently.
 pub const DrawData = struct {
     resources: ResourceManager,
     descriptor_set: vk.DescriptorSet,
@@ -37,9 +32,6 @@ pub const InitData = struct {
     resources: ResourceManager,
 };
 
-const DrawImguiFunc = fn (*anyopaque) void;
-const DrawFunc = fn (*anyopaque, DrawData, vk.CommandBuffer) void;
-const DeinitFunc = fn (*anyopaque, *Allocators, vk.Device, ?*vk.AllocationCallbacks) void;
 const InitFunc = fn (
     *anyopaque,
     *Allocators,
@@ -49,10 +41,10 @@ const InitFunc = fn (
     ?*vk.AllocationCallbacks,
 ) anyerror!void;
 
-drawFunc: *const DrawFunc,
-drawImguiFunc: ?*const DrawImguiFunc,
+drawFunc: *const ExpectedFunctions.Draw,
+drawImguiFunc: ?*const ExpectedFunctions.DrawImgui,
 initializeFunc: *const InitFunc,
-cleanupFunc: *const DeinitFunc,
+cleanupFunc: *const ExpectedFunctions.Deinit,
 data_ptr: *anyopaque,
 
 /// Implicitly zero-initializes instance of `T`
@@ -126,14 +118,17 @@ pub fn drawImgui(self: @This()) void {
     func(self.data_ptr);
 }
 
-/// Describes the interface of a `PipelineNode`
-/// Used to validate `T` passed to `PipelineNode.init`
+/// Describes the interface of a `Pipeline`
+/// Used to validate `T` passed to `Pipeline.init`
 const ExpectedFunctions = enum {
     draw,
     drawImgui,
     init,
     deinit,
 
+    const DrawImgui = fn (*anyopaque) void;
+    const Draw = fn (*anyopaque, DrawData, vk.CommandBuffer) void;
+    const Deinit = fn (*anyopaque, *Allocators, vk.Device, ?*vk.AllocationCallbacks) void;
     inline fn initAll() [std.meta.fields(@This()).len]@This() {
         comptime {
             var all: [std.meta.fields(@This()).len]@This() = undefined;
@@ -146,10 +141,10 @@ const ExpectedFunctions = enum {
 
     inline fn funcType(self: @This()) type {
         comptime return switch (self) {
-            .draw => DrawFunc,
-            .drawImgui => DrawImguiFunc,
+            .draw => Draw,
+            .drawImgui => DrawImgui,
             .init => InitFunc,
-            .deinit => DeinitFunc,
+            .deinit => Deinit,
         };
     }
 

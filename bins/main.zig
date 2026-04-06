@@ -207,38 +207,25 @@ fn initMeshes(
 
     {
         const Vertex3DHash = struct {
-            pub fn float64Hash(x: f64) usize {
-                const HashUnion = extern union { source: f64, target: usize };
-                var h = HashUnion{ .target = 0 };
-                h.source = x;
-                return h.target;
-            }
-
-            fn hashVec2(vec: Vec2) u64 {
-                const x: u64 = float64Hash(vec.x);
-                const y: u64 = float64Hash(vec.y);
-                return x ^ y;
-            }
-
-            fn hashVec3(vec: Vec3) u64 {
-                const x: u64 = float64Hash(vec.x);
-                const y: u64 = float64Hash(vec.y);
-                const z: u64 = float64Hash(vec.z);
-                return x ^ y ^ z;
-            }
-
-            fn hash(vertex: mesh_mod.Vertex3D) u64 {
-                var h = hashVec3(vertex.position);
-                h ^= hashVec3(vertex.normal);
-                h ^= hashVec3(vertex.color);
-                h ^= hashVec2(vertex.uv);
+            pub fn hash(cx: @This(), vertex: mesh_mod.Vertex3D) u64 {
+                _ = cx;
+                var h: u64 = 0;
+                for (std.mem.asBytes(&vertex)) |byte| {
+                    h = h *% 31 +% byte;
+                }
                 return h;
+            }
+
+            pub fn eql(cx: @This(), a: mesh_mod.Vertex3D, b: mesh_mod.Vertex3D) bool {
+                _ = cx;
+                return std.mem.eql(u8, std.mem.asBytes(&a), std.mem.asBytes(&b));
             }
         };
         var viking_room = core.obj_loader.parseFile(allocs.std, "assets/viking_room.obj") catch @panic("failed to read lost_empire.obj");
         defer viking_room.deinit();
 
-        var uniques = std.AutoHashMap(u64, u16).init(allocs.std);
+        // var uniques = std.AutoHashMap(u64, u16).init(allocs.std);
+        var uniques = std.HashMap(mesh_mod.Vertex3D, u16, Vertex3DHash, std.hash_map.default_max_load_percentage).init(allocs.std);
         var indices = std.ArrayList(u16).initCapacity(allocs.std, viking_room.vertices.len) catch @panic("OOM");
         var vertices = std.ArrayList(mesh_mod.Vertex3D).initCapacity(allocs.std, viking_room.vertices.len) catch @panic("OOM");
         defer {
@@ -250,15 +237,18 @@ fn initMeshes(
         var current_index: u16 = 0;
         for (viking_room.objects) |object| {
             for (object.indices) |idx| {
+                var uv = Vec2.fromSizedArray(viking_room.uvs[idx.uv]);
+                uv.y = 1.0 - uv.y;
+
                 const vertex = mesh_mod.Vertex3D{
                     .position = Vec3.fromSizedArray(viking_room.vertices[idx.vertex]),
-                    .uv = Vec2.fromSizedArray(viking_room.uvs[idx.uv]),
+                    .uv = uv,
                     .normal = Vec3.fromSizedArray(viking_room.normals[idx.normal]),
                     .color = Vec3.ZERO,
                 };
 
-                const hash = Vertex3DHash.hash(vertex);
-                const entry = uniques.getOrPut(hash) catch @panic("OOM");
+                // const hash = Vertex3DHash.hash(vertex);
+                const entry = uniques.getOrPut(vertex) catch @panic("OOM");
 
                 if (!entry.found_existing) {
                     entry.value_ptr.* = current_index;
@@ -311,7 +301,7 @@ fn initTextureImage(
     logical_device: vki.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) ResourceManager.Resource {
-    var test_img = texs.loadImageFromFile(allocs.vma, ctx, logical_device, "assets/test_img.jpg") catch @panic("Failed to load image");
+    var test_img = texs.loadImageFromFile(allocs.vma, ctx, logical_device, "assets/viking_room.png") catch @panic("Failed to load image");
 
     const image_view_ci = vk.ImageViewCreateInfo{
         .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,

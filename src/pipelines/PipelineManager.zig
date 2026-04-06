@@ -1,18 +1,18 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const log = std.log.scoped(.PipelineObjManager);
-const root = @import("root.zig");
-const vki = @import("vulkan_init.zig");
-const frames_mod = @import("frames.zig");
-const descriptor = @import("descriptor.zig");
-const vk = @import("clibs.zig").vk;
-const PipelineObject = @import("PipelineObject.zig");
+const log = std.log.scoped(.PipelineManager);
+const engine = @import("../root.zig");
+const vki = engine.vulkan_init;
+const frames_mod = engine.frames;
+const descriptor = engine.descriptor;
+const vk = engine.clibs.vk;
+const Pipeline = @import("Pipeline.zig");
 
 const Type = enum { single, map };
 
 pub const Entry = union(Type) {
-    single: PipelineObject,
-    map: std.StringHashMap(PipelineObject),
+    single: Pipeline,
+    map: std.StringHashMap(Pipeline),
 };
 
 all_graphics: std.StringHashMap(Entry),
@@ -25,7 +25,7 @@ pub fn init(a: Allocator) @This() {
     };
 }
 
-pub fn deinit(self: *@This(), allocs: *root.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: *@This(), allocs: *engine.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     var iter = self.all_graphics.valueIterator();
     while (iter.next()) |entry| {
         switch (entry.*) {
@@ -55,7 +55,7 @@ pub fn deinit(self: *@This(), allocs: *root.VulkanEngine.Allocators, device: vk.
     self.all_compute.deinit();
 }
 
-pub fn runDraw(self: @This(), which: enum { graphics, compute }, dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
+pub fn runDraw(self: @This(), which: enum { graphics, compute }, dd: Pipeline.DrawData, cmd: vk.CommandBuffer) void {
     const outer_map = switch (which) {
         .graphics => self.all_graphics,
         .compute => self.all_compute,
@@ -91,7 +91,7 @@ pub fn runDrawImgui(self: @This(), which: enum { graphics, compute }) void {
     }
 }
 
-pub fn insert(self: *@This(), a: Allocator, which: enum { graphics, compute }, name: []const u8, key: ?[]const u8, obj: PipelineObject) Allocator.Error!void {
+pub fn insert(self: *@This(), a: Allocator, which: enum { graphics, compute }, name: []const u8, key: ?[]const u8, obj: Pipeline) Allocator.Error!void {
     var outer_map: *std.StringHashMap(Entry) = switch (which) {
         .graphics => &self.all_graphics,
         .compute => &self.all_compute,
@@ -103,7 +103,7 @@ pub fn insert(self: *@This(), a: Allocator, which: enum { graphics, compute }, n
             if (ptr.* != .map) @panic("Tried to insert map type into entry marked as non-map");
             try ptr.map.put(k, obj);
         } else {
-            var map = std.StringHashMap(PipelineObject).init(a);
+            var map = std.StringHashMap(Pipeline).init(a);
             try map.put(k, obj);
             try outer_map.put(name, .{ .map = map });
         };

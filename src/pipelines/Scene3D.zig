@@ -2,8 +2,8 @@ const std = @import("std");
 const engine = @import("../root.zig");
 const mesh_mod = engine.mesh;
 const c = engine.clibs;
-const PipelineObject = engine.PipelineObject;
-const PipelineBuilder = engine.PipelineBuilder;
+const Pipeline = @import("Pipeline.zig");
+const PipelineBuilder = @import("PipelineBuilder.zig");
 const ResourceManager = engine.ResourceManager;
 const vki = engine.vulkan_init;
 const vk = c.vk;
@@ -21,7 +21,7 @@ const Self = @This();
 pub fn init(
     self: *Self,
     allocs: *engine.VulkanEngine.Allocators,
-    init_data: PipelineObject.InitData,
+    init_data: Pipeline.InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
@@ -54,7 +54,7 @@ pub fn init(
     self.pipeline = createPipeline(allocs.std, self.layout, init_data.swapchain_extent, device.handle, init_data.main_render_pass, alloc_cbs);
 }
 
-pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
+pub fn draw(self: Self, draw_data: Pipeline.DrawData, cmd: vk.CommandBuffer) void {
     vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
 
     const viewport = vk.Viewport{
@@ -95,7 +95,9 @@ pub fn draw(self: Self, draw_data: PipelineObject.DrawData, cmd: vk.CommandBuffe
     for (self.mesh_ids) |id| {
         const mesh_resource = draw_data.resources.query(id).?.mesh;
         vk.CmdBindVertexBuffers(cmd, 0, 1, &mesh_resource.mesh.vertex_buffer.buffer, &offset);
-        vk.CmdDraw(cmd, @as(u32, @intCast(mesh_resource.mesh.vertices.len)), 1, 0, 0);
+        vk.CmdBindIndexBuffer(cmd, mesh_resource.mesh.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT16);
+        vk.CmdDrawIndexed(cmd, @as(u32, @intCast(mesh_resource.mesh.indices.len)), 1, 0, 0, 0);
+        // vk.CmdDraw(cmd, @as(u32, @intCast(mesh_resource.mesh.vertices.len)), 1, 0, 0);
     }
 }
 

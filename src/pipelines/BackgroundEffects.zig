@@ -1,13 +1,13 @@
 const std = @import("std");
 const log = std.log.scoped(.BackgroundEffects);
+const Pipeline = @import("Pipeline.zig");
+const PipelineBuilder = @import("PipelineBuilder.zig");
 const engine = @import("../root.zig");
 const util = engine.vulkan_util;
 const mesh_mod = engine.mesh;
 const c = engine.clibs;
-const PipelineObject = engine.PipelineObject;
 const ResourceManager = engine.ResourceManager;
 const descriptor = engine.descriptor;
-const PipelineBuilder = engine.PipelineBuilder;
 const vki = engine.vulkan_init;
 const vma_usage = engine.vma_usage;
 const vk = c.vk;
@@ -39,7 +39,7 @@ descriptor_set: vk.DescriptorSet = undefined,
 pub fn init(
     self: *@This(),
     allocs: *engine.VulkanEngine.Allocators,
-    init_data: PipelineObject.InitData,
+    init_data: Pipeline.InitData,
     resources: []const ResourceManager.ResourceID,
     device: vki.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
@@ -94,7 +94,7 @@ pub fn deinit(
     self.all_effects.deinit();
 }
 
-pub fn draw(self: @This(), dd: PipelineObject.DrawData, cmd: vk.CommandBuffer) void {
+pub fn draw(self: @This(), dd: Pipeline.DrawData, cmd: vk.CommandBuffer) void {
     const draw_image_resource = dd.resources.query(self.draw_image_id) orelse @panic("No draw image?");
     const draw_image = draw_image_resource.image;
 
