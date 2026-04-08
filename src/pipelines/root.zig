@@ -39,7 +39,7 @@ pub fn initPipelines(engine: *VulkanEngine) anyerror!PipelineManager {
         // we skip mesh 0 because that is triangle
         // BAD
         for (1..mesh_count) |i| {
-            resources[j] = engine.resources.getId(.mesh, i).?;
+            resources[j] = engine.resources.getId(.material_mesh, i).?;
             j += 1;
         }
         resources[j] = engine.resources.getId(.image, 0).?;

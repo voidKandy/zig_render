@@ -233,6 +233,7 @@ pub const Writer = struct {
         vk.UpdateDescriptorSets(device, @as(u32, @intCast(self.writes.items.len)), self.writes.items.ptr, 0, null);
     }
 
+    /// Adds descriptor set write to all writes
     pub fn writeBuffer(
         self: *Self,
         a: std.mem.Allocator,

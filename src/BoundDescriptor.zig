@@ -23,6 +23,7 @@ deinitStateFn: *const fn (*@This(), std.mem.Allocator) void,
 
 const Self = @This();
 
+/// creates VMA buffer for underlying data
 pub fn init(
     comptime T: type,
     comptime State: type,
