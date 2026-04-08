@@ -10,6 +10,7 @@ pub const descriptor = @import("descriptor.zig");
 pub const ResourceManager = @import("ResourceManager.zig");
 pub const BoundDescriptor = @import("BoundDescriptor.zig");
 pub const obj_loader = @import("obj_loader.zig");
+pub const mtl_loader = @import("mtl_loader.zig");
 pub const clibs = @import("clibs.zig");
 pub const vma_usage = @import("vma_usage.zig");
 pub const vulkan_init = @import("vulkan_init.zig");

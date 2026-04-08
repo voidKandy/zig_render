@@ -111,6 +111,9 @@ fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.Strin
 fn initResources(engine: *core.VulkanEngine) anyerror!ResourceManager {
     var resources = core.ResourceManager.init(engine.allocs.std) catch @panic("OOM");
 
+    var global_mtl = try core.mtl_loader.parseFile(engine.allocs.std, "assets/globals.mtl");
+    defer global_mtl.deinit();
+
     _ = resources.insert(initBackgroundDrawImage(engine.allocs, engine.swapchain, engine.logical_device.handle, engine.alloc_cbs)) catch @panic("Failed to initialize background draw image");
     const image_id = resources.insert(initTextureImage(engine.allocs, &engine.upload_context, engine.logical_device, engine.alloc_cbs)) catch @panic("Failed to initialize texture image");
     const sampler_id = resources.insert(initTextureSampler(engine.logical_device.handle, engine.physical_device)) catch @panic("Failed to initialize texture sampler");

@@ -71,7 +71,7 @@ pub fn parseFile(a: Allocator, filepath: []const u8) !MtlFile {
     var arena_state = std.heap.ArenaAllocator.init(a);
     defer arena_state.deinit();
 
-    var ctx = ParseContext.init(a, arena_state.allocator(), filepath);
+    var ctx = try ParseContext.init(a, arena_state.allocator(), filepath);
 
     const file_content = try file.readToEndAlloc(ctx.temp_alloc, file_size);
 
@@ -82,7 +82,7 @@ pub fn parseFile(a: Allocator, filepath: []const u8) !MtlFile {
 
     return MtlFile{
         .allocator = a,
-        .materials = try ctx.materials.toOwnedSlice(),
+        .materials = try ctx.materials.toOwnedSlice(a),
     };
 }
 
