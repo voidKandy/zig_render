@@ -18,6 +18,8 @@ pub const vulkan_util = @import("vulkan_util.zig");
 pub const VulkanEngine = @import("VulkanEngine.zig");
 pub const Input = @import("Input.zig");
 pub const pipelines = @import("pipelines/root.zig");
+pub const Materials = @import("Materials.zig");
+pub const Camera = @import("Camera.zig");
 
 /// Panics if returned bool == false
 pub fn checkSdl(res: bool) void {

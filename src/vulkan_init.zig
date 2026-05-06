@@ -343,12 +343,12 @@ pub const Instance = struct {
             enable_validation = false;
         }
 
-        const app_info = std.mem.zeroInit(vk.ApplicationInfo, .{
+        const app_info = vk.ApplicationInfo{
             .sType = vk.STRUCTURE_TYPE_APPLICATION_INFO,
             .apiVersion = opts.api_version,
             .pApplicationName = opts.application_name,
             .pEngineName = opts.engine_name orelse opts.application_name,
-        });
+        };
 
         log.info(
             \\ Creating Instance with extensions:
@@ -651,18 +651,6 @@ pub const PhysicalDevice = struct {
 
 /// Options for creating a logical device.
 ///
-const DeviceCreateOpts = struct {
-    /// The physical device.
-    physical_device: PhysicalDevice,
-    /// The logical device features.
-    features: vk.PhysicalDeviceFeatures = undefined,
-    /// The logical device allocation callbacks.
-    alloc_cb: ?*const vk.AllocationCallbacks = null,
-    /// Optional pnext chain for VkDeviceCreateInfo.
-    pnext: ?*const anyopaque = null,
-    device_extensions: []const [*c]const u8 = &.{},
-};
-
 /// Result from the creation of a logical device.
 ///
 pub const LogicalDevice = struct {
@@ -672,11 +660,34 @@ pub const LogicalDevice = struct {
     compute_queue: vk.Queue = null,
     transfer_queue: vk.Queue = null,
 
+    const CreateOpts = struct {
+        /// The physical device.
+        physical_device: PhysicalDevice,
+        /// The logical device features.
+        features: vk.PhysicalDeviceFeatures = undefined,
+        /// The logical device allocation callbacks.
+        alloc_cb: ?*const vk.AllocationCallbacks = null,
+        /// Optional pnext chain for VkDeviceCreateInfo.
+        pnext: ?*const anyopaque = null,
+        device_extensions: []const [*c]const u8 = &.{},
+    };
+    /// Helper function for initializing descriptor indexing struct
+    /// must be `pNext` of createOpts
+    pub fn descriptorIndexingFeatures() vk.PhysicalDeviceDescriptorIndexingFeatures {
+        return vk.PhysicalDeviceDescriptorIndexingFeatures{
+            .sType = vk.STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES,
+            .shaderSampledImageArrayNonUniformIndexing = vk.TRUE,
+            .runtimeDescriptorArray = vk.TRUE,
+            .descriptorBindingVariableDescriptorCount = vk.TRUE,
+            .descriptorBindingPartiallyBound = vk.TRUE,
+        };
+    }
+
     /// Create logical device
     ///
     /// # Allocations
     /// This function does not require persistent allocations.
-    pub fn create(a: Allocator, opts: DeviceCreateOpts) !LogicalDevice {
+    pub fn create(a: Allocator, opts: CreateOpts) !LogicalDevice {
         var arena_state = std.heap.ArenaAllocator.init(a);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
@@ -700,12 +711,6 @@ pub const LogicalDevice = struct {
                 .pQueuePriorities = &queue_priorities,
             });
         }
-
-        // const device_extensions: []const [*c]const u8 = &.{
-        //     "VK_KHR_swapchain",
-        //     // for Mac
-        //     vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
-        // };
 
         const device_info = vk.DeviceCreateInfo{
             .sType = vk.STRUCTURE_TYPE_DEVICE_CREATE_INFO,

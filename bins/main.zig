@@ -4,8 +4,6 @@ const core = @import("core");
 const vki = core.vulkan_init;
 const texs = core.textures;
 const vma_usage = core.vma_usage;
-const PipelineObject = core.PipelineObject;
-const PipelineObjManager = core.PipelineObjManager;
 const BoundDescriptor = core.BoundDescriptor;
 const ResourceManager = core.ResourceManager;
 const tools = @import("tools");
@@ -44,7 +42,7 @@ pub fn main() void {
     var engine = core.VulkanEngine.init(
         gpa.allocator(),
         null,
-        &initDescriptors,
+        // &initDescriptors,
         &initResources,
     );
     defer engine.deinit();
@@ -53,36 +51,69 @@ pub fn main() void {
 }
 
 fn initDescriptors(engine: *core.VulkanEngine) std.mem.Allocator.Error!std.StringHashMap(BoundDescriptor) {
-    var map = std.StringHashMap(BoundDescriptor).init(engine.allocs.std);
+    const map = std.StringHashMap(BoundDescriptor).init(engine.allocs.std);
     var writer = try core.descriptor.Writer.init(engine.allocs.std);
     defer writer.deinit(engine.allocs.std);
     var builder = core.descriptor.LayoutBuilder.init(engine.allocs.std);
     defer builder.deinit(engine.allocs.std);
 
-    const camera = tools.Camera{};
+    // const camera = tools.Camera{};
 
     // this is migth be an unneccsarry abstraction
-    const bound_camera = core.BoundDescriptor.init(
-        tools.Camera.GPUData,
-        tools.Camera,
-        &engine.allocs,
-        vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        vk.SHADER_STAGE_VERTEX_BIT,
-        vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-        c.vma.MEMORY_USAGE_CPU_TO_GPU,
-        camera,
-        &tools.Camera.control,
+    // const bound_camera = core.BoundDescriptor.init(
+    //     tools.Camera.GPUData,
+    //     tools.Camera,
+    //     &engine.allocs,
+    //     vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    //     vk.SHADER_STAGE_VERTEX_BIT,
+    //     vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    //     c.vma.MEMORY_USAGE_CPU_TO_GPU,
+    //     camera,
+    //     &tools.Camera.control,
+    // );
+
+    // builder.addBinding(
+    //     engine.allocs.std,
+    //     0,
+    //     bound_camera.descriptor_type,
+    //     1,
+    //     bound_camera.descriptor_stage,
+    // );
+    // builder.addBinding(
+    //     engine.allocs.std,
+    //     1,
+    //     vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+    //     1,
+    //     vk.SHADER_STAGE_FRAGMENT_BIT,
+    // );
+
+    // PLACEHOLDER
+    // I don't know how large this array is because I don't know what bindings
+    // will be for this layout.
+    const layout_binding_flags = [_]vk.DescriptorBindingFlags{
+        0,
+        // In order to have an unbounded texture array
+        // THE LAST FLAG NEEDS TO BE:
+        vk.DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | vk.DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+    };
+    const layout_binding_flags_ci = vk.DescriptorSetLayoutBindingFlagsCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        //IDK
+        .bindingCount = layout_binding_flags.len,
+        .pBindingFlags = &layout_binding_flags,
+    };
+
+    engine.descriptor_set_layout = builder.build(
+        engine.logical_device.handle,
+        &layout_binding_flags_ci,
+        0,
+        engine.alloc_cbs,
     );
-
-    builder.addBinding(engine.allocs.std, 0, bound_camera.descriptor_type, bound_camera.descriptor_stage);
-    builder.addBinding(engine.allocs.std, 1, vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, vk.SHADER_STAGE_FRAGMENT_BIT);
-
-    engine.descriptor_set_layout = builder.build(engine.logical_device.handle, null, 0, engine.alloc_cbs);
     engine.descriptor_set = engine.allocs.global_descriptor.allocate(engine.logical_device.handle, engine.descriptor_set_layout, null);
 
-    writer.writeBuffer(engine.allocs.std, 0, bound_camera.data.buffer, @sizeOf(tools.Camera.GPUData), 0, bound_camera.descriptor_type);
+    // writer.writeBuffer(engine.allocs.std, 0, bound_camera.data.buffer, @sizeOf(tools.Camera.GPUData), 0, bound_camera.descriptor_type);
 
-    try map.put("camera_data", bound_camera);
+    // try map.put("camera_data", bound_camera);
 
     // BAD!!
     // This exture and sampler leaks to Scene3D AND Camera

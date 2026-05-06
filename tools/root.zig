@@ -3,4 +3,4 @@
 /// nothing inside it leaks to the core engine, but many of these leak into
 /// each other
 /// which suggests misuse or some design flaw
-pub const Camera = @import("Camera.zig");
+const Self = @This();

@@ -49,10 +49,19 @@ pub const Allocator = struct {
     }
 
     pub fn allocate(self: *Self, device: vk.Device, layout: vk.DescriptorSetLayout) vk.DescriptorSet {
+        // Set 0 has a variable count descriptor with a maximum of 32 elements
+        const counts = [1]u32{32};
+        const set_counts = vk.DescriptorSetVariableDescriptorCountAllocateInfo{
+            .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
+            .descriptorSetCount = counts.len,
+            .pDescriptorCounts = counts,
+            .pNext = null,
+        };
+
         const ai =
             vk.DescriptorSetAllocateInfo{
                 .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-                .pNext = null,
+                .pNext = &set_counts,
                 .descriptorPool = self.pool,
                 .descriptorSetCount = 1,
                 .pSetLayouts = &layout,
@@ -302,11 +311,18 @@ pub const LayoutBuilder = struct {
         self.bindings.deinit(a);
     }
 
-    pub fn addBinding(self: *Self, a: std.mem.Allocator, binding: u32, typ: vk.DescriptorType, stage_flags: vk.ShaderStageFlags) void {
+    pub fn addBinding(
+        self: *Self,
+        a: std.mem.Allocator,
+        binding: u32,
+        typ: vk.DescriptorType,
+        count: u32,
+        stage_flags: vk.ShaderStageFlags,
+    ) void {
         const newbind = vk.DescriptorSetLayoutBinding{
             .binding = binding,
             .stageFlags = stage_flags,
-            .descriptorCount = 1,
+            .descriptorCount = count,
             .descriptorType = typ,
         };
 

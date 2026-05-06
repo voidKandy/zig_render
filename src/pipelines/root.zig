@@ -4,6 +4,7 @@ pub const BackgroundEffects = @import("BackgroundEffects.zig");
 pub const PipelineManager = @import("PipelineManager.zig");
 pub const Pipeline = @import("Pipeline.zig");
 const ResourceManager = @import("../ResourceManager.zig");
+pub const DescriptorIndexing = @import("DescriptorIndexing.zig");
 const VulkanEngine = @import("../VulkanEngine.zig");
 /// currently this function has a silent requirement that the resources of the engine have been initialized
 /// This function then associates those resources with the pipelines they are meant for

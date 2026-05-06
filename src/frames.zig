@@ -13,7 +13,6 @@ const checkVk = vki.checkVk;
 
 pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
     return struct {
-        global_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
         all: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT,
         current_idx: u32 = 0,
         frame_count: u64 = 0,
@@ -31,14 +30,18 @@ pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
         }
 
         pub fn deinit(self: *Self, device: vk.Device, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
-            vk.DestroyDescriptorSetLayout(device, self.global_descriptor_set_layout, vk_alloc_cbs);
+            // vk.DestroyDescriptorSetLayout(device, self.global_descriptor_set_layout, vk_alloc_cbs);
 
             for (&self.all) |*frame| {
                 frame.deinit(device, vk_alloc_cbs);
             }
         }
 
-        pub fn initSyncObjects(self: *Self, device: c.vk.Device, vk_alloc_cbs: ?*c.vk.AllocationCallbacks) void {
+        pub fn initSyncObjects(
+            self: *Self,
+            device: c.vk.Device,
+            vk_alloc_cbs: ?*vk.AllocationCallbacks,
+        ) void {
             for (&self.all) |*frame| {
                 const semaphore_ci = vk.SemaphoreCreateInfo{
                     .sType = vk.STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -55,7 +58,12 @@ pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
             }
         }
 
-        pub fn initCommands(self: *Self, device: vk.Device, phys_device: vki.PhysicalDevice, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
+        pub fn initCommands(
+            self: *Self,
+            device: vk.Device,
+            phys_device: vki.PhysicalDevice,
+            vk_alloc_cbs: ?*vk.AllocationCallbacks,
+        ) void {
             for (&self.all) |*frame| {
                 const command_pool_ci = vk.CommandPoolCreateInfo{
                     .sType = vk.STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -83,8 +91,6 @@ pub const FrameData = struct {
     render_fence: c.vk.Fence = null,
     command_pool: c.vk.CommandPool = null,
     main_command_buffer: c.vk.CommandBuffer = null,
-    /// Used to pass camera data to shader so objects can be rendered in 3D
-    // camera_data: BoundDescriptor = .{},
 
     const Self = @This();
 
@@ -92,6 +98,5 @@ pub const FrameData = struct {
         vk.DestroySemaphore(device, self.render_semaphore, vk_alloc_cbs);
         vk.DestroyFence(device, self.render_fence, vk_alloc_cbs);
         vk.DestroyCommandPool(device, self.command_pool, vk_alloc_cbs);
-        // self.camera_data.deinit(vma_a);
     }
 };

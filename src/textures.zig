@@ -74,35 +74,6 @@ pub fn loadImageFromFile(
         vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
     );
 
-    // defer image.deinit(vma_a, device.handle, alloc_cbs);
-
-    // const img_info = vk.ImageCreateInfo{
-    //     .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-    //     .imageType = vk.IMAGE_TYPE_2D,
-    //     .format = vk.FORMAT_R8G8B8A8_SRGB,
-    //     .extent = extent,
-    //     .mipLevels = 1,
-    //     .arrayLayers = 1,
-    //     .samples = vk.SAMPLE_COUNT_1_BIT,
-    //     .tiling = vk.IMAGE_TILING_OPTIMAL,
-    //     .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
-    // };
-
-    // const alloc_ci = c.vma.AllocationCreateInfo{
-    //     .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-    // };
-
-    // var image: vk.Image = undefined;
-    // var allocation: c.vma.Allocation = undefined;
-    // try checkVk(c.vma.CreateImage(vma_a, &img_info, &alloc_ci, &image, &allocation, null));
-    // if (allocation == null) {
-    //     return error.FailedToCreateImage;
-    // }
-
-    // log.info("Create vkimage and gpu memory for image: {s}", .{filepath});
-
-    // Tranfer CPU memory to GPU memory
-    //
     upload_ctx.immediateSubmit(device, struct {
         image: vk.Image,
         extent: vk.Extent3D,

@@ -201,7 +201,13 @@ fn initDescriptorSet(
     {
         var builder = descriptor.LayoutBuilder.init(allocs.std);
         defer builder.deinit(allocs.std);
-        builder.addBinding(allocs.std, 0, vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, vk.SHADER_STAGE_COMPUTE_BIT);
+        builder.addBinding(
+            allocs.std,
+            0,
+            vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            1,
+            vk.SHADER_STAGE_COMPUTE_BIT,
+        );
         self.descriptor_set_layout = builder.build(device, null, 0, alloc_cbs);
     }
     self.descriptor_set = allocs.global_descriptor.allocate(device, self.descriptor_set_layout, null);
