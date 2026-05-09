@@ -286,12 +286,12 @@ pub const Mesh3D = struct {
             const vert_ci = vk.BufferCreateInfo{
                 .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                 .size = vert_alloc_size,
-                .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+                .usage = vk.BUFFER_USAGE_INDEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT | c.vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
             };
             const idx_ci = vk.BufferCreateInfo{
                 .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                 .size = idx_alloc_size,
-                .usage = vk.BUFFER_USAGE_INDEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+                .usage = vk.BUFFER_USAGE_INDEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT | c.vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
             };
 
             const ai = c.vma.AllocationCreateInfo{

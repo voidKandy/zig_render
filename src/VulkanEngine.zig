@@ -6,11 +6,10 @@ const frames_mod = root.frames;
 const descriptor = root.descriptor;
 const c = root.clibs;
 const BoundDescriptor = root.BoundDescriptor;
-const DescriptorIndexing = root.pipelines.DescriptorIndexing;
+const GraphicsPipeline = root.pipelines.GraphicsPipeline;
+const ComputePipeline = root.pipelines.ComputePipeline;
 const ResourceManager = root.ResourceManager;
 const Input = root.Input;
-const PipelineManager = root.pipelines.PipelineManager;
-const Pipeline = root.pipelines.Pipeline;
 const vma_usage = root.vma_usage;
 const util = root.vulkan_util;
 const vk = c.vk;
@@ -38,12 +37,6 @@ alloc_cbs: ?*vk.AllocationCallbacks,
 resources: ResourceManager = undefined,
 createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
 
-descriptor_sets: std.ArrayList(std.ArrayList(vk.DescriptorSet)) = undefined,
-
-// bound_descriptors: std.StringHashMap(BoundDescriptor) = undefined,
-descriptor_set: vk.DescriptorSet = undefined,
-descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-
 // createBoundDescriptorsFn: *const fn (*@This()) anyerror!std.StringHashMap(BoundDescriptor),
 
 input: Input = .{},
@@ -54,10 +47,17 @@ instance: vki.Instance = undefined,
 physical_device: vki.PhysicalDevice = undefined,
 logical_device: vki.LogicalDevice = undefined,
 
+main_compute_pipeline_description: ComputePipeline.Description = undefined,
+main_compute_pipeline_data: ComputePipeline.AllocatedData = undefined,
+main_compute_pipeline: ComputePipeline = undefined,
+main_compute_descriptor_set: vk.DescriptorSet = undefined,
+
+main_graphics_descriptor_sets: []vk.DescriptorSet = undefined,
+main_graphics_texture_descriptor_set: vk.DescriptorSet = undefined,
 /// Pipeline description for the main render pass
-main_pipeline_description: DescriptorIndexing.PipelineDescription = undefined,
-main_pipeline_model_description: DescriptorIndexing.ModelDesc = undefined,
-main_pipeline: DescriptorIndexing = undefined,
+main_graphics_pipeline_description: GraphicsPipeline.Description = undefined,
+main_graphics_pipeline_data: GraphicsPipeline.AllocatedData = undefined,
+main_graphics_pipeline: GraphicsPipeline = undefined,
 main_render_pass: vk.RenderPass = undefined,
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
@@ -92,17 +92,12 @@ pub fn deinit(self: *Self) void {
     // self.bound_descriptors.deinit();
 
     self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
-    vk.DestroyDescriptorSetLayout(self.logical_device.handle, self.descriptor_set_layout, self.alloc_cbs);
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
-    // vk.DestroyDescriptorPool(self.logical_device.handle, self.frame_descriptor_pool, self.alloc_cbs);
 
-    self.main_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    self.main_pipeline_model_description.deinit(self.allocs.std);
-    // for (0..self.descriptor_sets.items.len) |i| {
-    //     self.descriptor_sets.items[i].deinit(self.allocs.std);
-    // }
-    // self.descriptor_sets.deinit(self.allocs.std);
-    // self.pipeline_objects.deinit(&self.allocs, self.logical_device.handle, self.alloc_cbs);
+    self.main_graphics_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    self.main_graphics_pipeline_data.deinit(self.allocs.std);
+
+    self.allocs.std.free(self.main_graphics_descriptor_sets);
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
 
@@ -139,11 +134,7 @@ pub fn run(self: *Self) void {
             // _ = c.imgui.impl_sdl3.ProcessEvent(&event);
             self.input.update(event);
         }
-        // self.drawImgui();
 
-        // var iter = self.bound_descriptors.valueIterator();
-        // while (iter.next()) |desc|
-        //     desc.updateFn(desc.*, self.*, desc);
         self.drawFrame();
     }
 
@@ -252,11 +243,12 @@ fn initVulkan(self: *Self) void {
 
     self.resources = self.createResourcesFn(self) catch @panic("failed to create resources");
 
+    self.createComputePipelineData();
+    self.initMainComputePipeline();
+
     self.initMainRenderPass();
-
-    self.createModelDescription();
-
-    self.initPipeline();
+    self.createGraphicsPipelineData();
+    self.initMainGraphicsPipeline();
 
     self.swapchain.createFramebuffers(
         self.allocs.std,
@@ -270,7 +262,7 @@ fn initVulkan(self: *Self) void {
 
 /// Creaets description of frame models
 /// coupled with PipelineDescripotion used to create main_pipeline
-fn createModelDescription(self: *Self) void {
+fn createGraphicsPipelineData(self: *Self) void {
     const vertices_indices: struct { []const root.mesh.Vertex3D, []const u16 } = .{
         &[_]root.mesh.Vertex3D{
             .{
@@ -343,14 +335,14 @@ fn createModelDescription(self: *Self) void {
 
     checkVk(vk.CreateSampler(self.logical_device.handle, &ci, null, &sampler)) catch @panic("failed to create sampler");
 
-    const materials = self.allocs.std.dupe(DescriptorIndexing.TextureInfo, &[_]DescriptorIndexing.TextureInfo{.{
+    const materials = self.allocs.std.dupe(root.pipelines.TextureInfo, &[_]root.pipelines.TextureInfo{.{
         .image_view = test_img.view,
         .sampler = sampler,
     }}) catch @panic("OOM");
 
     const metadata_alloc = vma_usage.AllocatedBuffer.create(
         self.allocs.vma,
-        @sizeOf(DescriptorIndexing.MetaData),
+        @sizeOf(GraphicsPipeline.MetaData),
         vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
         c.vma.MEMORY_USAGE_CPU_TO_GPU,
         0,
@@ -360,8 +352,8 @@ fn createModelDescription(self: *Self) void {
 
     checkVk(c.vma.MapMemory(self.allocs.vma, metadata_alloc.allocation, &mapped_metadata)) catch @panic("Failed to map metadata");
 
-    const aligned_metadata: *DescriptorIndexing.MetaData = @ptrCast(@alignCast(mapped_metadata));
-    aligned_metadata.* = DescriptorIndexing.MetaData{
+    const aligned_metadata: *GraphicsPipeline.MetaData = @ptrCast(@alignCast(mapped_metadata));
+    aligned_metadata.* = GraphicsPipeline.MetaData{
         .index_count = 3,
         .index_offset = 0,
         .material_index = 0,
@@ -371,7 +363,7 @@ fn createModelDescription(self: *Self) void {
     const camera_alloc = vma_usage.AllocatedBuffer.create(
         self.allocs.vma,
         @sizeOf(root.Camera),
-        vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         c.vma.MEMORY_USAGE_CPU_TO_GPU,
         0,
     );
@@ -383,18 +375,115 @@ fn createModelDescription(self: *Self) void {
 
     const uniforms = self.allocs.std.dupe(vk.Buffer, &[_]vk.Buffer{camera_alloc.buffer}) catch @panic("OOM");
 
-    self.main_pipeline_model_description = DescriptorIndexing.ModelDesc{
+    const ranges = self.allocs.std.dupe(GraphicsPipeline.SubmeshRanges, &[_]GraphicsPipeline.SubmeshRanges{.{
+        .vertex_range = .{ .offset = 0, .range = mesh.vertices.len * @sizeOf(root.mesh.Vertex3D) },
+        .index_range = .{ .offset = 0, .range = mesh.indices.len * @sizeOf(u16) },
+        .uniform_range = .{ .offset = 0, .range = @sizeOf(root.Camera) },
+    }}) catch @panic("OOM");
+
+    self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData{
         .vertex_buffer = mesh.vertex_buffer.buffer,
         .index_buffer = mesh.index_buffer.buffer,
         // having undefined/null data below MUST be fixed
         .meta_data = metadata_alloc.buffer,
         .uniforms = uniforms,
         .materials = materials,
-        .ranges = undefined,
+        .ranges = ranges,
     };
 }
 
-fn initPipeline(self: *Self) void {
+fn createComputePipelineData(self: *Self) void {
+    const usages: vk.ImageUsageFlags =
+        vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
+        vk.IMAGE_USAGE_TRANSFER_DST_BIT |
+        vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    var image = vma_usage.AllocatedImage.init(self.allocs.vma, MAIN_RENDER_PASS_IMAGE_FORMAT, vk.Extent3D{
+        .width = self.swapchain.extent.width,
+        .height = self.swapchain.extent.height,
+        .depth = 1,
+    }, usages);
+    const view_ci = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
+
+    checkVk(vk.CreateImageView(self.logical_device.handle, &view_ci, self.alloc_cbs, &image.view)) catch @panic("failed to create image view");
+
+    self.main_compute_pipeline_data = ComputePipeline.AllocatedData{
+        .draw_image = image,
+    };
+}
+
+fn initMainComputePipeline(self: *Self) void {
+    // var builder = descriptor.LayoutBuilder.init(self.allocs.std);
+    // defer builder.deinit(self.allocs.std);
+    // builder.addBinding(
+    //     self.allocs.std,
+    //     0,
+    //     vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+    //     vk.SHADER_STAGE_COMPUTE_BIT,
+    // );
+    // self.descriptor_set_layout = builder.build(self.logical_device.handle, null, 0, self.alloc_cbs);
+
+    const gradient_shader = root.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
+    defer vk.DestroyShaderModule(self.logical_device.handle, gradient_shader, self.alloc_cbs);
+    const sky_shader = root.shaders.createShaderModule("sky.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
+    defer vk.DestroyShaderModule(self.logical_device.handle, sky_shader, self.alloc_cbs);
+
+    const gradient_data = ComputePipeline.EffectData{ .constants = .{
+        .data1 = root.math.Vec4.make(1.0, 0.0, 0.0, 1.0),
+        .data2 = root.math.Vec4.make(0.0, 0.0, 1.0, 1.0),
+    } };
+    const sky_data = ComputePipeline.EffectData{ .constants = .{
+        .data1 = root.math.Vec4.make(0.1, 0.2, 0.4, 0.97),
+    } };
+
+    self.main_compute_pipeline = ComputePipeline.init(
+        self.allocs.std,
+        .{
+            .device = self.logical_device.handle,
+            .window_extent = self.swapchain.extent,
+            .effects_info = &[_]struct { []const u8, ComputePipeline.EffectData, vk.ShaderModule }{
+                .{
+                    "gradient",
+                    gradient_data,
+                    gradient_shader,
+                },
+                .{
+                    "sky",
+                    sky_data,
+                    sky_shader,
+                },
+            },
+            .num_images = @as(u32, @intCast(self.swapchain.images.len)),
+        },
+        self.alloc_cbs,
+    );
+
+    self.main_compute_pipeline.createDescriptorPool(
+        self.logical_device.handle,
+        @intCast(self.swapchain.images.len),
+        1, // max sets
+        self.alloc_cbs,
+    );
+
+    self.main_compute_descriptor_set = self.main_compute_pipeline.allocateDescriptorSet(self.logical_device.handle);
+
+    ComputePipeline.updateDescriptorSets(
+        self.logical_device.handle,
+        self.main_compute_pipeline_data,
+        self.main_compute_descriptor_set,
+    ) catch @panic("OOM");
+    // self.descriptor_sets = self.main_graphics_pipeline.allocateDescriptorSets(
+    //     self.logical_device.handle,
+    //     self.allocs.std,
+    //     // this should be num submeshes
+    //     // BAD
+    //     1,
+    // ) catch @panic("OOM");
+
+    // self.main_graphics_pipeline.allocateTextureDescriptorSet(self.logical_device.handle, &self.texture_descriptor_set);
+}
+
+fn initMainGraphicsPipeline(self: *Self) void {
     const vert_shader = root.shaders.createShaderModule(
         "test.vert",
         self.logical_device.handle,
@@ -418,8 +507,7 @@ fn initPipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.main_pipeline = DescriptorIndexing.init(
-        self.allocs.std,
+    self.main_graphics_pipeline = GraphicsPipeline.init(
         .{
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
@@ -432,36 +520,34 @@ fn initPipeline(self: *Self) void {
             .is_tex2d_buffer = true,
         },
         self.alloc_cbs,
-    ) catch @panic("failed to create pipeline");
+    );
 
-    self.main_pipeline.createDescriptorPool(
+    self.main_graphics_pipeline.createDescriptorPool(
+        self.logical_device.handle,
+        GraphicsPipeline.MAX_TEXTURES, // tex count
+        1, // uniform buffer count
+        3, // storage buffer count
+        3, // max sets
+        self.alloc_cbs,
+    );
+
+    self.main_graphics_descriptor_sets = self.main_graphics_pipeline.allocateDescriptorSets(
         self.logical_device.handle,
         self.allocs.std,
-        DescriptorIndexing.MAX_TEXTURES, // tex count
-        1, // uniform buffer count
-        2, // storage buffer count
-        4, // max sets
-        self.alloc_cbs,
+        // this should be num submeshes
+        // BAD
+        1,
     ) catch @panic("OOM");
 
-    // idk if this is the right place to do this
-    // self.descriptor_sets = self.main_pipeline.allocateDescriptorSets(
-    //     self.logical_device.handle,
-    //     self.allocs.std,
-    //     1, //num submeshes
-    // ) catch @panic("OOM");
+    self.main_graphics_pipeline.allocateTextureDescriptorSet(self.logical_device.handle, &self.main_graphics_texture_descriptor_set);
 
-    var tex_set: vk.DescriptorSet = undefined;
-    self.main_pipeline.allocateTextureDescriptorSet(self.logical_device.handle, &tex_set);
-    // const model_desc = self.createModelDesc();
-
-    // self.main_pipeline.updateDescriptorSets(
-    //     self.logical_device.handle,
-    //     self.allocs.std,
-    //     model_desc,
-    //     &self.descriptor_sets,
-    //     tex_set,
-    // ) catch @panic("OOM");
+    GraphicsPipeline.updateDescriptorSets(
+        self.logical_device.handle,
+        self.allocs.std,
+        self.main_graphics_pipeline_data,
+        self.main_graphics_descriptor_sets,
+        self.main_graphics_texture_descriptor_set,
+    ) catch @panic("OOM");
 }
 
 fn initMainRenderPass(self: *Self) void {
@@ -547,17 +633,6 @@ fn drawImgui(self: *Self) void {
 
 fn drawFrame(self: *Self) void {
     var frame = self.frames.currentFrame();
-    const descriptor_sets = self.main_pipeline.allocateDescriptorSets(
-        self.logical_device.handle,
-        self.allocs.std,
-        // this should be num submeshes
-        // BAD
-        1,
-    ) catch @panic("OOM");
-    defer self.allocs.std.free(descriptor_sets);
-
-    var texture_set: vk.DescriptorSet = undefined;
-    self.main_pipeline.allocateTextureDescriptorSet(self.logical_device.handle, &texture_set);
 
     const present_semaphore = frame.render_semaphore;
 
@@ -584,7 +659,7 @@ fn drawFrame(self: *Self) void {
     checkVk(vk.ResetFences(self.logical_device.handle, 1, &frame.render_fence)) catch @panic("failed to reset fences");
     checkVk(vk.ResetCommandBuffer(frame.main_command_buffer, 0)) catch @panic("failed to reset command buffers");
 
-    self.recordCommandBuffer(frame, image_idx, descriptor_sets, texture_set);
+    self.recordCommandBuffer(frame, image_idx);
 
     const wait_semaphores = &[_]vk.Semaphore{present_semaphore};
     const wait_stages = &[_]vk.PipelineStageFlags{vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
@@ -648,8 +723,6 @@ fn recordCommandBuffer(
     self: *Self,
     frame: frames_mod.FrameData,
     image_idx: u32,
-    descriptor_sets: []const vk.DescriptorSet,
-    tex_set: vk.DescriptorSet,
 ) void {
     var begin_info = vk.CommandBufferBeginInfo{
         .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -658,88 +731,94 @@ fn recordCommandBuffer(
     checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
 
-    // const draw_data = Pipeline.DrawData{
-    //     .resources = self.resources,
-    //     .swapchain = self.swapchain,
-    //     .image_index = image_idx,
-    //     .descriptor_set = self.descriptor_set,
-    // };
+    self.main_compute_pipeline.bind(frame.main_command_buffer);
 
-    // self.pipeline_objects.runDraw(.compute, draw_data, command_buffer);
+    self.main_compute_pipeline.recordCommands(
+        self.main_compute_pipeline_data,
+        self.swapchain,
+        image_idx,
+        self.main_compute_descriptor_set,
+        frame.main_command_buffer,
+    );
 
-    self.main_pipeline.bind(frame.main_command_buffer);
-    {
-        var render_pass_info = vk.RenderPassBeginInfo{
-            .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .renderPass = self.main_render_pass,
-            .framebuffer = self.swapchain.framebuffers[image_idx],
-            .renderArea = .{ .offset = .{
-                .x = 0,
-                .y = 0,
-            }, .extent = vk.Extent2D{
-                .height = self.swapchain.extent.height,
-                .width = self.swapchain.extent.width,
-            } },
-        };
+    self.main_graphics_pipeline.bind(frame.main_command_buffer);
 
-        if (self.swapchain.depth_resource) |res|
-            vki.DepthResource.transition(frame.main_command_buffer, res);
-
-        vk.CmdBeginRenderPass(frame.main_command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
-        defer vk.CmdEndRenderPass(frame.main_command_buffer);
-
-        const viewport = vk.Viewport{
+    var render_pass_info = vk.RenderPassBeginInfo{
+        .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = self.main_render_pass,
+        .framebuffer = self.swapchain.framebuffers[image_idx],
+        .renderArea = .{ .offset = .{
             .x = 0,
             .y = 0,
-            .width = @floatFromInt(window_extent.width),
-            .height = @floatFromInt(window_extent.height),
-            .minDepth = 0.0,
-            .maxDepth = 1.0,
-        };
-        vk.CmdSetViewport(frame.main_command_buffer, 0, 1, &viewport);
+        }, .extent = vk.Extent2D{
+            .height = self.swapchain.extent.height,
+            .width = self.swapchain.extent.width,
+        } },
+    };
 
-        const scissor = vk.Rect2D{
-            .offset = .{ .x = 0, .y = 0 },
-            .extent = window_extent,
-        };
-        vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
+    if (self.swapchain.depth_resource) |res|
+        vki.DepthResource.transition(frame.main_command_buffer, res);
 
-        // bind set 1: textures + metadata (global, same for all submeshes)
+    vk.CmdBeginRenderPass(frame.main_command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
+    defer vk.CmdEndRenderPass(frame.main_command_buffer);
+
+    const viewport = vk.Viewport{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(window_extent.width),
+        .height = @floatFromInt(window_extent.height),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    };
+    vk.CmdSetViewport(frame.main_command_buffer, 0, 1, &viewport);
+
+    const scissor = vk.Rect2D{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = window_extent,
+    };
+    vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
+
+    // bind set 1: textures + metadata (global, same for all submeshes)
+    vk.CmdBindDescriptorSets(
+        frame.main_command_buffer,
+        vk.PIPELINE_BIND_POINT_GRAPHICS,
+        self.main_graphics_pipeline.pipeline_layout,
+        1, // set index 1
+        1,
+        &self.main_graphics_texture_descriptor_set,
+        0,
+        null,
+    );
+
+    for (self.main_graphics_pipeline_data.ranges, 0..) |range, submesh_index| {
+        // bind set 0: VB, IB, UBO for this submesh
         vk.CmdBindDescriptorSets(
             frame.main_command_buffer,
             vk.PIPELINE_BIND_POINT_GRAPHICS,
-            self.main_pipeline.pipeline_layout,
-            1, // set index 1
+            self.main_graphics_pipeline.pipeline_layout,
+            0, // set index 0
             1,
-            &tex_set,
+            &self.main_graphics_descriptor_sets[submesh_index],
             0,
             null,
         );
-
-        for (self.main_pipeline_model_description.ranges, 0..) |range, submesh_index| {
-            // bind set 0: VB, IB, UBO for this submesh
-            vk.CmdBindDescriptorSets(
-                frame.main_command_buffer,
-                vk.PIPELINE_BIND_POINT_GRAPHICS,
-                self.main_pipeline.pipeline_layout,
-                0, // set index 0
-                1,
-                &descriptor_sets[submesh_index],
-                0,
-                null,
-            );
-
-            // no vertex/index buffer binding -- hader reads from storage buffers
-            // firstInstance = submesh_index so gl_BaseInstance == DrawId in shader
-            vk.CmdDrawIndexed(
-                frame.main_command_buffer,
-                @intCast(range.index_range.range / @sizeOf(u16)),
-                1, // instance count
-                @intCast(range.index_range.offset / @sizeOf(u16)),
-                @intCast(range.vertex_range.offset / @sizeOf(root.mesh.Vertex3D)), // vertexOffset... but unused since shader indexes manually
-                @intCast(submesh_index),
-            );
-        }
+        vk.CmdDraw(
+            frame.main_command_buffer,
+            @as(u32, @intCast(range.index_range.range / @sizeOf(u16))), // vertex count = number of indices
+            1, // instance count
+            0, // first vertex
+            @intCast(submesh_index), // firstInstance = DrawId in shader
+        );
+        // no vertex/index buffer binding -- hader reads from storage buffers
+        // firstInstance = submesh_index so gl_BaseInstance == DrawId in shader
+        // vk.CmdDrawIndexed(
+        //     frame.main_command_buffer,
+        //     @intCast(range.index_range.range / @sizeOf(u16)),
+        //     1, // instance count
+        //     @intCast(range.index_range.offset / @sizeOf(u16)),
+        //     @intCast(range.vertex_range.offset / @sizeOf(root.mesh.Vertex3D)), // vertexOffset... but unused since shader indexes manually
+        //     @intCast(submesh_index),
+        // );
 
         // c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), command_buffer);
     }
