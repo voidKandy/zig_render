@@ -647,37 +647,29 @@ pub fn updateDescriptorSets(
 
     const num_submeshes = sets.len;
     const num_bindings = 3; // VB, IB, Uniform
-
     const write_sets_size = num_submeshes * num_bindings;
+
     var write_sets = try a.alloc(vk.WriteDescriptorSet, write_sets_size);
-    defer a.free(write_sets);
+    var buf_info_vertex = try a.alloc(vk.DescriptorBufferInfo, num_submeshes);
+    var buf_info_index = try a.alloc(vk.DescriptorBufferInfo, num_submeshes);
 
-    var buf_info_vertex = try std.ArrayList(vk.DescriptorBufferInfo).initCapacity(a, num_submeshes);
-    defer buf_info_vertex.deinit(a);
-
-    var buf_info_index = try std.ArrayList(vk.DescriptorBufferInfo).initCapacity(a, num_submeshes);
-    defer buf_info_index.deinit(a);
-
-    // var buf_info_uniform = try std.ArrayList(vk.DescriptorBufferInfo).initCapacity(a, num_submeshes);
-    // defer buf_info_uniform.deinit(a);
+    defer {
+        a.free(write_sets);
+        a.free(buf_info_vertex);
+        a.free(buf_info_index);
+    }
 
     for (0..num_submeshes) |i| {
-        buf_info_vertex.appendAssumeCapacity(.{
+        buf_info_vertex[i] = .{
             .buffer = alloc_data.meshes_vertex_buffer.buffer,
             .offset = alloc_data.mesh_ranges[i].vertex_range.offset,
             .range = alloc_data.mesh_ranges[i].vertex_range.range,
-        });
-        buf_info_index.appendAssumeCapacity(.{
+        };
+        buf_info_index[i] = .{
             .buffer = alloc_data.meshes_index_buffer.buffer,
             .offset = alloc_data.mesh_ranges[i].index_range.offset,
             .range = alloc_data.mesh_ranges[i].index_range.range,
-        });
-        // buf_info_uniform.appendAssumeCapacity(.{
-        //     // idx here might be incorrect
-        //     .buffer = alloc_data.uniforms[i].allocation.buffer,
-        //     .offset = alloc_data.ranges[i].uniform_range.offset,
-        //     .range = alloc_data.ranges[i].uniform_range.range,
-        // });
+        };
     }
 
     const camera_uniform_info = vk.DescriptorBufferInfo{
@@ -696,7 +688,7 @@ pub fn updateDescriptorSets(
             .dstArrayElement = 0,
             .descriptorCount = 1,
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &buf_info_vertex.items[i],
+            .pBufferInfo = &buf_info_vertex[i],
         };
 
         write_sets[i + 1] = .{
@@ -706,7 +698,7 @@ pub fn updateDescriptorSets(
             .dstArrayElement = 0,
             .descriptorCount = 1,
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &buf_info_index.items[i],
+            .pBufferInfo = &buf_info_index[i],
         };
 
         write_sets[i + 2] = .{
