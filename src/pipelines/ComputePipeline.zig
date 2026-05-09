@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const core = @import("../root.zig");
+const imgui = core.clibs.imgui;
 const log = std.log.scoped(.DescriptorIndexing);
 const mesh_mod = core.mesh;
 const vki = core.vulkan_init;
@@ -36,11 +37,11 @@ pub const AllocatedData = struct {
 
     pub fn deinit(
         self: @This(),
-        allocs: core.VulkanEngine.Allocators,
+        vma_a: core.clibs.vma.Allocator,
         device: vk.Device,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) void {
-        self.draw_image.deinit(allocs.vma_a, device, alloc_cbs);
+        self.draw_image.deinit(vma_a, device, alloc_cbs);
     }
 };
 
@@ -54,9 +55,12 @@ pub const Description = struct {
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-    self.all_effects.deinit();
+    defer self.all_effects.deinit();
+    var iter = self.all_effects.valueIterator();
+    while (iter.next()) |data|
+        vk.DestroyPipeline(device, data.pipeline, alloc_cbs);
+
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
-    vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
     vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
 }
@@ -316,66 +320,24 @@ pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: core.vul
     );
 }
 
-// pub fn oldDraw(
-//     self: Self,
-//     sets: std.ArrayList(std.ArrayList(vk.DescriptorSet)),
-//     window_extent: vk.Extent2D,
-//     cmd: vk.CommandBuffer,
-// ) void {
-//     const viewport = vk.Viewport{
-//         .x = 0,
-//         .y = 0,
-//         .width = @as(f32, (@floatFromInt(window_extent.width))),
-//         .height = @as(f32, (@floatFromInt(window_extent.height))),
-//         .minDepth = 0.0,
-//         .maxDepth = 1.0,
-//     };
-//     vk.CmdSetViewport(cmd, 0, 1, &viewport);
+pub fn drawImgui(self: *@This()) void {
+    var open = true;
+    if (imgui.Begin("background", &open, 0)) {
+        var selected = self.all_effects.getPtr(self.current_effect) orelse @panic("Invalid current effect");
 
-//     const scissor = vk.Rect2D{
-//         .offset = .{
-//             .x = 0,
-//             .y = 0,
-//         },
-//         .extent = window_extent,
-//     };
+        imgui.Text("Selected effect: ", self.current_effect.ptr);
+        if (imgui.BeginCombo("Background Effects", self.current_effect.ptr, 0)) {
+            defer imgui.EndCombo();
+            var iter = self.all_effects.keyIterator();
+            while (iter.next()) |key| {
+                if (imgui.Selectable(key.ptr))
+                    self.current_effect = key.*;
+            }
+        }
 
-//     vk.CmdSetScissor(cmd, 0, 1, &scissor);
-
-//     for (sets.items) |set_array| {
-//         vk.CmdBindDescriptorSets(
-//             cmd,
-//             vk.PIPELINE_BIND_POINT_GRAPHICS,
-//             self.pipeline_layout,
-//             0,
-//             1,
-//             set_array.items.ptr,
-//             0,
-//             null,
-//         );
-//     }
-//     for (model_desc.ranges, 0..) |range, submesh_index| {
-//         // bind set 0: VB, IB, UBO for this submesh
-//         vk.CmdBindDescriptorSets(
-//             cmd,
-//             vk.PIPELINE_BIND_POINT_GRAPHICS,
-//             self.pipeline_layout,
-//             0, // set index 0
-//             1,
-//             &sets.items[submesh_index].items[0],
-//             0,
-//             null,
-//         );
-
-//         // no vertex/index buffer binding -- shader reads from storage buffers
-//         // firstInstance = submesh_index so gl_BaseInstance == DrawId in shader
-//         vk.CmdDrawIndexed(
-//             cmd,
-//             @intCast(range.index_range.range / @sizeOf(u16)),
-//             1, // instance count
-//             @intCast(range.index_range.offset / @sizeOf(u16)), // firstIndex
-//             @intCast(range.vertex_range.offset / @sizeOf(mesh_mod.Vertex3D)), // vertexOffset... but unused since shader indexes manually
-//             @intCast(submesh_index), // firstInstance = DrawId
-//         );
-//     }
-// }
+        _ = imgui.SliderFloat4("data1", &selected.constants.data1.x, 0.0, 1.0);
+        _ = imgui.SliderFloat4("data2", &selected.constants.data2.x, 0.0, 1.0);
+        _ = imgui.SliderFloat4("data3", &selected.constants.data3.x, 0.0, 1.0);
+        _ = imgui.SliderFloat4("data4", &selected.constants.data4.x, 0.0, 1.0);
+    }
+}

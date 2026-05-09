@@ -28,16 +28,10 @@ const Self = @This();
 pub const Allocators = struct {
     std: std.mem.Allocator,
     vma: c.vma.Allocator = undefined,
-    global_descriptor: descriptor.DynamicAllocator = undefined,
 };
 
 allocs: Allocators,
 alloc_cbs: ?*vk.AllocationCallbacks,
-
-resources: ResourceManager = undefined,
-createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
-
-// createBoundDescriptorsFn: *const fn (*@This()) anyerror!std.StringHashMap(BoundDescriptor),
 
 input: Input = .{},
 window: *sdl.Window = undefined,
@@ -47,36 +41,36 @@ instance: vki.Instance = undefined,
 physical_device: vki.PhysicalDevice = undefined,
 logical_device: vki.LogicalDevice = undefined,
 
-main_compute_pipeline_description: ComputePipeline.Description = undefined,
-main_compute_pipeline_data: ComputePipeline.AllocatedData = undefined,
-main_compute_pipeline: ComputePipeline = undefined,
-main_compute_descriptor_set: vk.DescriptorSet = undefined,
+imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
+main_compute_pipeline: ComputePipeline = undefined,
+main_compute_pipeline_data: ComputePipeline.AllocatedData = undefined,
+main_compute_descriptor_set: vk.DescriptorSet = undefined,
+main_compute_pipeline_description: ComputePipeline.Description = undefined,
+
+main_graphics_pipeline: GraphicsPipeline = undefined,
+main_graphics_pipeline_data: GraphicsPipeline.AllocatedData = undefined,
 main_graphics_descriptor_sets: []vk.DescriptorSet = undefined,
 main_graphics_texture_descriptor_set: vk.DescriptorSet = undefined,
-/// Pipeline description for the main render pass
 main_graphics_pipeline_description: GraphicsPipeline.Description = undefined,
-main_graphics_pipeline_data: GraphicsPipeline.AllocatedData = undefined,
-main_graphics_pipeline: GraphicsPipeline = undefined,
+
 main_render_pass: vk.RenderPass = undefined,
+
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
-imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
 upload_context: vki.UploadContext = .{},
 
 pub fn init(
     a: std.mem.Allocator,
     alloc_cbs: ?*vk.AllocationCallbacks,
-    // createBoundDescriptorsFn: *const fn (*@This()) anyerror!std.StringHashMap(BoundDescriptor),
-    createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
+    // createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
 ) Self {
     return .{
         .alloc_cbs = alloc_cbs,
         .allocs = .{ .std = a },
-        .createResourcesFn = createResourcesFn,
-        // .createBoundDescriptorsFn = createBoundDescriptorsFn,
+        // .createResourcesFn = createResourcesFn,
     };
 }
 
@@ -84,41 +78,65 @@ pub fn deinit(self: *Self) void {
     checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
 
     self.swapchain.deinit(self.allocs.std, self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
-    c.imgui.impl_vulkan.Shutdown();
+    log.debug("destroyed swapchain", .{});
 
-    // var desc_iter = self.bound_descriptors.valueIterator();
-    // while (desc_iter.next()) |desc|
-    //     desc.deinit(&self.allocs);
-    // self.bound_descriptors.deinit();
+    c.imgui.impl_vulkan.Shutdown();
+    log.debug("shutdown imgui", .{});
 
     self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed frames", .{});
+
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
+    log.debug("destroyed imgui descriptor pool", .{});
 
     self.main_graphics_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    self.main_graphics_pipeline_data.deinit(self.allocs.std);
+    log.debug("destroyed main graphics pipeline", .{});
+
+    self.main_graphics_pipeline_data.deinit(self.logical_device.handle, self.allocs, self.alloc_cbs);
+    log.debug("destroyed main graphics pipeline data", .{});
 
     self.allocs.std.free(self.main_graphics_descriptor_sets);
+    log.debug("freed main graphics descriptor sets", .{});
+
+    self.main_compute_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed main compute pipeline", .{});
+
+    self.main_compute_pipeline_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed main compute pipeline data", .{});
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
-
-    self.resources.deinit(self.allocs.std, self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed upload context", .{});
 
     vk.DestroyRenderPass(self.logical_device.handle, self.main_render_pass, self.alloc_cbs);
+    log.debug("destroyed main render pass", .{});
 
-    self.allocs.global_descriptor.deinit(self.logical_device.handle);
+    var stats: c.vma.TotalStatistics = undefined;
+    c.vma.CalculateStatistics(self.allocs.vma, &stats);
+    log.debug("VMA allocations still alive: {}\n", .{stats.total.statistics.allocationCount});
+    log.debug("VMA bytes still allocated: {}\n", .{stats.total.statistics.allocationBytes});
     c.vma.DestroyAllocator(self.allocs.vma);
+    log.debug("destroyed vma allocator", .{});
+
     vk.DestroyDevice(self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed logical device", .{});
 
     if (self.instance.debug_messenger != null) {
         const destroy_fn = self.instance.getDestroyDebugUtilsMessengerFn() orelse @panic("Debug messenger present but there is no destroy function?")();
         destroy_fn(self.instance.handle, self.instance.debug_messenger, self.alloc_cbs);
+        log.debug("destroyed debug messenger", .{});
     }
 
     vk.DestroySurfaceKHR(self.instance.handle, self.surface, self.alloc_cbs);
+    log.debug("destroyed surface", .{});
+
     vk.DestroyInstance(self.instance.handle, self.alloc_cbs);
+    log.debug("destroyed instance", .{});
 
     sdl.DestroyWindow(self.window);
+    log.debug("destroyed window", .{});
+
     sdl.Quit();
+    log.debug("quit sdl", .{});
 }
 
 pub fn run(self: *Self) void {
@@ -131,10 +149,11 @@ pub fn run(self: *Self) void {
     while (!self.input.quit) {
         self.input = .{};
         while (c.sdl.PollEvent(&event)) {
-            // _ = c.imgui.impl_sdl3.ProcessEvent(&event);
+            _ = c.imgui.impl_sdl3.ProcessEvent(&event);
             self.input.update(event);
         }
 
+        self.drawImgui();
         self.drawFrame();
     }
 
@@ -216,10 +235,6 @@ fn initVulkan(self: *Self) void {
     };
     checkVk(c.vma.CreateAllocator(&allocator_ci, &self.allocs.vma)) catch @panic("Failed to create VMA allocator");
 
-    // descriptor allocator
-    // BAD! field should be removed
-    self.allocs.global_descriptor = descriptor.DynamicAllocator.init(self.allocs.std, self.alloc_cbs, self.logical_device.handle, descriptor.default_initial_sets, descriptor.default_pool_ratios) catch @panic("OOM");
-
     // Swapchain creation
     var win_width: c_int, var win_height: c_int = .{ undefined, undefined };
     checkSdl(c.sdl.GetWindowSize(self.window, &win_width, &win_height));
@@ -241,8 +256,6 @@ fn initVulkan(self: *Self) void {
         .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
 
-    self.resources = self.createResourcesFn(self) catch @panic("failed to create resources");
-
     self.createComputePipelineData();
     self.initMainComputePipeline();
 
@@ -257,7 +270,7 @@ fn initVulkan(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 
-    // self.initImgui();
+    self.initImgui();
 }
 
 /// Creaets description of frame models
@@ -287,15 +300,14 @@ fn createGraphicsPipelineData(self: *Self) void {
         &[_]u16{ 0, 1, 2 },
     };
 
-    var mesh = root.mesh.Mesh3D.init(self.allocs.std, vertices_indices.@"0", vertices_indices.@"1") catch @panic("OOM");
-    mesh.upload(self.allocs.vma, &self.upload_context, self.logical_device);
+    const mesh = root.mesh.Mesh3D.init(self.allocs.std, vertices_indices.@"0", vertices_indices.@"1") catch @panic("OOM");
 
-    var test_img = root.textures.loadImageFromFile(self.allocs.vma, &self.upload_context, self.logical_device, "assets/viking_room.png") catch @panic("Failed to load image");
+    var viking_room_img = root.textures.loadImageFromFile(self.allocs.vma, &self.upload_context, self.logical_device, "assets/viking_room.png") catch @panic("Failed to load image");
 
     const image_view_ci = vk.ImageViewCreateInfo{
         .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .viewType = vk.IMAGE_VIEW_TYPE_2D,
-        .image = test_img.image,
+        .image = viking_room_img.image,
         .format = vk.FORMAT_R8G8B8A8_SRGB,
         .components = .{
             .r = vk.COMPONENT_SWIZZLE_IDENTITY,
@@ -311,7 +323,7 @@ fn createGraphicsPipelineData(self: *Self) void {
             .layerCount = 1,
         },
     };
-    checkVk(vk.CreateImageView(self.logical_device.handle, &image_view_ci, self.alloc_cbs, &test_img.view)) catch @panic("Failed to create image view");
+    checkVk(vk.CreateImageView(self.logical_device.handle, &image_view_ci, self.alloc_cbs, &viking_room_img.view)) catch @panic("Failed to create image view");
 
     var sampler: vk.Sampler = undefined;
     const ci = vk.SamplerCreateInfo{
@@ -335,10 +347,11 @@ fn createGraphicsPipelineData(self: *Self) void {
 
     checkVk(vk.CreateSampler(self.logical_device.handle, &ci, null, &sampler)) catch @panic("failed to create sampler");
 
-    const materials = self.allocs.std.dupe(root.pipelines.TextureInfo, &[_]root.pipelines.TextureInfo{.{
-        .image_view = test_img.view,
+    const materials = self.allocs.std.alloc(root.textures.Texture, 1) catch @panic("OOM");
+    materials[0] = .{
+        .image_alloc = viking_room_img,
         .sampler = sampler,
-    }}) catch @panic("OOM");
+    };
 
     const metadata_alloc = vma_usage.AllocatedBuffer.create(
         self.allocs.vma,
@@ -348,11 +361,13 @@ fn createGraphicsPipelineData(self: *Self) void {
         0,
     );
 
-    var mapped_metadata: ?*anyopaque = undefined;
+    var mapped_metadata = vma_usage.MappedBuffer{
+        .allocation = metadata_alloc,
+    };
 
-    checkVk(c.vma.MapMemory(self.allocs.vma, metadata_alloc.allocation, &mapped_metadata)) catch @panic("Failed to map metadata");
+    checkVk(c.vma.MapMemory(self.allocs.vma, metadata_alloc.allocation, &mapped_metadata.mapped)) catch @panic("Failed to map metadata");
 
-    const aligned_metadata: *GraphicsPipeline.MetaData = @ptrCast(@alignCast(mapped_metadata));
+    const aligned_metadata: *GraphicsPipeline.MetaData = @ptrCast(@alignCast(mapped_metadata.mapped));
     aligned_metadata.* = GraphicsPipeline.MetaData{
         .index_count = 3,
         .index_offset = 0,
@@ -367,29 +382,34 @@ fn createGraphicsPipelineData(self: *Self) void {
         c.vma.MEMORY_USAGE_CPU_TO_GPU,
         0,
     );
-    var mapped_camera: ?*anyopaque = undefined;
-    checkVk(c.vma.MapMemory(self.allocs.vma, camera_alloc.allocation, &mapped_camera)) catch @panic("Failed to map camera");
+    var mapped_camera: vma_usage.MappedBuffer = .{
+        .allocation = camera_alloc,
+    };
+    checkVk(c.vma.MapMemory(self.allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
 
-    const aligned_camera: *root.Camera = @ptrCast(@alignCast(mapped_camera));
+    const aligned_camera: *root.Camera = @ptrCast(@alignCast(mapped_camera.mapped));
     aligned_camera.* = root.Camera{};
 
-    const uniforms = self.allocs.std.dupe(vk.Buffer, &[_]vk.Buffer{camera_alloc.buffer}) catch @panic("OOM");
+    // const ranges = self.allocs.std.alloc(GraphicsPipeline.MeshRanges, 1) catch @panic("OOM");
+    // ranges[0] = .{
+    //     .vertex_range = .{ .offset = 0, .range = mesh.vertices.len * @sizeOf(root.mesh.Vertex3D) },
+    //     .index_range = .{ .offset = 0, .range = mesh.indices.len * @sizeOf(u16) },
+    //     .uniform_range = .{ .offset = 0, .range = @sizeOf(root.Camera) },
+    // };
 
-    const ranges = self.allocs.std.dupe(GraphicsPipeline.SubmeshRanges, &[_]GraphicsPipeline.SubmeshRanges{.{
-        .vertex_range = .{ .offset = 0, .range = mesh.vertices.len * @sizeOf(root.mesh.Vertex3D) },
-        .index_range = .{ .offset = 0, .range = mesh.indices.len * @sizeOf(u16) },
-        .uniform_range = .{ .offset = 0, .range = @sizeOf(root.Camera) },
-    }}) catch @panic("OOM");
+    const meshes = self.allocs.std.alloc(root.mesh.Mesh3D, 1) catch @panic("OOM");
+    meshes[0] = mesh;
 
     self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData{
-        .vertex_buffer = mesh.vertex_buffer.buffer,
-        .index_buffer = mesh.index_buffer.buffer,
-        // having undefined/null data below MUST be fixed
-        .meta_data = metadata_alloc.buffer,
-        .uniforms = uniforms,
+        .meshes = meshes,
+        // .vertex_buffer = mesh.vertex_buffer,
+        // .index_buffer = mesh.index_buffer,
+        .meta_data = mapped_metadata,
+        .camera_uniform = mapped_camera,
         .materials = materials,
-        .ranges = ranges,
+        // .mesh_ranges = ranges,
     };
+    self.main_graphics_pipeline_data.createBuffers(self.allocs, &self.upload_context, self.logical_device);
 }
 
 fn createComputePipelineData(self: *Self) void {
@@ -624,9 +644,9 @@ fn drawImgui(self: *Self) void {
     c.imgui.impl_sdl3.NewFrame();
     c.imgui.NewFrame();
 
-    _ = self;
-    // self.pipeline_objects.runDrawImgui(.compute);
-    // self.pipeline_objects.runDrawImgui(.graphics);
+    self.main_compute_pipeline.drawImgui();
+    self.main_graphics_pipeline.drawImgui();
+
     c.imgui.End();
     c.imgui.Render();
 }
@@ -790,7 +810,7 @@ fn recordCommandBuffer(
         null,
     );
 
-    for (self.main_graphics_pipeline_data.ranges, 0..) |range, submesh_index| {
+    for (self.main_graphics_pipeline_data.mesh_ranges, 0..) |range, idx| {
         // bind set 0: VB, IB, UBO for this submesh
         vk.CmdBindDescriptorSets(
             frame.main_command_buffer,
@@ -798,7 +818,7 @@ fn recordCommandBuffer(
             self.main_graphics_pipeline.pipeline_layout,
             0, // set index 0
             1,
-            &self.main_graphics_descriptor_sets[submesh_index],
+            &self.main_graphics_descriptor_sets[idx],
             0,
             null,
         );
@@ -807,7 +827,7 @@ fn recordCommandBuffer(
             @as(u32, @intCast(range.index_range.range / @sizeOf(u16))), // vertex count = number of indices
             1, // instance count
             0, // first vertex
-            @intCast(submesh_index), // firstInstance = DrawId in shader
+            @intCast(idx), // firstInstance = DrawId in shader
         );
         // no vertex/index buffer binding -- hader reads from storage buffers
         // firstInstance = submesh_index so gl_BaseInstance == DrawId in shader
@@ -820,7 +840,7 @@ fn recordCommandBuffer(
         //     @intCast(submesh_index),
         // );
 
-        // c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), command_buffer);
+        c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
     }
 }
 

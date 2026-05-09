@@ -211,9 +211,15 @@ pub const Vertex3D = struct {
 pub const Mesh3D = struct {
     vertices: []Vertex3D,
     indices: []u16,
+
+    pub const Buffers = struct {
+        vertex: vma_usage.AllocatedBuffer = undefined,
+        index: vma_usage.AllocatedBuffer = undefined,
+    };
+
     /// vertex & index buffers are not present until `upload` method is called
-    vertex_buffer: AllocatedBuffer = undefined,
-    index_buffer: AllocatedBuffer = undefined,
+    // vertex_buffer: AllocatedBuffer = undefined,
+    // index_buffer: AllocatedBuffer = undefined,
     const Self = @This();
 
     pub fn init(a: std.mem.Allocator, vertices: []const Vertex3D, indices: []const u16) std.mem.Allocator.Error!Self {
@@ -223,34 +229,32 @@ pub const Mesh3D = struct {
         };
     }
 
-    pub fn deinit(self: Self, allocator: std.mem.Allocator, vma_a: c.vma.Allocator) void {
-        c.vma.DestroyBuffer(vma_a, self.index_buffer.buffer, self.index_buffer.allocation);
-        c.vma.DestroyBuffer(vma_a, self.vertex_buffer.buffer, self.vertex_buffer.allocation);
+    pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
         allocator.free(self.vertices);
         allocator.free(self.indices);
     }
 
-    pub fn upload(self: *Self, vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.LogicalDevice) void {
+    pub fn createBuffers(self: *Self, vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.LogicalDevice) Buffers {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex3D),
             self.indices.len * @sizeOf(u16),
         };
 
         const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
-            const vert_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+            const vert_ci = c.vk.BufferCreateInfo{
                 .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                 .size = vert_alloc_size,
                 .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-            });
-            const idx_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+            };
+            const idx_ci = c.vk.BufferCreateInfo{
                 .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                 .size = idx_alloc_size,
                 .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-            });
+            };
 
-            const ai = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
+            const ai = c.vma.AllocationCreateInfo{
                 .usage = c.vma.MEMORY_USAGE_CPU_ONLY,
-            });
+            };
 
             var vert_buf: vma_usage.AllocatedBuffer = undefined;
             checkVk(c.vma.CreateBuffer(vma_a, &vert_ci, &ai, &vert_buf.buffer, &vert_buf.allocation, null)) catch @panic("Failed to create vertex buffer");
@@ -260,8 +264,8 @@ pub const Mesh3D = struct {
         };
 
         defer {
-            c.vma.DestroyBuffer(vma_a, vert_staging_buffer.buffer, vert_staging_buffer.allocation);
-            c.vma.DestroyBuffer(vma_a, idx_staging_buffer.buffer, idx_staging_buffer.allocation);
+            vert_staging_buffer.deinit(vma_a);
+            idx_staging_buffer.deinit(vma_a);
         }
 
         // mapping memory
@@ -282,6 +286,7 @@ pub const Mesh3D = struct {
         }
 
         // gpu allocation
+        var buffers = Buffers{};
         {
             const vert_ci = vk.BufferCreateInfo{
                 .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -298,8 +303,8 @@ pub const Mesh3D = struct {
                 .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
             };
 
-            checkVk(c.vma.CreateBuffer(vma_a, &vert_ci, &ai, &self.vertex_buffer.buffer, &self.vertex_buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
-            checkVk(c.vma.CreateBuffer(vma_a, &idx_ci, &ai, &self.index_buffer.buffer, &self.index_buffer.allocation, null)) catch @panic("Failed to create index buffer");
+            checkVk(c.vma.CreateBuffer(vma_a, &vert_ci, &ai, &buffers.vertex.buffer, &buffers.vertex.allocation, null)) catch @panic("Failed to create vertex buffer");
+            checkVk(c.vma.CreateBuffer(vma_a, &idx_ci, &ai, &buffers.index.buffer, &buffers.index.allocation, null)) catch @panic("Failed to create index buffer");
         }
 
         const SubmitCtx =
@@ -317,100 +322,18 @@ pub const Mesh3D = struct {
             };
 
         upload_ctx.immediateSubmit(device, SubmitCtx{
-            .mesh_buffer = self.vertex_buffer.buffer,
+            .mesh_buffer = buffers.vertex.buffer,
             .staging_buffer = vert_staging_buffer.buffer,
             .size = vert_alloc_size,
         });
 
         upload_ctx.immediateSubmit(device, SubmitCtx{
-            .mesh_buffer = self.index_buffer.buffer,
+            .mesh_buffer = buffers.index.buffer,
             .staging_buffer = idx_staging_buffer.buffer,
             .size = idx_alloc_size,
         });
-    }
 
-    pub fn loadFromObj(a: std.mem.Allocator, filepath: []const u8) Mesh3D {
-        // const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
-        // defer file.close();
-        // const end_pos = try file.getEndPos();
-        // const content = try file.readToEndAlloc(a, end_pos);
-        var attributes = c.tol.Attributes{};
-        // const shapes: [][]?c.tol.Shape = a.alloc([]?c.tol.Shape, 1024) catch @panic("OOM");
-        const shapes: [*]?*c.tol.Shape = (a.alloc(?*c.tol.Shape, 1024) catch ("OOM")).ptr;
-        //the slicing is required because [*] is unknown length
-        for (shapes[0..1024]) |*ele| ele.* = a.create(c.tol.shape) catch unreachable;
-        // const shapes = [_][]?*const c.tol.Shape{};
-        // var shapes_c: [*c][*]c.tol.Shape = &shapes;
-        var num_shapes: usize = 0;
-
-        // const materials: [][]?c.tol.Material = a.alloc([]?c.tol.Material, 1024) catch @panic("OOM");
-        const materials: [*]?*c.tol.Material = (a.alloc(?*c.tol.Material, 1024) catch ("OOM")).ptr;
-        for (materials[0..1024]) |*ele| ele.* = a.create(c.tol.shape) catch unreachable;
-        // var materials_c: [*c][*c]c.tol.Material = &materials;
-        var num_materials: usize = 0;
-        const c_path = a.dupeZ(u8, filepath) catch @panic("OOM");
-        defer a.free(c_path);
-
-        // safe to call
-        const result = c.tol.parseObject(
-            &attributes,
-            shapes.ptr,
-            // @as([*][*]c.tol.Shape, shapes.ptr),
-            &num_shapes,
-            materials.ptr,
-            // @as([*][*]c.tol.Material, materials.ptr),
-            &num_materials,
-            c_path.ptr,
-            null,
-            null,
-            0,
-        );
-        checkTol(result) catch @panic("failed to parse object");
-
-        // var obj_mesh = obj_loader.parseFile(a, filepath) catch |err| {
-        //     std.log.err("Failed to load obj file: {s}", .{@errorName(err)});
-        //     unreachable;
-        // };
-        // defer obj_mesh.deinit();
-
-        var vertices = std.ArrayList(Vertex3D).initCapacity(a, attributes.num_vertices) catch @panic("out of memory");
-        _ = &vertices;
-
-        // for (obj_mesh.objects) |object| {
-        //     var index_count: usize = 0;
-        //     for (object.face_vertices) |face_vx_count| {
-        //         if (face_vx_count < 3) {
-        //             @panic("Face has fewer than 3 vertices. Not a valid polygon.");
-        //         }
-
-        //         for (0..face_vx_count) |vx_index| {
-        //             const obj_index = object.indices[index_count];
-        //             const pos = obj_mesh.vertices[obj_index.vertex];
-        //             const nml = obj_mesh.normals[obj_index.normal];
-        //             const uvs = obj_mesh.uvs[obj_index.uv];
-
-        //             const vx = Vertex3D{
-        //                 .position = Vec3.make(pos[0], pos[1], pos[2]),
-        //                 .normal = Vec3.make(nml[0], nml[1], nml[2]),
-        //                 .color = Vec3.make(nml[0], nml[1], nml[2]),
-        //                 .uv = Vec2.make(uvs[0], 1.0 - uvs[1]),
-        //             };
-
-        //             // Triangulate the polygon
-        //             if (vx_index > 2) {
-        //                 const v0 = vertices.items[vertices.items.len - 3];
-        //                 const v1 = vertices.items[vertices.items.len - 1];
-        //                 vertices.append(a, v0) catch @panic("OOM");
-        //                 vertices.append(a, v1) catch @panic("OOM");
-        //             }
-
-        //             vertices.append(a, vx) catch @panic("OOM");
-
-        //             index_count += 1;
-        //         }
-        //     }
-        // }
-        return Mesh3D.init(a, vertices.items, &[_]u16{}) catch @panic("");
+        return buffers;
     }
 };
 
@@ -418,5 +341,4 @@ test "obj" {
     const obj = @import("obj_loader.zig");
     var mesh = try obj.parseFile(std.testing.allocator, "assets/lost_empire.obj");
     mesh.deinit();
-    // _ = Mesh3D.loadFromObj(std.testing.allocator, "assets/lost_empire.obj");
 }

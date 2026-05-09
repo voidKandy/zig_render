@@ -29,12 +29,6 @@ pub fn checkSdl(res: bool) void {
     }
 }
 
-pub const UniformBufferObject = struct {
-    model: math.Mat4,
-    view: math.Mat4,
-    proj: math.Mat4,
-};
-
 test {
     std.testing.refAllDecls(@This());
 }

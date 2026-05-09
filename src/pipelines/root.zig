@@ -1,4 +1,5 @@
 const vk = @import("../root.zig").clibs.vk;
+const vma_usage = @import("../root.zig").vma_usage;
 
 pub const GraphicsPipeline = @import("GraphicsPipeline.zig");
 pub const ComputePipeline = @import("ComputePipeline.zig");
@@ -9,15 +10,6 @@ pub const ComputePipeline = @import("ComputePipeline.zig");
 // pub const BackgroundEffects = @import("BackgroundEffects.zig");
 // pub const PipelineManager = @import("PipelineManager.zig");
 
-pub const RangeDesc = struct {
-    offset: vk.DeviceSize = 0,
-    range: vk.DeviceSize = 0,
-};
-
-pub const TextureInfo = struct {
-    sampler: vk.Sampler,
-    image_view: vk.ImageView,
-};
 // currently this function has a silent requirement that the resources of the engine have been initialized
 // This function then associates those resources with the pipelines they are meant for
 // pub fn initPipelines(engine: *VulkanEngine) anyerror!PipelineManager {

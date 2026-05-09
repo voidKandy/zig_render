@@ -240,6 +240,9 @@ pub const vma = struct {
     pub const UnmapMemory = c.vmaUnmapMemory;
     pub const FlushAllocation = c.vmaFlushAllocation;
 
+    pub const TotalStatistics = c.VmaTotalStatistics;
+    pub const CalculateStatistics = c.vmaCalculateStatistics;
+
     pub const MEMORY_USAGE_CPU_TO_GPU = c.VMA_MEMORY_USAGE_CPU_TO_GPU;
     pub const MEMORY_USAGE_CPU_ONLY = c.VMA_MEMORY_USAGE_CPU_ONLY;
     pub const MEMORY_USAGE_GPU_ONLY = c.VMA_MEMORY_USAGE_GPU_ONLY;

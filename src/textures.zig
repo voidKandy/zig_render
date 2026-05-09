@@ -8,10 +8,8 @@ const checkVk = vk_init.checkVk;
 const log = std.log.scoped(.textures);
 
 pub const Texture = struct {
-    /// BAD
-    allocation: c.vma.Allocation,
-    image: vk.Image,
-    image_view: vk.ImageView,
+    sampler: vk.Sampler,
+    image_alloc: vma_usage.AllocatedImage,
 };
 
 const Error = std.fmt.BufPrintError || vk_init.VkError || error{FailedToLoadImage};
