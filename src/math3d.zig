@@ -11,7 +11,7 @@ pub inline fn abs(f: anytype) @TypeOf(f) {
     return if (f < 0) -f else f;
 }
 
-pub const Vec2 = packed struct {
+pub const Vec2 = extern struct {
     x: f32,
     y: f32,
 
@@ -30,7 +30,7 @@ pub const Vec2 = packed struct {
     }
 };
 
-pub const Vec3 = packed struct {
+pub const Vec3 = extern struct {
     x: f32,
     y: f32,
     z: f32,

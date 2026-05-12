@@ -165,7 +165,7 @@ pub const Mesh2D = struct {
     }
 };
 
-pub const Vertex3D = struct {
+pub const Vertex3D = extern struct {
     position: Vec3,
     normal: Vec3,
     color: Vec3,

@@ -21,13 +21,18 @@
 
 struct VertexData
 {
-    float pos_x, pos_y, pos_z;
-    float u0, v0;
-    float u1, v1;
-    float normal_x, normal_y, normal_z;
-    float tangent_x, tangent_y, tangent_z;
-    float bitangent_x, bitangent_y, bitangent_z;
-    float color_r, color_g, color_b, color_a;
+
+    vec3 position;
+    vec3 normal;
+    vec3 color;
+    vec2 uv;
+    // float pos_x, pos_y, pos_z;
+    // float u0, v0;
+    // float u1, v1;
+    // float normal_x, normal_y, normal_z;
+    // float tangent_x, tangent_y, tangent_z;
+    // float bitangent_x, bitangent_y, bitangent_z;
+    // float color_r, color_g, color_b, color_a;
 };
 
 layout (std430, set = 0, binding = 0) readonly buffer Vertices { VertexData v[]; } in_Vertices;
@@ -50,9 +55,9 @@ layout(location = 1) flat out uint MaterialIndex;
 
 void main()
 {
-    uint DrawId = uint(gl_BaseInstance);
+    uint meshIdx = uint(gl_InstanceIndex);
 
-    MetaData md = MetaBuf.metas[DrawId];
+    MetaData md = MetaBuf.metas[meshIdx];
 
     MaterialIndex = md.MaterialIndex;
 
@@ -60,9 +65,8 @@ void main()
 
     VertexData vtx = in_Vertices.v[Index];
 
-    vec3 pos = vec3(vtx.pos_x, vtx.pos_y, vtx.pos_z);
 
-    gl_Position = ubo.WVP * vec4(pos, 1.0);
+    gl_Position = ubo.WVP * vec4(vtx.position, 1.0);
 
-    texCoord = vec2(vtx.u0, vtx.v0);
+    texCoord = vec2(vtx.uv.x, vtx.uv.y);
 }

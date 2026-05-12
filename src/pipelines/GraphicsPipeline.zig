@@ -2,7 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const core = @import("../root.zig");
 const pipelines = @import("root.zig");
-const log = std.log.scoped(.DescriptorIndexing);
+const log = std.log.scoped(.GraphicsPipeline);
 const mesh_mod = core.mesh;
 const vki = core.vulkan_init;
 const vk = core.clibs.vk;
@@ -19,21 +19,16 @@ pub const MetaData = struct {
 
 /// Allocated data associated with Pipeline
 pub const AllocatedData = struct {
-    // meshes: []mesh_mod.Mesh3D,
-    /// these should be chagned to vma AllocatedBuffer
-    // vertex_buffer: vma_usage.AllocatedBuffer,
-    // index_buffer: vma_usage.AllocatedBuffer,
-
-    meta_data: vma_usage.MappedBuffer,
     /// TODO
     /// move camera related logic into GraphicsPipeline
     camera_uniform: vma_usage.MappedBuffer,
     materials: []core.textures.Texture,
-    // ranges: []SubmeshRanges,
+
     meshes: []mesh_mod.Mesh3D,
     meshes_vertex_buffer: vma_usage.AllocatedBuffer = undefined,
     meshes_index_buffer: vma_usage.AllocatedBuffer = undefined,
     mesh_ranges: []MeshRanges = undefined,
+    meta_data: vma_usage.MappedBuffer = undefined,
 
     const RangeDesc = struct {
         offset: vk.DeviceSize = 0,
@@ -65,15 +60,20 @@ pub const AllocatedData = struct {
             all_ranges[i] = MeshRanges{
                 .vertex_range = .{
                     .offset = total_verts,
-                    .range = m.vertices.len * @sizeOf(core.mesh.Vertex3D),
+                    .range = m.vertices.len,
                 },
                 .index_range = .{
-                    .offset = total_verts,
-                    .range = m.indices.len * @sizeOf(u16),
+                    .offset = total_idcs,
+                    .range = m.indices.len,
                 },
             };
             try vertices.appendSlice(a, m.vertices);
             try indices.appendSlice(a, m.indices);
+            // rebase indices
+            // this needs to be done because the index buffer is shared across all meshes
+            // for (m.indices) |idx|
+            //     try indices.append(a, @as(u16, @intCast(idx + total_verts)));
+
             total_verts += m.vertices.len;
             total_idcs += m.indices.len;
         }
@@ -85,7 +85,7 @@ pub const AllocatedData = struct {
         };
     }
 
-    pub fn createBuffers(
+    pub fn createBuffersAndMetadata(
         self: *@This(),
         allocs: core.VulkanEngine.Allocators,
         upload_ctx: *core.vulkan_init.UploadContext,
@@ -149,27 +149,20 @@ pub const AllocatedData = struct {
             @memcpy(idx_aligned_data, meshes_concat.indices);
         }
 
-        // gpu allocation
-        // var buffers = Buffers{};
-        {
-            const vert_ci = vk.BufferCreateInfo{
-                .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                .size = vert_alloc_size,
-                .usage = vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            };
-            const idx_ci = vk.BufferCreateInfo{
-                .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                .size = idx_alloc_size,
-                .usage = vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            };
-
-            const ai = vma.AllocationCreateInfo{
-                .usage = vma.MEMORY_USAGE_GPU_ONLY,
-            };
-
-            checkVk(vma.CreateBuffer(allocs.vma, &vert_ci, &ai, &self.meshes_vertex_buffer.buffer, &self.meshes_vertex_buffer.allocation, null)) catch @panic("Failed to create vertex buffer");
-            checkVk(vma.CreateBuffer(allocs.vma, &idx_ci, &ai, &self.meshes_index_buffer.buffer, &self.meshes_index_buffer.allocation, null)) catch @panic("Failed to create index buffer");
-        }
+        self.meshes_vertex_buffer = vma_usage.AllocatedBuffer.create(
+            allocs.vma,
+            vert_alloc_size,
+            vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            vma.MEMORY_USAGE_GPU_ONLY,
+            0,
+        );
+        self.meshes_index_buffer = vma_usage.AllocatedBuffer.create(
+            allocs.vma,
+            idx_alloc_size,
+            vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            vma.MEMORY_USAGE_GPU_ONLY,
+            0,
+        );
 
         const SubmitCtx =
             struct {
@@ -185,6 +178,11 @@ pub const AllocatedData = struct {
                 }
             };
 
+        log.debug(
+            \\Vertex buffer size: {}
+            \\Index buffer size: {}
+        , .{ self.meshes_vertex_buffer.size, self.meshes_index_buffer.size });
+
         upload_ctx.immediateSubmit(device, SubmitCtx{
             .mesh_buffer = self.meshes_vertex_buffer.buffer,
             .staging_buffer = vert_staging_buffer.buffer,
@@ -196,6 +194,42 @@ pub const AllocatedData = struct {
             .staging_buffer = idx_staging_buffer.buffer,
             .size = idx_alloc_size,
         });
+
+        const metadata_alloc = vma_usage.AllocatedBuffer.create(
+            allocs.vma,
+            @sizeOf(MetaData) * self.meshes.len,
+            vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            vma.MEMORY_USAGE_CPU_TO_GPU,
+            0,
+        );
+
+        var mapped_metadata = vma_usage.MappedBuffer{
+            .allocation = metadata_alloc,
+        };
+
+        checkVk(vma.MapMemory(
+            allocs.vma,
+            metadata_alloc.allocation,
+            &mapped_metadata.mapped,
+        )) catch @panic("Failed to map metadata");
+
+        // const aligned_metadata: *GraphicsPipeline.MetaData = @ptrCast(@alignCast(mapped_metadata.mapped));
+        const aligned_metadata: [*]MetaData =
+            @ptrCast(@alignCast(mapped_metadata.mapped));
+
+        for (self.mesh_ranges, 0..) |range, i| {
+            aligned_metadata[i] = MetaData{
+                // BAD
+                // material index is wrong for now
+                // it works because there is currently one
+                .material_index = 0,
+                .index_count = @as(u32, @intCast(range.index_range.range)),
+                .index_offset = @as(u32, @intCast(range.index_range.offset)),
+                .vertex_offset = @as(u32, @intCast(range.vertex_range.offset)),
+            };
+        }
+
+        self.meta_data = mapped_metadata;
     }
 
     pub fn deinit(self: @This(), device: vk.Device, allocs: core.VulkanEngine.Allocators, alloc_cbs: ?*vk.AllocationCallbacks) void {
@@ -229,10 +263,6 @@ pub const Description = struct {
     // color_format: vk.Format = vk.FORMAT_UNDEFINED,
     // depth_format: vk.Format = vk.FORMAT_UNDEFINED,
     depth_compare_op: vk.CompareOp = vk.COMPARE_OP_LESS,
-    is_vertex_buffer: bool = false,
-    is_index_buffer: bool = false,
-    is_uniform_buffer: bool = false,
-    is_tex2d_buffer: bool = false,
 };
 
 const Bindings = struct {
@@ -251,11 +281,6 @@ descriptor_pool: vk.DescriptorPool = undefined,
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 descriptor_set_layout_textures: vk.DescriptorSetLayout = undefined,
 
-num_images: u32,
-/// THIS IS NOT A PIPELINE OBJECT
-/// I THINK PROBABLY PIPELINE OBJECTS SHOULD BE REMOVED AS AN ABSTRACTION
-/// THIS SHOULD BE THE NEW MAIN PIPELINE
-/// SHOULD BE RENAMED GRAPHICS OR GRAPHICS_PIPELINE
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
@@ -267,23 +292,17 @@ pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallback
 }
 
 pub fn init(pd: Description, alloc_cbs: ?*vk.AllocationCallbacks) @This() {
-    var self = @This(){
-        .num_images = pd.num_images,
-    };
+    var self = Self{};
 
     self.createDescriptorSetLayout(
         pd.device,
-        pd.is_vertex_buffer,
-        pd.is_index_buffer,
-        pd.is_uniform_buffer,
         alloc_cbs,
     );
 
-    if (pd.is_tex2d_buffer)
-        self.createDescriptorSetLayoutTextures(
-            pd.device,
-            alloc_cbs,
-        );
+    self.createDescriptorSetLayoutTextures(
+        pd.device,
+        alloc_cbs,
+    );
 
     self.initCommon(pd, alloc_cbs);
 
@@ -502,65 +521,48 @@ pub fn createDescriptorPool(
 fn createDescriptorSetLayout(
     self: *Self,
     device: vk.Device,
-    is_vertex_buffer: bool,
-    is_index_buffer: bool,
-    is_uniform_buffer: bool,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    var bindings: [3]vk.DescriptorSetLayoutBinding = undefined;
-    var amt_bindings: usize = 0;
-    // var bindings = try std.ArrayList(vk.DescriptorSetLayoutBinding).initCapacity(a, 3);
-
-    if (is_vertex_buffer) {
-        const binding = vk.DescriptorSetLayoutBinding{
+    const bindings = [_]vk.DescriptorSetLayoutBinding{
+        .{
             .binding = Bindings.VERTEX,
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-        };
+        },
 
-        bindings[amt_bindings] = binding;
-        amt_bindings += 1;
-    }
-    if (is_index_buffer) {
-        const binding = vk.DescriptorSetLayoutBinding{
+        .{
             .binding = Bindings.INDEX,
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-        };
-        bindings[amt_bindings] = binding;
-        amt_bindings += 1;
-    }
-    if (is_uniform_buffer) {
-        const binding = vk.DescriptorSetLayoutBinding{
+        },
+
+        // Current uniform stores camera data
+        .{
             .binding = Bindings.UNIFORM,
             .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-        };
-        bindings[amt_bindings] = binding;
-        amt_bindings += 1;
-    }
+        },
+    };
 
     const ci = vk.DescriptorSetLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .flags = 0,
-        .bindingCount = @as(u32, @intCast(amt_bindings)),
-        .pBindings = bindings[0..amt_bindings].ptr,
+        .bindingCount = @as(u32, @intCast(bindings.len)),
+        .pBindings = &bindings,
     };
-
     checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.descriptor_set_layout)) catch
         @panic("failed to create descriptor set layout");
 }
 
-pub fn createDescriptorSetLayoutTextures(
+fn createDescriptorSetLayoutTextures(
     self: *Self,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     const bindings = [_]vk.DescriptorSetLayoutBinding{
-        // Textures
         .{
             .binding = Bindings.TEXTURE2D,
             .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -568,7 +570,6 @@ pub fn createDescriptorSetLayoutTextures(
             .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
             .pImmutableSamplers = null,
         },
-        // Metadata
         .{
             .binding = Bindings.METADATA,
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -594,30 +595,24 @@ pub fn createDescriptorSetLayoutTextures(
     )) catch @panic("Failed to create descriptor set layout");
 }
 
-pub fn allocateDescriptorSets(
+pub fn allocateDescriptorSet(
     self: Self,
     device: vk.Device,
-    a: mem.Allocator,
-    num_submeshes: usize,
-) mem.Allocator.Error![]vk.DescriptorSet {
-    const sets = try a.alloc(vk.DescriptorSet, num_submeshes);
-
-    var layouts = try a.alloc(vk.DescriptorSetLayout, num_submeshes);
-    defer a.free(layouts);
-    for (0..num_submeshes) |i| layouts[i] = self.descriptor_set_layout;
+) mem.Allocator.Error!vk.DescriptorSet {
+    var set: vk.DescriptorSet = undefined;
 
     const ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .pNext = null,
         .descriptorPool = self.descriptor_pool,
-        .descriptorSetCount = @as(u32, @intCast(layouts.len)),
-        .pSetLayouts = layouts.ptr,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &self.descriptor_set_layout,
     };
 
-    checkVk(vk.AllocateDescriptorSets(device, &ai, sets.ptr)) catch
+    checkVk(vk.AllocateDescriptorSets(device, &ai, &set)) catch
         @panic("failed to allocate descriptor sets");
 
-    return sets;
+    return set;
 }
 
 pub fn allocateTextureDescriptorSet(self: Self, device: vk.Device, set: *vk.DescriptorSet) void {
@@ -640,78 +635,59 @@ pub fn updateDescriptorSets(
     device: vk.Device,
     a: mem.Allocator,
     alloc_data: AllocatedData,
-    sets: []vk.DescriptorSet,
+    set: vk.DescriptorSet,
     textures_set: vk.DescriptorSet,
 ) mem.Allocator.Error!void {
     try updateTextureDescriptorSet(device, a, alloc_data, textures_set);
 
-    const num_submeshes = sets.len;
-    const num_bindings = 3; // VB, IB, Uniform
-    const write_sets_size = num_submeshes * num_bindings;
-
-    var write_sets = try a.alloc(vk.WriteDescriptorSet, write_sets_size);
-    var buf_info_vertex = try a.alloc(vk.DescriptorBufferInfo, num_submeshes);
-    var buf_info_index = try a.alloc(vk.DescriptorBufferInfo, num_submeshes);
-
-    defer {
-        a.free(write_sets);
-        a.free(buf_info_vertex);
-        a.free(buf_info_index);
-    }
-
-    for (0..num_submeshes) |i| {
-        buf_info_vertex[i] = .{
-            .buffer = alloc_data.meshes_vertex_buffer.buffer,
-            .offset = alloc_data.mesh_ranges[i].vertex_range.offset,
-            .range = alloc_data.mesh_ranges[i].vertex_range.range,
-        };
-        buf_info_index[i] = .{
-            .buffer = alloc_data.meshes_index_buffer.buffer,
-            .offset = alloc_data.mesh_ranges[i].index_range.offset,
-            .range = alloc_data.mesh_ranges[i].index_range.range,
-        };
-    }
-
+    const vertex_info = vk.DescriptorBufferInfo{
+        .buffer = alloc_data.meshes_vertex_buffer.buffer,
+        .offset = 0,
+        .range = alloc_data.meshes_vertex_buffer.size,
+    };
+    const index_info = vk.DescriptorBufferInfo{
+        .buffer = alloc_data.meshes_index_buffer.buffer,
+        .offset = 0,
+        .range = alloc_data.meshes_index_buffer.size,
+    };
     const camera_uniform_info = vk.DescriptorBufferInfo{
         .buffer = alloc_data.camera_uniform.allocation.buffer,
         .offset = 0,
         .range = @as(u64, @intCast(alloc_data.camera_uniform.allocation.size)),
     };
 
-    for (0..num_submeshes) |i| {
-        const dst_set = sets[i];
+    const write_sets =
+        &[_]vk.WriteDescriptorSet{
+            .{
+                .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = set,
+                .dstBinding = Bindings.VERTEX,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &vertex_info,
+            },
 
-        write_sets[i] = .{
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = dst_set,
-            .dstBinding = Bindings.VERTEX,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &buf_info_vertex[i],
+            .{
+                .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = set,
+                .dstBinding = Bindings.INDEX,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &index_info,
+            },
+
+            .{
+                .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = set,
+                .dstBinding = Bindings.UNIFORM,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .pBufferInfo = &camera_uniform_info,
+            },
         };
-
-        write_sets[i + 1] = .{
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = dst_set,
-            .dstBinding = Bindings.INDEX,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &buf_info_index[i],
-        };
-
-        write_sets[i + 2] = .{
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = dst_set,
-            .dstBinding = Bindings.UNIFORM,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pBufferInfo = &camera_uniform_info,
-        };
-    }
-
     vk.UpdateDescriptorSets(
         device,
         @as(u32, @intCast(write_sets.len)),

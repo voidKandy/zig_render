@@ -50,7 +50,7 @@ main_compute_pipeline_description: ComputePipeline.Description = undefined,
 
 main_graphics_pipeline: GraphicsPipeline = undefined,
 main_graphics_pipeline_data: GraphicsPipeline.AllocatedData = undefined,
-main_graphics_descriptor_sets: []vk.DescriptorSet = undefined,
+main_graphics_descriptor_set: vk.DescriptorSet = undefined,
 main_graphics_texture_descriptor_set: vk.DescriptorSet = undefined,
 main_graphics_pipeline_description: GraphicsPipeline.Description = undefined,
 
@@ -94,9 +94,6 @@ pub fn deinit(self: *Self) void {
 
     self.main_graphics_pipeline_data.deinit(self.logical_device.handle, self.allocs, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline data", .{});
-
-    self.allocs.std.free(self.main_graphics_descriptor_sets);
-    log.debug("freed main graphics descriptor sets", .{});
 
     self.main_compute_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline", .{});
@@ -301,8 +298,15 @@ fn createGraphicsPipelineData(self: *Self) void {
     };
 
     const mesh = root.mesh.Mesh3D.init(self.allocs.std, vertices_indices.@"0", vertices_indices.@"1") catch @panic("OOM");
+    const meshes = self.allocs.std.alloc(root.mesh.Mesh3D, 1) catch @panic("OOM");
+    meshes[0] = mesh;
 
-    var viking_room_img = root.textures.loadImageFromFile(self.allocs.vma, &self.upload_context, self.logical_device, "assets/viking_room.png") catch @panic("Failed to load image");
+    var viking_room_img = root.textures.loadImageFromFile(
+        self.allocs.vma,
+        &self.upload_context,
+        self.logical_device,
+        "assets/viking_room.png",
+    ) catch @panic("Failed to load image");
 
     const image_view_ci = vk.ImageViewCreateInfo{
         .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -353,27 +357,12 @@ fn createGraphicsPipelineData(self: *Self) void {
         .sampler = sampler,
     };
 
-    const metadata_alloc = vma_usage.AllocatedBuffer.create(
-        self.allocs.vma,
-        @sizeOf(GraphicsPipeline.MetaData),
-        vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        c.vma.MEMORY_USAGE_CPU_TO_GPU,
-        0,
-    );
-
-    var mapped_metadata = vma_usage.MappedBuffer{
-        .allocation = metadata_alloc,
-    };
-
-    checkVk(c.vma.MapMemory(self.allocs.vma, metadata_alloc.allocation, &mapped_metadata.mapped)) catch @panic("Failed to map metadata");
-
-    const aligned_metadata: *GraphicsPipeline.MetaData = @ptrCast(@alignCast(mapped_metadata.mapped));
-    aligned_metadata.* = GraphicsPipeline.MetaData{
-        .index_count = 3,
-        .index_offset = 0,
-        .material_index = 0,
-        .vertex_offset = 0,
-    };
+    // aligned_metadata.* = GraphicsPipeline.MetaData{
+    //     .index_count = 3,
+    //     .index_offset = 0,
+    //     .material_index = 0,
+    //     .vertex_offset = 0,
+    // };
 
     const camera_alloc = vma_usage.AllocatedBuffer.create(
         self.allocs.vma,
@@ -390,26 +379,13 @@ fn createGraphicsPipelineData(self: *Self) void {
     const aligned_camera: *root.Camera = @ptrCast(@alignCast(mapped_camera.mapped));
     aligned_camera.* = root.Camera{};
 
-    // const ranges = self.allocs.std.alloc(GraphicsPipeline.MeshRanges, 1) catch @panic("OOM");
-    // ranges[0] = .{
-    //     .vertex_range = .{ .offset = 0, .range = mesh.vertices.len * @sizeOf(root.mesh.Vertex3D) },
-    //     .index_range = .{ .offset = 0, .range = mesh.indices.len * @sizeOf(u16) },
-    //     .uniform_range = .{ .offset = 0, .range = @sizeOf(root.Camera) },
-    // };
-
-    const meshes = self.allocs.std.alloc(root.mesh.Mesh3D, 1) catch @panic("OOM");
-    meshes[0] = mesh;
-
     self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData{
         .meshes = meshes,
-        // .vertex_buffer = mesh.vertex_buffer,
-        // .index_buffer = mesh.index_buffer,
-        .meta_data = mapped_metadata,
         .camera_uniform = mapped_camera,
         .materials = materials,
-        // .mesh_ranges = ranges,
     };
-    self.main_graphics_pipeline_data.createBuffers(self.allocs, &self.upload_context, self.logical_device);
+
+    self.main_graphics_pipeline_data.createBuffersAndMetadata(self.allocs, &self.upload_context, self.logical_device);
 }
 
 fn createComputePipelineData(self: *Self) void {
@@ -433,16 +409,6 @@ fn createComputePipelineData(self: *Self) void {
 }
 
 fn initMainComputePipeline(self: *Self) void {
-    // var builder = descriptor.LayoutBuilder.init(self.allocs.std);
-    // defer builder.deinit(self.allocs.std);
-    // builder.addBinding(
-    //     self.allocs.std,
-    //     0,
-    //     vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
-    //     vk.SHADER_STAGE_COMPUTE_BIT,
-    // );
-    // self.descriptor_set_layout = builder.build(self.logical_device.handle, null, 0, self.alloc_cbs);
-
     const gradient_shader = root.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, gradient_shader, self.alloc_cbs);
     const sky_shader = root.shaders.createShaderModule("sky.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
@@ -534,10 +500,6 @@ fn initMainGraphicsPipeline(self: *Self) void {
             .window_extent = self.swapchain.extent,
             .vertex_shader = vert_shader,
             .fragment_shader = frag_shader,
-            .is_vertex_buffer = true,
-            .is_index_buffer = true,
-            .is_uniform_buffer = true,
-            .is_tex2d_buffer = true,
         },
         self.alloc_cbs,
     );
@@ -551,12 +513,8 @@ fn initMainGraphicsPipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.main_graphics_descriptor_sets = self.main_graphics_pipeline.allocateDescriptorSets(
+    self.main_graphics_descriptor_set = self.main_graphics_pipeline.allocateDescriptorSet(
         self.logical_device.handle,
-        self.allocs.std,
-        // this should be num submeshes
-        // BAD
-        1,
     ) catch @panic("OOM");
 
     self.main_graphics_pipeline.allocateTextureDescriptorSet(self.logical_device.handle, &self.main_graphics_texture_descriptor_set);
@@ -565,7 +523,7 @@ fn initMainGraphicsPipeline(self: *Self) void {
         self.logical_device.handle,
         self.allocs.std,
         self.main_graphics_pipeline_data,
-        self.main_graphics_descriptor_sets,
+        self.main_graphics_descriptor_set,
         self.main_graphics_texture_descriptor_set,
     ) catch @panic("OOM");
 }
@@ -780,6 +738,7 @@ fn recordCommandBuffer(
         vki.DepthResource.transition(frame.main_command_buffer, res);
 
     vk.CmdBeginRenderPass(frame.main_command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
+
     defer vk.CmdEndRenderPass(frame.main_command_buffer);
 
     const viewport = vk.Viewport{
@@ -818,26 +777,30 @@ fn recordCommandBuffer(
             self.main_graphics_pipeline.pipeline_layout,
             0, // set index 0
             1,
-            &self.main_graphics_descriptor_sets[idx],
+            &self.main_graphics_descriptor_set,
             0,
             null,
         );
         vk.CmdDraw(
             frame.main_command_buffer,
-            @as(u32, @intCast(range.index_range.range / @sizeOf(u16))), // vertex count = number of indices
-            1, // instance count
-            0, // first vertex
-            @intCast(idx), // firstInstance = DrawId in shader
+            @as(u32, @intCast(range.vertex_range.range)),
+            1, // num instances
+            @as(u32, @intCast(range.vertex_range.offset)),
+            @as(u32, @intCast(idx)), // first instance
         );
-        // no vertex/index buffer binding -- hader reads from storage buffers
-        // firstInstance = submesh_index so gl_BaseInstance == DrawId in shader
+        // vk.CmdBindIndexBuffer(
+        //     frame.main_command_buffer,
+        //     self.main_graphics_pipeline_data.meshes_index_buffer.buffer,
+        //     range.index_range.offset * @sizeOf(u16),
+        //     vk.INDEX_TYPE_UINT16,
+        // );
         // vk.CmdDrawIndexed(
         //     frame.main_command_buffer,
-        //     @intCast(range.index_range.range / @sizeOf(u16)),
+        //     @intCast(range.index_range.range),
         //     1, // instance count
-        //     @intCast(range.index_range.offset / @sizeOf(u16)),
-        //     @intCast(range.vertex_range.offset / @sizeOf(root.mesh.Vertex3D)), // vertexOffset... but unused since shader indexes manually
-        //     @intCast(submesh_index),
+        //     @intCast(range.index_range.offset),
+        //     @intCast(range.vertex_range.offset), // vertexOffset... but unused since shader indexes manually
+        //     @intCast(idx),
         // );
 
         c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
