@@ -277,21 +277,21 @@ fn createGraphicsPipelineData(self: *Self) void {
     const vertices_indices: struct { []const root.mesh.Vertex3D, []const u32 } = .{
         &[_]root.mesh.Vertex3D{
             .{
-                .position = root.math.Vec3.make(-0.5, -0.5, 0.0),
-                .normal = root.math.Vec3.ZERO,
-                .color = root.math.Vec3.make(1.0, 0.0, 0.0),
+                .position = root.math.Vec4.make(-0.5, -0.5, 0.0, 0.0),
+                .normal = root.math.Vec4.ZERO,
+                .color = root.math.Vec4.make(1.0, 0.0, 0.0, 0.0),
                 .uv = root.math.Vec2.make(0.0, 0.0),
             },
             .{
-                .position = root.math.Vec3.make(0.5, -0.5, 0.0),
-                .normal = root.math.Vec3.ZERO,
-                .color = root.math.Vec3.make(0.0, 1.0, 0.0),
+                .position = root.math.Vec4.make(0.5, -0.5, 0.0, 0.0),
+                .normal = root.math.Vec4.ZERO,
+                .color = root.math.Vec4.make(0.0, 1.0, 0.0, 0.0),
                 .uv = root.math.Vec2.make(1.0, 0.0),
             },
             .{
-                .position = root.math.Vec3.make(0.0, 0.5, 0.0),
-                .normal = root.math.Vec3.ZERO,
-                .color = root.math.Vec3.make(0.0, 0.0, 1.0),
+                .position = root.math.Vec4.make(0.0, 0.5, 0.0, 0.0),
+                .normal = root.math.Vec4.ZERO,
+                .color = root.math.Vec4.make(0.0, 0.0, 1.0, 0.0),
                 .uv = root.math.Vec2.make(0.5, 1.0),
             },
         },

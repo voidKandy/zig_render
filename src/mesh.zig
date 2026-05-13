@@ -166,50 +166,47 @@ pub const Mesh2D = struct {
 };
 
 pub const Vertex3D = extern struct {
-    position: Vec3,
-    _p0: f32 = 0,
-    normal: Vec3,
-    _p1: f32 = 0,
-    color: Vec3,
-    _p2: f32 = 0,
+    position: Vec4,
+    normal: Vec4,
+    color: Vec4,
     uv: Vec2,
-    _p3: Vec2 = .ZERO,
+    _: Vec2 = .ZERO,
 
-    pub const vertex_input_description = VertexInputDescription{
-        .bindings = &.{
-            c.vk.VertexInputBindingDescription{
-                .binding = 0,
-                .stride = @sizeOf(Vertex3D),
-                .inputRate = c.vk.VERTEX_INPUT_RATE_VERTEX,
-            },
-        },
-        .attributes = &.{
-            c.vk.VertexInputAttributeDescription{
-                .location = 0,
-                .binding = 0,
-                .format = c.vk.FORMAT_R32G32B32_SFLOAT,
-                .offset = @offsetOf(Vertex3D, "position"),
-            },
-            c.vk.VertexInputAttributeDescription{
-                .location = 1,
-                .binding = 0,
-                .format = c.vk.FORMAT_R32G32B32_SFLOAT,
-                .offset = @offsetOf(Vertex3D, "normal"),
-            },
-            c.vk.VertexInputAttributeDescription{
-                .location = 2,
-                .binding = 0,
-                .format = c.vk.FORMAT_R32G32B32_SFLOAT,
-                .offset = @offsetOf(Vertex3D, "color"),
-            },
-            c.vk.VertexInputAttributeDescription{
-                .location = 3,
-                .binding = 0,
-                .format = c.vk.FORMAT_R32G32_SFLOAT,
-                .offset = @offsetOf(Vertex3D, "uv"),
-            },
-        },
-    };
+    // pub const vertex_input_description = VertexInputDescription{
+    //     .bindings = &.{
+    //         c.vk.VertexInputBindingDescription{
+    //             .binding = 0,
+    //             .stride = @sizeOf(Vertex3D),
+    //             .inputRate = c.vk.VERTEX_INPUT_RATE_VERTEX,
+    //         },
+    //     },
+    //     .attributes = &.{
+    //         c.vk.VertexInputAttributeDescription{
+    //             .location = 0,
+    //             .binding = 0,
+    //             .format = c.vk.FORMAT_R32G32B32_SFLOAT,
+    //             .offset = @offsetOf(Vertex3D, "position"),
+    //         },
+    //         c.vk.VertexInputAttributeDescription{
+    //             .location = 1,
+    //             .binding = 0,
+    //             .format = c.vk.FORMAT_R32G32B32_SFLOAT,
+    //             .offset = @offsetOf(Vertex3D, "normal"),
+    //         },
+    //         c.vk.VertexInputAttributeDescription{
+    //             .location = 2,
+    //             .binding = 0,
+    //             .format = c.vk.FORMAT_R32G32B32_SFLOAT,
+    //             .offset = @offsetOf(Vertex3D, "color"),
+    //         },
+    //         c.vk.VertexInputAttributeDescription{
+    //             .location = 3,
+    //             .binding = 0,
+    //             .format = c.vk.FORMAT_R32G32_SFLOAT,
+    //             .offset = @offsetOf(Vertex3D, "uv"),
+    //         },
+    //     },
+    // };
 };
 
 pub const Mesh3D = struct {

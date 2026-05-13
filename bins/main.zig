@@ -87,27 +87,27 @@ fn initMeshes(
         .{
             &[_]mesh_mod.Vertex3D{
                 .{
-                    .position = Vec3.make(-0.5, -0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
+                    .position = Vec4.make(-0.5, -0.5, 0.0),
+                    .normal = Vec4.ZERO,
+                    .color = Vec4.make(1.0, 0.0, 0.0),
                     .uv = Vec2.make(1.0, 0.0),
                 },
                 .{
-                    .position = Vec3.make(0.5, -0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 1.0, 0.0),
+                    .position = Vec4.make(0.5, -0.5, 0.0),
+                    .normal = Vec4.ZERO,
+                    .color = Vec4.make(0.0, 1.0, 0.0),
                     .uv = Vec2.make(0.0, 0.0),
                 },
                 .{
-                    .position = Vec3.make(0.5, 0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
+                    .position = Vec4.make(0.5, 0.5, 0.0),
+                    .normal = Vec4.ZERO,
+                    .color = Vec4.make(0.0, 0.0, 1.0),
                     .uv = Vec2.make(0.0, 1.0),
                 },
                 .{
-                    .position = Vec3.make(-0.5, 0.5, 0.0),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
+                    .position = Vec4.make(-0.5, 0.5, 0.0),
+                    .normal = Vec4.ZERO,
+                    .color = Vec4.make(1.0, 1.0, 1.0),
                     .uv = Vec2.make(1.0, 1.0),
                 },
             },
@@ -116,27 +116,27 @@ fn initMeshes(
         .{
             &[_]mesh_mod.Vertex3D{
                 .{
-                    .position = Vec3.make(-0.5, -0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 0.0, 0.0),
+                    .position = Vec4.make(-0.5, -0.5, -0.5),
+                    .normal = Vec4.ZERO,
+                    .color = Vec4.make(1.0, 0.0, 0.0),
                     .uv = Vec2.make(0.0, 0.0),
                 },
                 .{
-                    .position = Vec3.make(0.5, -0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 1.0, 0.0),
+                    .position = Vec4.make(0.5, -0.5, -0.5),
+                    .normal = Vec4.ZERO,
+                    .color = Vec4.make(0.0, 1.0, 0.0),
                     .uv = Vec2.make(1.0, 0.0),
                 },
                 .{
-                    .position = Vec3.make(0.5, 0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(0.0, 0.0, 1.0),
+                    .position = Vec4.make(0.5, 0.5, -0.5),
+                    .normal = Vec4.ZERO,
+                    .color = Vec4.make(0.0, 0.0, 1.0),
                     .uv = Vec2.make(1.0, 1.0),
                 },
                 .{
-                    .position = Vec3.make(-0.5, 0.5, -0.5),
-                    .normal = Vec3.ZERO,
-                    .color = Vec3.make(1.0, 1.0, 1.0),
+                    .position = Vec4.make(-0.5, 0.5, -0.5),
+                    .normal = Vec4.ZERO,
+                    .color = Vec4.make(1.0, 1.0, 1.0),
                     .uv = Vec2.make(0.0, 1.0),
                 },
             },
@@ -190,9 +190,9 @@ fn initMeshes(
                 uv.y = 1.0 - uv.y;
 
                 const vertex = mesh_mod.Vertex3D{
-                    .position = Vec3.fromSizedArray(viking_room.vertices[idx.vertex]),
+                    .position = Vec4.fromSizedArray(viking_room.vertices[idx.vertex]),
                     .uv = uv,
-                    .normal = Vec3.fromSizedArray(viking_room.normals[idx.normal]),
+                    .normal = Vec4.fromSizedArray(viking_room.normals[idx.normal]),
                     .color = Vec3.ZERO,
                 };
 
