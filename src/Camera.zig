@@ -89,7 +89,6 @@ pub fn writeSet(set: vk.DescriptorSet, desc: *root.BoundDescriptor) vk.WriteDesc
         .pBufferInfo = &vk.DescriptorBufferInfo{
             .buffer = desc.data.buffer,
             .offset = 0,
-            // there is an opportunity here to do this on the BoundDescriptor struct rather than outside
             .range = @sizeOf(GPUData),
         },
     };

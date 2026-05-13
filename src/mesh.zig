@@ -230,6 +230,65 @@ pub const Mesh3D = struct {
         };
     }
 
+    const Vertex3DHash = struct {
+        pub fn hash(cx: @This(), vertex: Vertex3D) u64 {
+            _ = cx;
+            var h: u64 = 0;
+            for (std.mem.asBytes(&vertex)) |byte| {
+                h = h *% 31 +% byte;
+            }
+            return h;
+        }
+
+        pub fn eql(cx: @This(), a: Vertex3D, b: Vertex3D) bool {
+            _ = cx;
+            return std.mem.eql(u8, std.mem.asBytes(&a), std.mem.asBytes(&b));
+        }
+    };
+
+    pub fn fromObjMesh(a: std.mem.Allocator, obj_mesh: root.obj_loader.Mesh) std.mem.Allocator.Error!Self {
+        var indices = try std.ArrayList(u32).initCapacity(a, obj_mesh.vertices.len);
+        var vertices = try std.ArrayList(Vertex3D).initCapacity(a, obj_mesh.vertices.len);
+        var uniques = std.HashMap(
+            Vertex3D,
+            u32,
+            Vertex3DHash,
+            std.hash_map.default_max_load_percentage,
+        ).init(a);
+        defer uniques.deinit();
+
+        var current_idx_idx: u32 = 0;
+        if (obj_mesh.objects.len != 1) @panic("multiple objects in obj file not implemented!");
+
+        for (obj_mesh.objects[0].indices) |idx| {
+            var uv = Vec2.fromSizedArray(obj_mesh.uvs[idx.uv]);
+            uv.y = 1.0 - uv.y;
+            const pos = obj_mesh.vertices[idx.vertex];
+            const norm = obj_mesh.normals[idx.normal];
+
+            const vertex = Vertex3D{
+                .position = Vec4.make(pos[0], pos[1], pos[2], 0.0),
+                .uv = uv,
+                .normal = Vec4.make(norm[0], norm[1], norm[2], 0.0),
+                .color = Vec4.ZERO,
+            };
+
+            const entry = try uniques.getOrPut(vertex);
+
+            if (!entry.found_existing) {
+                entry.value_ptr.* = current_idx_idx;
+                try vertices.append(a, vertex);
+                current_idx_idx += 1;
+            }
+            try indices.append(a, entry.value_ptr.*);
+        }
+
+        return .{
+            .vertices = try vertices.toOwnedSlice(a),
+            .indices = try indices.toOwnedSlice(a),
+        };
+    }
+
     pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
         allocator.free(self.vertices);
         allocator.free(self.indices);

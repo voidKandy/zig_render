@@ -360,8 +360,7 @@ fn initCommon(
         .sType = vk.STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .polygonMode = vk.POLYGON_MODE_FILL,
         .cullMode = vk.CULL_MODE_BACK_BIT,
-        // .cullMode = vk.CULL_MODE_NONE,
-        .frontFace = vk.FRONT_FACE_CLOCKWISE,
+        .frontFace = vk.FRONT_FACE_COUNTER_CLOCKWISE,
         .lineWidth = 1.0,
     };
 
@@ -386,7 +385,8 @@ fn initCommon(
     };
 
     const blend_attach_state = vk.PipelineColorBlendAttachmentState{
-        .blendEnable = vk.TRUE,
+        .blendEnable = vk.FALSE,
+
         .colorWriteMask = vk.COLOR_COMPONENT_R_BIT |
             vk.COLOR_COMPONENT_G_BIT |
             vk.COLOR_COMPONENT_B_BIT |

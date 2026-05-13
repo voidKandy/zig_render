@@ -132,6 +132,10 @@ pub const Vec4 = extern struct {
         return .{ .x = x, .y = y, .z = z, .w = w };
     }
 
+    pub inline fn fromSizedArray(array: [4]f32) Self {
+        return .{ .x = array[0], .y = array[1], .z = array[2], .w = array[3] };
+    }
+
     pub fn ptr(self: *Vec4) [*c]f32 {
         return @as([*]f32, @ptrCast(self));
     }

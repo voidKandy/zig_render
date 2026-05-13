@@ -1,7 +1,4 @@
-
-
 #version 460
-
 #extension GL_EXT_nonuniform_qualifier : require
 
 layout(location = 0) in vec2 texCoord;
@@ -21,4 +18,5 @@ void main()
 {
     out_Color = TextureBindless2D(MaterialIndex, texCoord);
     // out_Color = vec4(1,0,0,1);
+    // out_Color = vec4(texCoord, 0.0, 1.0);
 }

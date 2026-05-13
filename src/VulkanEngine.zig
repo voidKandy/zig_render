@@ -274,38 +274,38 @@ fn initVulkan(self: *Self) void {
 /// Creaets description of frame models
 /// coupled with PipelineDescripotion used to create main_pipeline
 fn createGraphicsPipelineData(self: *Self) void {
-    const vertices_indices: struct { []const root.mesh.Vertex3D, []const u32 } = .{
-        &[_]root.mesh.Vertex3D{
-            .{
-                .position = root.math.Vec4.make(-0.5, -0.5, 0.0, 0.0),
-                .normal = root.math.Vec4.ZERO,
-                .color = root.math.Vec4.make(1.0, 0.0, 0.0, 0.0),
-                .uv = root.math.Vec2.make(0.0, 0.0),
-            },
-            .{
-                .position = root.math.Vec4.make(0.5, -0.5, 0.0, 0.0),
-                .normal = root.math.Vec4.ZERO,
-                .color = root.math.Vec4.make(0.0, 1.0, 0.0, 0.0),
-                .uv = root.math.Vec2.make(1.0, 0.0),
-            },
-            .{
-                .position = root.math.Vec4.make(0.0, 0.5, 0.0, 0.0),
-                .normal = root.math.Vec4.ZERO,
-                .color = root.math.Vec4.make(0.0, 0.0, 1.0, 0.0),
-                .uv = root.math.Vec2.make(0.5, 1.0),
-            },
-        },
-        &[_]u32{ 0, 1, 2 },
-    };
+    // const vertices_indices: struct { []const root.mesh.Vertex3D, []const u32 } = .{
+    //     &[_]root.mesh.Vertex3D{
+    //         .{
+    //             .position = root.math.Vec4.make(-0.5, -0.5, 0.0, 0.0),
+    //             .normal = root.math.Vec4.ZERO,
+    //             .color = root.math.Vec4.make(1.0, 0.0, 0.0, 0.0),
+    //             .uv = root.math.Vec2.make(0.0, 0.0),
+    //         },
+    //         .{
+    //             .position = root.math.Vec4.make(0.5, -0.5, 0.0, 0.0),
+    //             .normal = root.math.Vec4.ZERO,
+    //             .color = root.math.Vec4.make(0.0, 1.0, 0.0, 0.0),
+    //             .uv = root.math.Vec2.make(1.0, 0.0),
+    //         },
+    //         .{
+    //             .position = root.math.Vec4.make(0.0, 0.5, 0.0, 0.0),
+    //             .normal = root.math.Vec4.ZERO,
+    //             .color = root.math.Vec4.make(0.0, 0.0, 1.0, 0.0),
+    //             .uv = root.math.Vec2.make(0.5, 1.0),
+    //         },
+    //     },
+    //     &[_]u32{ 0, 1, 2 },
+    // };
 
-    log.warn(
-        \\ ALIGN OF VERTEX 3D: {}
-        \\ SIZE OF VERTEX 3D: {}
-    , .{ @alignOf(root.mesh.Vertex3D), @sizeOf(root.mesh.Vertex3D) });
+    // const mesh = root.mesh.Mesh3D.init(self.allocs.std, vertices_indices.@"0", vertices_indices.@"1") catch @panic("OOM");
 
-    const mesh = root.mesh.Mesh3D.init(self.allocs.std, vertices_indices.@"0", vertices_indices.@"1") catch @panic("OOM");
+    var viking_room = root.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read lost_empire.obj");
+    defer viking_room.deinit();
+    const viking_room_mesh = root.mesh.Mesh3D.fromObjMesh(self.allocs.std, viking_room) catch @panic("OOM");
+
     const meshes = self.allocs.std.alloc(root.mesh.Mesh3D, 1) catch @panic("OOM");
-    meshes[0] = mesh;
+    meshes[0] = viking_room_mesh;
 
     var viking_room_img = root.textures.loadImageFromFile(
         self.allocs.vma,
@@ -383,20 +383,24 @@ fn createGraphicsPipelineData(self: *Self) void {
     checkVk(c.vma.MapMemory(self.allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
 
     const aligned_camera: *root.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
+
+    const aspect =
+        @as(f32, @floatFromInt(self.swapchain.extent.width)) /
+        @as(f32, @floatFromInt(self.swapchain.extent.height));
+
+    const near_plane: f32 = 0.1;
+    const far_plane: f32 = 100.0;
+    const fov: f32 = 45.0;
+    const eye = root.math.Vec3.make(2.0, 2.0, 2.0);
+
     aligned_camera.* = root.Camera.GPUData{
-        .model = root.math.Mat4.IDENTITY, // no world transform
-        .view = root.math.Mat4.lookAt(
-            root.math.Vec3.make(0, 0, -2), // eye: 2 units back on Z
-            root.math.Vec3.make(0, 0, 0), // target: origin
-            root.math.Vec3.make(0, 1, 0), // up
-        ),
-        .proj = root.math.Mat4.perspective(
-            std.math.degreesToRadians(60.0),
-            @as(f32, @floatFromInt(self.swapchain.extent.width)) / @as(f32, @floatFromInt(self.swapchain.extent.height)),
-            0.1,
-            100.0,
-        ),
+        .model = root.math.Mat4.IDENTITY,
+        .view = root.math.Mat4.lookAt(eye, root.math.Vec3.ZERO, root.math.Vec3.UP),
+        .proj = root.math.Mat4.perspective(fov, aspect, near_plane, far_plane),
     };
+
+    // vulkan y flip
+    aligned_camera.*.proj.j.y *= -1;
 
     self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData{
         .meshes = meshes,
