@@ -262,6 +262,7 @@ pub const vk = struct {
     pub const CommandPoolCreateInfo = c.VkCommandPoolCreateInfo;
     pub const CommandBufferAllocateInfo = c.VkCommandBufferAllocateInfo;
     pub const DebugUtilsMessengerEXT = c.VkDebugUtilsMessengerEXT;
+
     pub const DependencyFlags = c.VkDependencyFlags;
     pub const DescriptorPool = c.VkDescriptorPool;
     pub const DescriptorType = c.VkDescriptorType;
@@ -376,7 +377,6 @@ pub const vk = struct {
     pub const RenderingAttachmentInfo = c.VkRenderingAttachmentInfo;
     pub const SubmitInfo = c.VkSubmitInfo;
     pub const BufferCopy = c.VkBufferCopy;
-    pub const ResetCommandPool = c.vkResetCommandPool;
     pub const SamplerCreateInfo = c.VkSamplerCreateInfo;
     pub const Sampler = c.VkSampler;
     pub const DescriptorImageInfo = c.VkDescriptorImageInfo;
@@ -424,6 +424,9 @@ pub const vk = struct {
 
     pub const MemoryRequirements = c.VkMemoryRequirements;
     pub const MemoryAllocateInfo = c.VkMemoryAllocateInfo;
+
+    pub const ValidationFeaturesEXT = c.VkValidationFeaturesEXT;
+    pub const ValidationFeatureEnableEXT = c.VkValidationFeatureEnableEXT;
 
     pub const MAKE_VERSION = c.VK_MAKE_VERSION;
     pub const TRUE = c.VK_TRUE;
@@ -674,6 +677,12 @@ pub const vk = struct {
 
     pub const STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
     pub const STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    pub const VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT = c.VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT;
+    pub const STRUCTURE_TYPE_VALIDATION_FEATURES_EXT = c.VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    pub const STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT = c.VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
+    pub const DEBUG_REPORT_INFORMATION_BIT_EXT = c.VK_DEBUG_REPORT_INFORMATION_BIT_EXT;
+    pub const DEBUG_REPORT_ERROR_BIT_EXT = c.VK_DEBUG_REPORT_ERROR_BIT_EXT;
+    pub const DEBUG_REPORT_WARNING_BIT_EXT = c.VK_DEBUG_REPORT_WARNING_BIT_EXT;
 
     pub const INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR = c.VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
     pub const KHR_PORTABILITY_SUBSET_EXTENSION_NAME = c.VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
@@ -795,6 +804,7 @@ pub const vk = struct {
     pub const UnmapMemory = c.vkUnmapMemory;
 
     pub const GetBufferMemoryRequirements = c.vkGetBufferMemoryRequirements;
+    pub const ResetCommandPool = c.vkResetCommandPool;
 };
 
 pub const imgui = struct {

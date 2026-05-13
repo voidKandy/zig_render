@@ -117,9 +117,10 @@ pub fn deinit(self: *Self) void {
     vk.DestroyDevice(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed logical device", .{});
 
+    // Maybe instance should have it's own deinit function?
     if (self.instance.debug_messenger != null) {
-        const destroy_fn = self.instance.getDestroyDebugUtilsMessengerFn() orelse @panic("Debug messenger present but there is no destroy function?")();
-        destroy_fn(self.instance.handle, self.instance.debug_messenger, self.alloc_cbs);
+        const destroyFn = self.instance.getDestroyDebugUtilsMessengerFn() orelse @panic("Debug messenger present but there is no destroy function?")();
+        destroyFn(self.instance.handle, self.instance.debug_messenger, self.alloc_cbs);
         log.debug("destroyed debug messenger", .{});
     }
 
@@ -273,7 +274,7 @@ fn initVulkan(self: *Self) void {
 /// Creaets description of frame models
 /// coupled with PipelineDescripotion used to create main_pipeline
 fn createGraphicsPipelineData(self: *Self) void {
-    const vertices_indices: struct { []const root.mesh.Vertex3D, []const u16 } = .{
+    const vertices_indices: struct { []const root.mesh.Vertex3D, []const u32 } = .{
         &[_]root.mesh.Vertex3D{
             .{
                 .position = root.math.Vec3.make(-0.5, -0.5, 0.0),
@@ -294,8 +295,13 @@ fn createGraphicsPipelineData(self: *Self) void {
                 .uv = root.math.Vec2.make(0.5, 1.0),
             },
         },
-        &[_]u16{ 0, 1, 2 },
+        &[_]u32{ 0, 1, 2 },
     };
+
+    log.warn(
+        \\ ALIGN OF VERTEX 3D: {}
+        \\ SIZE OF VERTEX 3D: {}
+    , .{ @alignOf(root.mesh.Vertex3D), @sizeOf(root.mesh.Vertex3D) });
 
     const mesh = root.mesh.Mesh3D.init(self.allocs.std, vertices_indices.@"0", vertices_indices.@"1") catch @panic("OOM");
     const meshes = self.allocs.std.alloc(root.mesh.Mesh3D, 1) catch @panic("OOM");
@@ -366,7 +372,7 @@ fn createGraphicsPipelineData(self: *Self) void {
 
     const camera_alloc = vma_usage.AllocatedBuffer.create(
         self.allocs.vma,
-        @sizeOf(root.Camera),
+        @sizeOf(root.Camera.GPUData),
         vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         c.vma.MEMORY_USAGE_CPU_TO_GPU,
         0,
@@ -376,8 +382,21 @@ fn createGraphicsPipelineData(self: *Self) void {
     };
     checkVk(c.vma.MapMemory(self.allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
 
-    const aligned_camera: *root.Camera = @ptrCast(@alignCast(mapped_camera.mapped));
-    aligned_camera.* = root.Camera{};
+    const aligned_camera: *root.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
+    aligned_camera.* = root.Camera.GPUData{
+        .model = root.math.Mat4.IDENTITY, // no world transform
+        .view = root.math.Mat4.lookAt(
+            root.math.Vec3.make(0, 0, -2), // eye: 2 units back on Z
+            root.math.Vec3.make(0, 0, 0), // target: origin
+            root.math.Vec3.make(0, 1, 0), // up
+        ),
+        .proj = root.math.Mat4.perspective(
+            std.math.degreesToRadians(60.0),
+            @as(f32, @floatFromInt(self.swapchain.extent.width)) / @as(f32, @floatFromInt(self.swapchain.extent.height)),
+            0.1,
+            100.0,
+        ),
+    };
 
     self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData{
         .meshes = meshes,
@@ -783,9 +802,10 @@ fn recordCommandBuffer(
         );
         vk.CmdDraw(
             frame.main_command_buffer,
-            @as(u32, @intCast(range.vertex_range.range)),
+            @as(u32, @intCast(range.index_range.range)),
             1, // num instances
-            @as(u32, @intCast(range.vertex_range.offset)),
+            0,
+            // @as(u32, @intCast(range.vertex_range.offset)),
             @as(u32, @intCast(idx)), // first instance
         );
         // vk.CmdBindIndexBuffer(

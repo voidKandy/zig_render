@@ -18,6 +18,9 @@
 
 
 #version 460
+#extension GL_EXT_debug_printf : enable
+
+
 
 struct VertexData
 {
@@ -26,20 +29,17 @@ struct VertexData
     vec3 normal;
     vec3 color;
     vec2 uv;
-    // float pos_x, pos_y, pos_z;
-    // float u0, v0;
-    // float u1, v1;
-    // float normal_x, normal_y, normal_z;
-    // float tangent_x, tangent_y, tangent_z;
-    // float bitangent_x, bitangent_y, bitangent_z;
-    // float color_r, color_g, color_b, color_a;
 };
 
 layout (std430, set = 0, binding = 0) readonly buffer Vertices { VertexData v[]; } in_Vertices;
 
 layout (set = 0, binding = 1) readonly buffer Indices { int i[]; } in_Indices;
 
-layout (set = 0, binding = 2) readonly uniform UniformBuffer { mat4 WVP; } ubo;
+layout (set = 0, binding = 2) readonly uniform CameraData {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} camera_Ubo;
 
 struct MetaData {
     uint MaterialIndex;
@@ -55,6 +55,7 @@ layout(location = 1) flat out uint MaterialIndex;
 
 void main()
 {
+
     uint meshIdx = uint(gl_InstanceIndex);
 
     MetaData md = MetaBuf.metas[meshIdx];
@@ -65,8 +66,22 @@ void main()
 
     VertexData vtx = in_Vertices.v[Index];
 
-
-    gl_Position = ubo.WVP * vec4(vtx.position, 1.0);
+    debugPrintfEXT(
+        "mesh=%u vert=%u idx=%u md(v=%u i=%u mat=%u) pos=(%f,%f,%f)\n",
+        meshIdx,
+        gl_VertexIndex,
+        uint(Index),
+        md.VertexOffset,
+        md.IndexOffset,
+        md.MaterialIndex,
+        vtx.position.x,
+        vtx.position.y,
+        vtx.position.z
+    );
+    // gl_Position = vec4(vtx.position.xy, 0.0, 1.0);
+    gl_Position = camera_Ubo.model * vec4(vtx.position.xyz, 1.0);
+    // gl_Position = camera_Ubo.view * vec4(vtx.position.xyz, 1.0);
+    // gl_Position = camera_Ubo.proj * camera_Ubo.view * camera_Ubo.model * vec4(vtx.position.xyz, 1.0);
 
     texCoord = vec2(vtx.uv.x, vtx.uv.y);
 }

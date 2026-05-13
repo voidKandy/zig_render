@@ -83,7 +83,7 @@ fn initMeshes(
     /// for now all meshes share a material
     material: ResourceManager.Material,
 ) []ResourceManager.Resource {
-    const vertices_indices = [_]struct { []const mesh_mod.Vertex3D, []const u16 }{
+    const vertices_indices = [_]struct { []const mesh_mod.Vertex3D, []const u32 }{
         .{
             &[_]mesh_mod.Vertex3D{
                 .{
@@ -111,7 +111,7 @@ fn initMeshes(
                     .uv = Vec2.make(1.0, 1.0),
                 },
             },
-            &[_]u16{ 0, 1, 2, 2, 3, 0 },
+            &[_]u32{ 0, 1, 2, 2, 3, 0 },
         },
         .{
             &[_]mesh_mod.Vertex3D{
@@ -140,7 +140,7 @@ fn initMeshes(
                     .uv = Vec2.make(0.0, 1.0),
                 },
             },
-            &[_]u16{ 0, 1, 2, 2, 3, 0 },
+            &[_]u32{ 0, 1, 2, 2, 3, 0 },
         },
     };
 
@@ -174,8 +174,8 @@ fn initMeshes(
         defer viking_room.deinit();
 
         // var uniques = std.AutoHashMap(u64, u16).init(allocs.std);
-        var uniques = std.HashMap(mesh_mod.Vertex3D, u16, Vertex3DHash, std.hash_map.default_max_load_percentage).init(allocs.std);
-        var indices = std.ArrayList(u16).initCapacity(allocs.std, viking_room.vertices.len) catch @panic("OOM");
+        var uniques = std.HashMap(mesh_mod.Vertex3D, u32, Vertex3DHash, std.hash_map.default_max_load_percentage).init(allocs.std);
+        var indices = std.ArrayList(u32).initCapacity(allocs.std, viking_room.vertices.len) catch @panic("OOM");
         var vertices = std.ArrayList(mesh_mod.Vertex3D).initCapacity(allocs.std, viking_room.vertices.len) catch @panic("OOM");
         defer {
             indices.deinit(allocs.std);
@@ -183,7 +183,7 @@ fn initMeshes(
             uniques.deinit();
         }
 
-        var current_index: u16 = 0;
+        var current_index: u32 = 0;
         for (viking_room.objects) |object| {
             for (object.indices) |idx| {
                 var uv = Vec2.fromSizedArray(viking_room.uvs[idx.uv]);

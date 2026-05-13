@@ -47,12 +47,12 @@ pub const AllocatedData = struct {
         a: std.mem.Allocator,
     ) std.mem.Allocator.Error!struct {
         vertices: []core.mesh.Vertex3D,
-        indices: []u16,
+        indices: []u32,
         ranges: []MeshRanges,
     } {
         var all_ranges = try a.alloc(MeshRanges, self.meshes.len);
         var vertices = try std.ArrayList(core.mesh.Vertex3D).initCapacity(a, 64);
-        var indices = try std.ArrayList(u16).initCapacity(a, 64);
+        var indices = try std.ArrayList(u32).initCapacity(a, 64);
 
         var total_verts: usize = 0;
         var total_idcs: usize = 0;
@@ -69,10 +69,6 @@ pub const AllocatedData = struct {
             };
             try vertices.appendSlice(a, m.vertices);
             try indices.appendSlice(a, m.indices);
-            // rebase indices
-            // this needs to be done because the index buffer is shared across all meshes
-            // for (m.indices) |idx|
-            //     try indices.append(a, @as(u16, @intCast(idx + total_verts)));
 
             total_verts += m.vertices.len;
             total_idcs += m.indices.len;
@@ -101,7 +97,7 @@ pub const AllocatedData = struct {
 
         const vert_alloc_size, const idx_alloc_size = .{
             meshes_concat.vertices.len * @sizeOf(core.mesh.Vertex3D),
-            meshes_concat.indices.len * @sizeOf(u16),
+            meshes_concat.indices.len * @sizeOf(u32),
         };
 
         const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
@@ -145,7 +141,7 @@ pub const AllocatedData = struct {
             checkVk(vma.MapMemory(allocs.vma, idx_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
             defer vma.UnmapMemory(allocs.vma, idx_staging_buffer.allocation);
 
-            const idx_aligned_data: [*]u16 = @ptrCast(@alignCast(data));
+            const idx_aligned_data: [*]u32 = @ptrCast(@alignCast(data));
             @memcpy(idx_aligned_data, meshes_concat.indices);
         }
 
@@ -364,6 +360,7 @@ fn initCommon(
         .sType = vk.STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .polygonMode = vk.POLYGON_MODE_FILL,
         .cullMode = vk.CULL_MODE_BACK_BIT,
+        // .cullMode = vk.CULL_MODE_NONE,
         .frontFace = vk.FRONT_FACE_CLOCKWISE,
         .lineWidth = 1.0,
     };
@@ -403,16 +400,6 @@ fn initCommon(
         .attachmentCount = 1,
         .pAttachments = &blend_attach_state,
     };
-
-    // in the tutorial but we aint doin dynamic rendering
-    // const rendering_ci = vk.PipelineRenderingCreateInfo{
-    //     .sType = vk.STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-    //     .viewMask = 0,
-    //     .colorAttachmentCount = 1,
-    //     .pColorAttachments = &color_format,
-    //     .depthAttachmentFormat = &depth_format,
-    //     .stencilAttachmentFormat = vk.FORMAT_UNDEFINED,
-    // };
 
     const set_layouts = [_]vk.DescriptorSetLayout{
         self.descriptor_set_layout,

@@ -273,7 +273,7 @@ pub const Instance = struct {
             try checkVk(vk.EnumerateInstanceVersion(@ptrCast(&api_requested)));
         }
 
-        var enable_validation = opts.debug;
+        var debug = opts.debug;
 
         var arena_state = std.heap.ArenaAllocator.init(alloc);
         defer arena_state.deinit();
@@ -282,25 +282,16 @@ pub const Instance = struct {
         // Get supported layers and extensions
         var layer_count: u32 = undefined;
         try checkVk(vk.EnumerateInstanceLayerProperties(&layer_count, null));
-        const layer_props = try arena.alloc(vk.LayerProperties, layer_count);
-        try checkVk(vk.EnumerateInstanceLayerProperties(&layer_count, layer_props.ptr));
 
         var extension_count: u32 = undefined;
         try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, null));
         const extension_props = try arena.alloc(vk.ExtensionProperties, extension_count);
         try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, extension_props.ptr));
 
-        // Check if the validation layer is supported
         var layers = std.ArrayListUnmanaged([*c]const u8){};
-        if (enable_validation) {
-            enable_validation = blk: for (layer_props) |layer_prop| {
-                const layer_name: [*c]const u8 = @ptrCast(layer_prop.layerName[0..]);
-                const validation_layer_name: [*c]const u8 = "VK_LAYER_KHRONOS_validation";
-                if (std.mem.eql(u8, std.mem.span(validation_layer_name), std.mem.span(layer_name))) {
-                    try layers.append(arena, validation_layer_name);
-                    break :blk true;
-                }
-            } else false;
+        if (debug) {
+            const validation_layer_name: [*c]const u8 = "VK_LAYER_KHRONOS_validation";
+            try layers.append(arena, validation_layer_name);
         }
 
         // Check if the required extensions are supported
@@ -337,10 +328,10 @@ pub const Instance = struct {
         // try extensions.append(arena, vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 
         // If we need validation, also add the debug utils extension
-        if (enable_validation and ExtensionFinder.find("VK_EXT_debug_utils", extension_props)) {
+        if (debug and ExtensionFinder.find("VK_EXT_debug_utils", extension_props)) {
             try extensions.append(arena, "VK_EXT_debug_utils");
         } else {
-            enable_validation = false;
+            debug = false;
         }
 
         const app_info = vk.ApplicationInfo{
@@ -358,8 +349,16 @@ pub const Instance = struct {
                 \\ {s}
             , .{i});
         }
+        const validation_features = vk.ValidationFeaturesEXT{
+            .sType = vk.STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
+            .enabledValidationFeatureCount = 1,
+            .pEnabledValidationFeatures = &[_]vk.ValidationFeatureEnableEXT{
+                vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+            },
+        };
 
-        const instance_info = std.mem.zeroInit(vk.InstanceCreateInfo, .{
+        const instance_info = vk.InstanceCreateInfo{
+            .pNext = if (debug) &validation_features else null,
             .flags = vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
             .sType = vk.STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             .pApplicationInfo = &app_info,
@@ -367,19 +366,21 @@ pub const Instance = struct {
             .ppEnabledLayerNames = layers.items.ptr,
             .enabledExtensionCount = @as(u32, @intCast(extensions.items.len)),
             .ppEnabledExtensionNames = extensions.items.ptr,
-        });
+        };
 
         var instance: vk.Instance = undefined;
         try checkVk(vk.CreateInstance(&instance_info, opts.alloc_cb, &instance));
         log.info("Created vulkan instance.", .{});
 
-        // Create the debug messenger if needed
-        const debug_messenger = if (enable_validation)
-            try createDebugCallback(instance, opts)
+        const debug_messenger = if (debug)
+            try createDebugMessenger(instance, opts)
         else
             null;
 
-        return .{ .handle = instance, .debug_messenger = debug_messenger };
+        return .{
+            .handle = instance,
+            .debug_messenger = debug_messenger,
+        };
     }
 
     pub fn getDestroyDebugUtilsMessengerFn(self: @This()) vk.PFN_DestroyDebugUtilsMessengerEXT {
@@ -395,26 +396,27 @@ pub const Instance = struct {
         @panic("SDL_Vulkan_GetVkGetInstanceProcAddr returned null");
     }
 
-    fn createDebugCallback(instance: vk.Instance, opts: Options) !vk.DebugUtilsMessengerEXT {
-        const create_fn_opt = getVulkanInstanceFunct(vk.PFN_CreateDebugUtilsMessengerEXT, instance, "vkCreateDebugUtilsMessengerEXT");
-        if (create_fn_opt) |create_fn| {
-            const create_info = std.mem.zeroInit(vk.DebugUtilsMessengerCreateInfoEXT, .{
-                .sType = vk.STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-                .messageSeverity = vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-                    vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                    vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-                .messageType = vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                    vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                    vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-                .pfnUserCallback = opts.debug_callback orelse defaultDebugCallback,
-                .pUserData = null,
-            });
-            var debug_messenger: vk.DebugUtilsMessengerEXT = undefined;
-            try checkVk(create_fn(instance, &create_info, opts.alloc_cb, &debug_messenger));
-            log.info("Created vulkan debug messenger.", .{});
-            return debug_messenger;
-        }
-        return null;
+    fn createDebugMessenger(instance: vk.Instance, opts: Options) !vk.DebugUtilsMessengerEXT {
+        const createFn = getVulkanInstanceFunct(
+            vk.PFN_CreateDebugUtilsMessengerEXT,
+            instance,
+            "vkCreateDebugUtilsMessengerEXT",
+        ) orelse @panic("could not get create debug utils messenger ext function");
+        const ci = vk.DebugUtilsMessengerCreateInfoEXT{
+            .sType = vk.STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+            .messageSeverity = vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            .messageType = vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+            .pfnUserCallback = opts.debug_callback orelse defaultDebugCallback,
+            .pUserData = null,
+        };
+        var debug_messenger: vk.DebugUtilsMessengerEXT = undefined;
+        try checkVk(createFn(instance, &ci, opts.alloc_cb, &debug_messenger));
+        log.info("Created vulkan debug messenger.", .{});
+        return debug_messenger;
     }
 
     fn defaultDebugCallback(severity: vk.DebugUtilsMessageSeverityFlagBitsEXT, msg_type: vk.DebugUtilsMessageTypeFlagsEXT, callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT, user_data: ?*anyopaque) callconv(.c) vk.Bool32 {

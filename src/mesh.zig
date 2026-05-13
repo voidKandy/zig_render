@@ -58,7 +58,7 @@ pub const Vertex2D = struct {
 pub const Mesh2D = struct {
     vertices: []Vertex2D,
     vertex_buffer: AllocatedBuffer = undefined,
-    indices: []u16,
+    indices: []u32,
     index_buffer: AllocatedBuffer = undefined,
 
     pub fn upload(
@@ -69,7 +69,7 @@ pub const Mesh2D = struct {
     ) void {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex2D),
-            self.indices.len * @sizeOf(u16),
+            self.indices.len * @sizeOf(u32),
         };
 
         const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
@@ -112,7 +112,7 @@ pub const Mesh2D = struct {
             checkVk(c.vma.MapMemory(vma_a, idx_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
             defer c.vma.UnmapMemory(vma_a, idx_staging_buffer.allocation);
 
-            const idx_aligned_data: [*]u16 = @ptrCast(@alignCast(data));
+            const idx_aligned_data: [*]u32 = @ptrCast(@alignCast(data));
             @memcpy(idx_aligned_data, self.indices);
         }
 
@@ -167,9 +167,13 @@ pub const Mesh2D = struct {
 
 pub const Vertex3D = extern struct {
     position: Vec3,
+    _p0: f32 = 0,
     normal: Vec3,
+    _p1: f32 = 0,
     color: Vec3,
+    _p2: f32 = 0,
     uv: Vec2,
+    _p3: Vec2 = .ZERO,
 
     pub const vertex_input_description = VertexInputDescription{
         .bindings = &.{
@@ -210,7 +214,7 @@ pub const Vertex3D = extern struct {
 
 pub const Mesh3D = struct {
     vertices: []Vertex3D,
-    indices: []u16,
+    indices: []u32,
 
     pub const Buffers = struct {
         vertex: vma_usage.AllocatedBuffer = undefined,
@@ -222,10 +226,10 @@ pub const Mesh3D = struct {
     // index_buffer: AllocatedBuffer = undefined,
     const Self = @This();
 
-    pub fn init(a: std.mem.Allocator, vertices: []const Vertex3D, indices: []const u16) std.mem.Allocator.Error!Self {
+    pub fn init(a: std.mem.Allocator, vertices: []const Vertex3D, indices: []const u32) std.mem.Allocator.Error!Self {
         return .{
             .vertices = try a.dupe(Vertex3D, vertices),
-            .indices = try a.dupe(u16, indices),
+            .indices = try a.dupe(u32, indices),
         };
     }
 
@@ -237,7 +241,7 @@ pub const Mesh3D = struct {
     pub fn createBuffers(self: *Self, vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.LogicalDevice) Buffers {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex3D),
-            self.indices.len * @sizeOf(u16),
+            self.indices.len * @sizeOf(u32),
         };
 
         const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
@@ -281,7 +285,7 @@ pub const Mesh3D = struct {
             checkVk(c.vma.MapMemory(vma_a, idx_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
             defer c.vma.UnmapMemory(vma_a, idx_staging_buffer.allocation);
 
-            const idx_aligned_data: [*]u16 = @ptrCast(@alignCast(data));
+            const idx_aligned_data: [*]u32 = @ptrCast(@alignCast(data));
             @memcpy(idx_aligned_data, self.indices);
         }
 
