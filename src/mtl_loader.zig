@@ -37,6 +37,7 @@ const ParseContext = struct {
 };
 
 pub const MtlFile = struct {
+    name: []u8,
     allocator: Allocator,
     materials: []Material,
 
@@ -46,6 +47,7 @@ pub const MtlFile = struct {
             self.allocator.free(mat.map_Kd);
         }
         self.allocator.free(self.materials);
+        self.allocator.free(self.name);
     }
 
     pub fn find(self: *MtlFile, name: []const u8) ?Material {
@@ -66,6 +68,8 @@ pub fn parseFile(a: Allocator, filepath: []const u8) !MtlFile {
     const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
     defer file.close();
 
+    const last_slash_idx = if (std.mem.indexOfScalar(u8, filepath, '/')) |i| i + 1 else 0;
+    const name = try a.dupe(u8, filepath[last_slash_idx..]);
     const file_size = try file.getEndPos();
 
     var arena_state = std.heap.ArenaAllocator.init(a);
@@ -81,20 +85,25 @@ pub fn parseFile(a: Allocator, filepath: []const u8) !MtlFile {
     try flushMaterial(&ctx);
 
     return MtlFile{
+        .name = name,
         .allocator = a,
         .materials = try ctx.materials.toOwnedSlice(a),
     };
 }
 
-pub fn parseString(a: Allocator, content: []const u8, filename: []const u8) Allocator.Error!MtlFile {
+fn parseString(a: Allocator, content: []const u8, filename: []const u8) Allocator.Error!MtlFile {
     var arena_state = std.heap.ArenaAllocator.init(a);
     defer arena_state.deinit();
 
     var ctx = try ParseContext.init(a, arena_state.allocator(), filename);
+
+    const name = try a.dupe(u8, filename);
+
     try parseContent(&ctx, content);
     try flushMaterial(&ctx);
 
     return MtlFile{
+        .name = name,
         .allocator = a,
         .materials = try ctx.materials.toOwnedSlice(a),
     };

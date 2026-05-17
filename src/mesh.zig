@@ -246,7 +246,7 @@ pub const Mesh3D = struct {
         }
     };
 
-    pub fn fromObjMesh(a: std.mem.Allocator, obj_mesh: root.obj_loader.Mesh) std.mem.Allocator.Error!Self {
+    pub fn fromObjFile(a: std.mem.Allocator, obj_mesh: root.obj_loader.ObjFile) std.mem.Allocator.Error!Self {
         var indices = try std.ArrayList(u32).initCapacity(a, obj_mesh.vertices.len);
         var vertices = try std.ArrayList(Vertex3D).initCapacity(a, obj_mesh.vertices.len);
         var uniques = std.HashMap(

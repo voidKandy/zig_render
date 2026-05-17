@@ -40,6 +40,7 @@ instance: vki.Instance = undefined,
 
 physical_device: vki.PhysicalDevice = undefined,
 logical_device: vki.LogicalDevice = undefined,
+upload_context: vki.UploadContext = .{},
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
@@ -59,8 +60,6 @@ main_render_pass: vk.RenderPass = undefined,
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
-
-upload_context: vki.UploadContext = .{},
 
 pub fn init(
     a: std.mem.Allocator,
@@ -274,141 +273,46 @@ fn initVulkan(self: *Self) void {
 /// Creaets description of frame models
 /// coupled with PipelineDescripotion used to create main_pipeline
 fn createGraphicsPipelineData(self: *Self) void {
-    // const vertices_indices: struct { []const root.mesh.Vertex3D, []const u32 } = .{
-    //     &[_]root.mesh.Vertex3D{
-    //         .{
-    //             .position = root.math.Vec4.make(-0.5, -0.5, 0.0, 0.0),
-    //             .normal = root.math.Vec4.ZERO,
-    //             .color = root.math.Vec4.make(1.0, 0.0, 0.0, 0.0),
-    //             .uv = root.math.Vec2.make(0.0, 0.0),
-    //         },
-    //         .{
-    //             .position = root.math.Vec4.make(0.5, -0.5, 0.0, 0.0),
-    //             .normal = root.math.Vec4.ZERO,
-    //             .color = root.math.Vec4.make(0.0, 1.0, 0.0, 0.0),
-    //             .uv = root.math.Vec2.make(1.0, 0.0),
-    //         },
-    //         .{
-    //             .position = root.math.Vec4.make(0.0, 0.5, 0.0, 0.0),
-    //             .normal = root.math.Vec4.ZERO,
-    //             .color = root.math.Vec4.make(0.0, 0.0, 1.0, 0.0),
-    //             .uv = root.math.Vec2.make(0.5, 1.0),
-    //         },
-    //     },
-    //     &[_]u32{ 0, 1, 2 },
-    // };
-
-    // const mesh = root.mesh.Mesh3D.init(self.allocs.std, vertices_indices.@"0", vertices_indices.@"1") catch @panic("OOM");
-
-    var viking_room = root.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read lost_empire.obj");
-    defer viking_room.deinit();
-    const viking_room_mesh = root.mesh.Mesh3D.fromObjMesh(self.allocs.std, viking_room) catch @panic("OOM");
-
-    const meshes = self.allocs.std.alloc(root.mesh.Mesh3D, 1) catch @panic("OOM");
-    meshes[0] = viking_room_mesh;
-
-    var viking_room_img = root.textures.loadImageFromFile(
-        self.allocs.vma,
-        &self.upload_context,
-        self.logical_device,
-        "assets/viking_room.png",
-    ) catch @panic("Failed to load image");
-
-    const image_view_ci = vk.ImageViewCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .viewType = vk.IMAGE_VIEW_TYPE_2D,
-        .image = viking_room_img.image,
-        .format = vk.FORMAT_R8G8B8A8_SRGB,
-        .components = .{
-            .r = vk.COMPONENT_SWIZZLE_IDENTITY,
-            .g = vk.COMPONENT_SWIZZLE_IDENTITY,
-            .b = vk.COMPONENT_SWIZZLE_IDENTITY,
-            .a = vk.COMPONENT_SWIZZLE_IDENTITY,
-        },
-        .subresourceRange = .{
-            .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    };
-    checkVk(vk.CreateImageView(self.logical_device.handle, &image_view_ci, self.alloc_cbs, &viking_room_img.view)) catch @panic("Failed to create image view");
-
-    var sampler: vk.Sampler = undefined;
-    const ci = vk.SamplerCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter = vk.FILTER_LINEAR,
-        .minFilter = vk.FILTER_LINEAR,
-        .addressModeU = vk.SAMPLER_ADDRESS_MODE_REPEAT,
-        .addressModeV = vk.SAMPLER_ADDRESS_MODE_REPEAT,
-        .addressModeW = vk.SAMPLER_ADDRESS_MODE_REPEAT,
-        .anisotropyEnable = vk.TRUE,
-        .maxAnisotropy = self.physical_device.properties.limits.maxSamplerAnisotropy,
-        .borderColor = vk.BORDER_COLOR_INT_OPAQUE_BLACK,
-        .unnormalizedCoordinates = vk.FALSE,
-        .compareEnable = vk.FALSE,
-        .compareOp = vk.COMPARE_OP_ALWAYS,
-        .mipmapMode = vk.SAMPLER_MIPMAP_MODE_LINEAR,
-        .mipLodBias = 0.0,
-        .minLod = 0.0,
-        .maxLod = 0.0,
+    var materials_file = root.mtl_loader.parseFile(self.allocs.std, "assets/globals.mtl") catch @panic("failed to load materials file");
+    defer materials_file.deinit();
+    const objects = &[_]root.obj_loader.ObjFile{
+        root.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
     };
 
-    checkVk(vk.CreateSampler(self.logical_device.handle, &ci, null, &sampler)) catch @panic("failed to create sampler");
-
-    const materials = self.allocs.std.alloc(root.textures.Texture, 1) catch @panic("OOM");
-    materials[0] = .{
-        .image_alloc = viking_room_img,
-        .sampler = sampler,
-    };
-
-    // aligned_metadata.* = GraphicsPipeline.MetaData{
-    //     .index_count = 3,
-    //     .index_offset = 0,
-    //     .material_index = 0,
-    //     .vertex_offset = 0,
-    // };
-
-    const camera_alloc = vma_usage.AllocatedBuffer.create(
-        self.allocs.vma,
-        @sizeOf(root.Camera.GPUData),
-        vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-        c.vma.MEMORY_USAGE_CPU_TO_GPU,
-        0,
-    );
-    var mapped_camera: vma_usage.MappedBuffer = .{
-        .allocation = camera_alloc,
-    };
-    checkVk(c.vma.MapMemory(self.allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
-
-    const aligned_camera: *root.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
+    defer for (objects) |*o| @constCast(o).deinit();
+    const default_camera = root.Camera{};
 
     const aspect =
         @as(f32, @floatFromInt(self.swapchain.extent.width)) /
         @as(f32, @floatFromInt(self.swapchain.extent.height));
 
-    const near_plane: f32 = 0.1;
-    const far_plane: f32 = 100.0;
-    const fov: f32 = 45.0;
-    const eye = root.math.Vec3.make(2.0, 2.0, 2.0);
-
-    aligned_camera.* = root.Camera.GPUData{
+    const camera_gpu_data = root.Camera.GPUData{
         .model = root.math.Mat4.IDENTITY,
-        .view = root.math.Mat4.lookAt(eye, root.math.Vec3.ZERO, root.math.Vec3.UP),
-        .proj = root.math.Mat4.perspective(fov, aspect, near_plane, far_plane),
+        .view = root.math.Mat4.lookAt(
+            default_camera.eye,
+            root.math.Vec3.ZERO,
+            root.math.Vec3.UP,
+        ),
+        .proj = root.math.Mat4.perspective(
+            default_camera.fov,
+            aspect,
+            default_camera.near_plane,
+            default_camera.far_plane,
+        ),
     };
 
-    // vulkan y flip
-    aligned_camera.*.proj.j.y *= -1;
-
-    self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData{
-        .meshes = meshes,
-        .camera_uniform = mapped_camera,
-        .materials = materials,
-    };
-
-    self.main_graphics_pipeline_data.createBuffersAndMetadata(self.allocs, &self.upload_context, self.logical_device);
+    self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData.create(
+        self.allocs,
+        &self.upload_context,
+        self.logical_device,
+        self.physical_device,
+        .{
+            .camera_gpu_data = camera_gpu_data,
+            .materials_file = materials_file,
+            .objects = objects,
+        },
+        self.alloc_cbs,
+    ) catch @panic("OOM");
 }
 
 fn createComputePipelineData(self: *Self) void {

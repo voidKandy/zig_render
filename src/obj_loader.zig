@@ -25,13 +25,25 @@ pub const Index = struct {
 };
 
 pub const Object = struct {
-    name: []const u8,
+    name: []u8,
+    material_name: []u8,
     face_vertices: []u32,
     indices: []Index,
+
+    pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
+        a.free(self.face_vertices);
+        a.free(self.name);
+        a.free(self.material_name);
+        a.free(self.indices);
+    }
 };
 
-pub const Mesh = struct {
+// TODO
+// remove ownership of allocator
+pub const ObjFile = struct {
     allocator: std.mem.Allocator,
+    material_library_name: []u8,
+
     objects: []Object,
 
     vertices: [][3]f32,
@@ -39,12 +51,9 @@ pub const Mesh = struct {
     uvs: [][2]f32,
 
     pub fn deinit(self: *@This()) void {
-        for (self.objects) |object| {
-            self.allocator.free(object.name);
-            self.allocator.free(object.face_vertices);
-            self.allocator.free(object.indices);
-        }
+        for (self.objects) |*object| object.deinit(self.allocator);
 
+        self.allocator.free(self.material_library_name);
         self.allocator.free(self.objects);
         self.allocator.free(self.vertices);
         self.allocator.free(self.normals);
@@ -69,6 +78,9 @@ const ParseContext = struct {
 
     objects: std.ArrayList(Object) = .{},
 
+    material_library_name: []const u8 = "",
+    current_material_name: []const u8 = "",
+
     object_name: []const u8 = "",
     vertices: std.ArrayList([3]f32) = .{},
     normals: std.ArrayList([3]f32) = .{},
@@ -91,7 +103,7 @@ const FaceParsingState = enum {
     no_uvs,
 };
 
-pub fn parseFile(a: std.mem.Allocator, filepath: []const u8) !Mesh {
+pub fn parseFile(a: std.mem.Allocator, filepath: []const u8) !ObjFile {
     const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
     defer file.close();
 
@@ -120,10 +132,11 @@ pub fn parseFile(a: std.mem.Allocator, filepath: []const u8) !Mesh {
     // Make sure the last object is added
     try addCurrentObject(&ctx);
 
-    return Mesh{
+    return ObjFile{
         .allocator = a,
         .objects = try ctx.objects.toOwnedSlice(a),
 
+        .material_library_name = try a.dupe(u8, ctx.material_library_name),
         .vertices = try ctx.vertices.toOwnedSlice(a),
         .normals = try ctx.normals.toOwnedSlice(a),
         .uvs = try ctx.uvs.toOwnedSlice(a),
@@ -184,7 +197,7 @@ fn parseContent(ctx: *ParseContext, content: []const u8) !void {
             },
             'u' => {
                 if (std.mem.startsWith(u8, line, "usemtl")) {
-                    logWarn(ctx, "Use materials not supported yet", .{});
+                    ctx.current_material_name = std.mem.trim(u8, line["usemtl".len..], " \t\r");
                 } else {
                     logErr(ctx, "Unknown token at beginning of line: {s}", .{line});
                     return ParseError.InvalidToken;
@@ -365,14 +378,14 @@ inline fn parseObject(ctx: *ParseContext, line: []const u8) !void {
 }
 
 inline fn parseMaterial(ctx: *ParseContext, line: []const u8) !void {
-    _ = line;
-    logWarn(ctx, "Materials are not yet supported", .{});
+    ctx.material_library_name = std.mem.trim(u8, line["mtllib".len..], " \t\r");
 }
 
 fn addCurrentObject(ctx: *ParseContext) !void {
     if (ctx.face_vertices.items.len > 0) {
         try ctx.objects.append(ctx.allocator, .{
             .name = try ctx.allocator.dupe(u8, ctx.object_name),
+            .material_name = try ctx.allocator.dupe(u8, ctx.current_material_name),
             .face_vertices = try ctx.face_vertices.toOwnedSlice(ctx.allocator),
             .indices = try ctx.indices.toOwnedSlice(ctx.allocator),
         });

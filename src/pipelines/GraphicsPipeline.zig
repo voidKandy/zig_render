@@ -1,13 +1,13 @@
 const std = @import("std");
 const mem = std.mem;
-const core = @import("../root.zig");
+const root = @import("../root.zig");
 const pipelines = @import("root.zig");
 const log = std.log.scoped(.GraphicsPipeline);
-const mesh_mod = core.mesh;
-const vki = core.vulkan_init;
-const vk = core.clibs.vk;
-const vma = core.clibs.vma;
-const vma_usage = core.vma_usage;
+const mesh_mod = root.mesh;
+const vki = root.vulkan_init;
+const vk = root.clibs.vk;
+const vma = root.clibs.vma;
+const vma_usage = root.vma_usage;
 const checkVk = vki.checkVk;
 
 pub const MetaData = struct {
@@ -19,16 +19,19 @@ pub const MetaData = struct {
 
 /// Allocated data associated with Pipeline
 pub const AllocatedData = struct {
+    const CreateInfo = struct {
+        camera_gpu_data: root.Camera.GPUData,
+        materials_file: root.mtl_loader.MtlFile,
+        objects: []const root.obj_loader.ObjFile,
+    };
     /// TODO
     /// move camera related logic into GraphicsPipeline
     camera_uniform: vma_usage.MappedBuffer,
-    materials: []core.textures.Texture,
-
-    meshes: []mesh_mod.Mesh3D,
-    meshes_vertex_buffer: vma_usage.AllocatedBuffer = undefined,
-    meshes_index_buffer: vma_usage.AllocatedBuffer = undefined,
-    mesh_ranges: []MeshRanges = undefined,
-    meta_data: vma_usage.MappedBuffer = undefined,
+    textures: []root.Materials.Texture,
+    meshes_vertex_buffer: vma_usage.AllocatedBuffer,
+    meshes_index_buffer: vma_usage.AllocatedBuffer,
+    mesh_ranges: []MeshRanges,
+    meta_data: vma_usage.MappedBuffer,
 
     const RangeDesc = struct {
         offset: vk.DeviceSize = 0,
@@ -41,63 +44,106 @@ pub const AllocatedData = struct {
         // uniform_range: RangeDesc,
     };
 
-    /// turns all meshes into one large vertex and index buffer with an array of ranges
-    fn concatenateMeshes(
-        self: @This(),
-        a: std.mem.Allocator,
-    ) std.mem.Allocator.Error!struct {
-        vertices: []core.mesh.Vertex3D,
-        indices: []u32,
-        ranges: []MeshRanges,
-    } {
-        var all_ranges = try a.alloc(MeshRanges, self.meshes.len);
-        var vertices = try std.ArrayList(core.mesh.Vertex3D).initCapacity(a, 64);
-        var indices = try std.ArrayList(u32).initCapacity(a, 64);
+    pub fn create(
+        allocs: root.VulkanEngine.Allocators,
+        upload_ctx: *root.vulkan_init.UploadContext,
+        logical_device: root.vulkan_init.LogicalDevice,
+        physical_device: root.vulkan_init.PhysicalDevice,
+        ci: CreateInfo,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) std.mem.Allocator.Error!@This() {
+        var materials = root.Materials.initFromMaterialFile(allocs.std, ci.materials_file) catch @panic("failed to create MTL");
+        var mat_iter = materials.metadata.keyIterator();
+        defer materials.deinit(allocs.std);
+        var material_indices = std.StringHashMapUnmanaged(u32){};
+        defer material_indices.deinit(allocs.std);
+        const textures = try allocs.std.alloc(root.Materials.Texture, materials.metadata.size);
+
+        var k: u32 = 0;
+        while (mat_iter.next()) |key| : (k += 1) {
+            const mat = materials.getMaterialData(key.*) orelse @panic("No material found?");
+            const mat_texture = mat.upload(
+                allocs.vma,
+                upload_ctx,
+                logical_device,
+                physical_device,
+                alloc_cbs,
+            ) catch @panic("failed to upload material");
+            log.warn(
+                \\ Adding {s} as {d}
+            , .{ mat.name, k });
+            try material_indices.put(allocs.std, mat.name, k);
+            textures[k] =
+                mat_texture;
+        }
+
+        var all_ranges = try allocs.std.alloc(MeshRanges, ci.objects.len);
+
+        var meshes = try allocs.std.alloc(root.mesh.Mesh3D, ci.objects.len);
+        var all_metadata = try allocs.std.alloc(MetaData, meshes.len);
+        var vertices = try std.ArrayList(root.mesh.Vertex3D).initCapacity(allocs.std, 64);
+        var indices = try std.ArrayList(u32).initCapacity(allocs.std, 64);
+        defer {
+            allocs.std.free(meshes);
+            allocs.std.free(all_metadata);
+            vertices.deinit(allocs.std);
+            indices.deinit(allocs.std);
+        }
 
         var total_verts: usize = 0;
         var total_idcs: usize = 0;
-        for (self.meshes, 0..) |m, i| {
-            all_ranges[i] = MeshRanges{
+
+        for (0..ci.objects.len) |i| {
+            const obj_file = ci.objects[i];
+            const mesh = try root.mesh.Mesh3D.fromObjFile(allocs.std, obj_file);
+            defer mesh.deinit(allocs.std);
+            const range = MeshRanges{
                 .vertex_range = .{
                     .offset = total_verts,
-                    .range = m.vertices.len,
+                    .range = mesh.vertices.len,
                 },
                 .index_range = .{
                     .offset = total_idcs,
-                    .range = m.indices.len,
+                    .range = mesh.indices.len,
                 },
             };
-            try vertices.appendSlice(a, m.vertices);
-            try indices.appendSlice(a, m.indices);
 
-            total_verts += m.vertices.len;
-            total_idcs += m.indices.len;
-        }
+            if (!std.mem.eql(u8, obj_file.material_library_name, materials.library_name)) {
+                const msg =
+                    try std.fmt.allocPrint(allocs.std,
+                        \\ Obj file references a materials library that is not loaded: `{s}`
+                    , .{obj_file.material_library_name});
+                defer allocs.std.free(msg);
+                @panic(msg);
+            }
 
-        return .{
-            .vertices = try vertices.toOwnedSlice(a),
-            .indices = try indices.toOwnedSlice(a),
-            .ranges = all_ranges,
-        };
-    }
+            const metadata = MetaData{
+                .material_index = material_indices.get(obj_file.objects[0].material_name) orelse {
+                    const msg = try std.fmt.allocPrint(allocs.std,
+                        \\ Could not find material with name `{s}`
+                    , .{obj_file.objects[0].material_name});
+                    defer allocs.std.free(msg);
+                    @panic(msg);
+                },
+                .index_count = @as(u32, @intCast(range.index_range.range)),
+                .index_offset = @as(u32, @intCast(range.index_range.offset)),
+                .vertex_offset = @as(u32, @intCast(range.vertex_range.offset)),
+            };
 
-    pub fn createBuffersAndMetadata(
-        self: *@This(),
-        allocs: core.VulkanEngine.Allocators,
-        upload_ctx: *core.vulkan_init.UploadContext,
-        device: core.vulkan_init.LogicalDevice,
-    ) void {
-        const meshes_concat = self.concatenateMeshes(allocs.std) catch @panic("OOM");
-        self.mesh_ranges = meshes_concat.ranges;
+            try vertices.appendSlice(allocs.std, mesh.vertices);
+            try indices.appendSlice(allocs.std, mesh.indices);
 
-        defer {
-            allocs.std.free(meshes_concat.vertices);
-            allocs.std.free(meshes_concat.indices);
+            total_verts += mesh.vertices.len;
+            total_idcs += mesh.indices.len;
+
+            all_metadata[i] = metadata;
+            all_ranges[i] = range;
+            meshes[i] = mesh;
         }
 
         const vert_alloc_size, const idx_alloc_size = .{
-            meshes_concat.vertices.len * @sizeOf(core.mesh.Vertex3D),
-            meshes_concat.indices.len * @sizeOf(u32),
+            vertices.items.len * @sizeOf(root.mesh.Vertex3D),
+            indices.items.len * @sizeOf(u32),
         };
 
         const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
@@ -134,25 +180,25 @@ pub const AllocatedData = struct {
             checkVk(vma.MapMemory(allocs.vma, vert_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
             defer vma.UnmapMemory(allocs.vma, vert_staging_buffer.allocation);
 
-            const vert_aligned_data: [*]core.mesh.Vertex3D = @ptrCast(@alignCast(data));
-            @memcpy(vert_aligned_data, meshes_concat.vertices);
+            const vert_aligned_data: [*]root.mesh.Vertex3D = @ptrCast(@alignCast(data));
+            @memcpy(vert_aligned_data, vertices.items);
 
             data = undefined;
             checkVk(vma.MapMemory(allocs.vma, idx_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
             defer vma.UnmapMemory(allocs.vma, idx_staging_buffer.allocation);
 
             const idx_aligned_data: [*]u32 = @ptrCast(@alignCast(data));
-            @memcpy(idx_aligned_data, meshes_concat.indices);
+            @memcpy(idx_aligned_data, indices.items);
         }
 
-        self.meshes_vertex_buffer = vma_usage.AllocatedBuffer.create(
+        const meshes_vertex_buffer = vma_usage.AllocatedBuffer.create(
             allocs.vma,
             vert_alloc_size,
             vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
             vma.MEMORY_USAGE_GPU_ONLY,
             0,
         );
-        self.meshes_index_buffer = vma_usage.AllocatedBuffer.create(
+        const meshes_index_buffer = vma_usage.AllocatedBuffer.create(
             allocs.vma,
             idx_alloc_size,
             vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -177,23 +223,23 @@ pub const AllocatedData = struct {
         log.debug(
             \\Vertex buffer size: {}
             \\Index buffer size: {}
-        , .{ self.meshes_vertex_buffer.size, self.meshes_index_buffer.size });
+        , .{ meshes_vertex_buffer.size, meshes_index_buffer.size });
 
-        upload_ctx.immediateSubmit(device, SubmitCtx{
-            .mesh_buffer = self.meshes_vertex_buffer.buffer,
+        upload_ctx.immediateSubmit(logical_device, SubmitCtx{
+            .mesh_buffer = meshes_vertex_buffer.buffer,
             .staging_buffer = vert_staging_buffer.buffer,
             .size = vert_alloc_size,
         });
 
-        upload_ctx.immediateSubmit(device, SubmitCtx{
-            .mesh_buffer = self.meshes_index_buffer.buffer,
+        upload_ctx.immediateSubmit(logical_device, SubmitCtx{
+            .mesh_buffer = meshes_index_buffer.buffer,
             .staging_buffer = idx_staging_buffer.buffer,
             .size = idx_alloc_size,
         });
 
         const metadata_alloc = vma_usage.AllocatedBuffer.create(
             allocs.vma,
-            @sizeOf(MetaData) * self.meshes.len,
+            @sizeOf(MetaData) * meshes.len,
             vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
             vma.MEMORY_USAGE_CPU_TO_GPU,
             0,
@@ -213,24 +259,36 @@ pub const AllocatedData = struct {
         const aligned_metadata: [*]MetaData =
             @ptrCast(@alignCast(mapped_metadata.mapped));
 
-        for (self.mesh_ranges, 0..) |range, i| {
-            aligned_metadata[i] = MetaData{
-                // BAD
-                // material index is wrong for now
-                // it works because there is currently one
-                .material_index = 0,
-                .index_count = @as(u32, @intCast(range.index_range.range)),
-                .index_offset = @as(u32, @intCast(range.index_range.offset)),
-                .vertex_offset = @as(u32, @intCast(range.vertex_range.offset)),
-            };
-        }
+        @memcpy(aligned_metadata, all_metadata);
 
-        self.meta_data = mapped_metadata;
+        const camera_alloc = vma_usage.AllocatedBuffer.create(
+            allocs.vma,
+            @sizeOf(root.Camera.GPUData),
+            vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            vma.MEMORY_USAGE_CPU_TO_GPU,
+            0,
+        );
+        var mapped_camera: vma_usage.MappedBuffer = .{
+            .allocation = camera_alloc,
+        };
+        checkVk(vma.MapMemory(allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
+
+        const aligned_camera: *root.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
+
+        aligned_camera.* = ci.camera_gpu_data;
+        aligned_camera.*.proj.j.y *= -1;
+
+        return AllocatedData{
+            .mesh_ranges = all_ranges,
+            .camera_uniform = mapped_camera,
+            .textures = textures,
+            .meshes_vertex_buffer = meshes_vertex_buffer,
+            .meshes_index_buffer = meshes_index_buffer,
+            .meta_data = mapped_metadata,
+        };
     }
 
-    pub fn deinit(self: @This(), device: vk.Device, allocs: core.VulkanEngine.Allocators, alloc_cbs: ?*vk.AllocationCallbacks) void {
-        for (self.meshes) |m| m.deinit(allocs.std);
-
+    pub fn deinit(self: @This(), device: vk.Device, allocs: root.VulkanEngine.Allocators, alloc_cbs: ?*vk.AllocationCallbacks) void {
         self.meshes_vertex_buffer.deinit(allocs.vma);
         self.meshes_index_buffer.deinit(allocs.vma);
         self.meta_data.deinit(allocs.vma);
@@ -238,13 +296,12 @@ pub const AllocatedData = struct {
         self.camera_uniform.deinit(allocs.vma);
 
         // perhaps this should be in a separate deinit function for TextureInfo?
-        for (self.materials) |mat| {
+        for (self.textures) |mat| {
             mat.image_alloc.deinit(allocs.vma, device, alloc_cbs);
             vk.DestroySampler(device, mat.sampler, alloc_cbs);
         }
 
-        allocs.std.free(self.meshes);
-        allocs.std.free(self.materials);
+        allocs.std.free(self.textures);
         allocs.std.free(self.mesh_ranges);
     }
 };
@@ -690,7 +747,7 @@ fn updateTextureDescriptorSet(
     alloc_data: AllocatedData,
     texture_set: vk.DescriptorSet,
 ) mem.Allocator.Error!void {
-    const texture_count = alloc_data.materials.len;
+    const texture_count = alloc_data.textures.len;
     log.warn(
         \\ materials count: {}
     , .{texture_count});
@@ -699,8 +756,8 @@ fn updateTextureDescriptorSet(
 
     for (0..texture_count) |i| {
         image_infos[i] = .{
-            .sampler = alloc_data.materials[i].sampler,
-            .imageView = alloc_data.materials[i].image_alloc.view,
+            .sampler = alloc_data.textures[i].sampler,
+            .imageView = alloc_data.textures[i].image_alloc.view,
             .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         };
     }
