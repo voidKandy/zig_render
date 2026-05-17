@@ -1,11 +1,11 @@
 const std = @import("std");
 const mem = std.mem;
-const core = @import("../root.zig");
-const imgui = core.clibs.imgui;
+const root = @import("../root.zig");
+const imgui = root.clibs.imgui;
 const log = std.log.scoped(.DescriptorIndexing);
-const mesh_mod = core.mesh;
-const vki = core.vulkan_init;
-const vk = core.clibs.vk;
+const mesh_mod = root.mesh;
+const vki = root.vulkan_init;
+const vk = root.clibs.vk;
 const checkVk = vki.checkVk;
 
 // pipeline: vk.Pipeline = undefined,
@@ -18,10 +18,10 @@ descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 
 /// potentially bad that this is managed externally
 const ComputePushConstants = struct {
-    data1: core.math.Vec4 = core.math.Vec4.ZERO,
-    data2: core.math.Vec4 = core.math.Vec4.ZERO,
-    data3: core.math.Vec4 = core.math.Vec4.ZERO,
-    data4: core.math.Vec4 = core.math.Vec4.ZERO,
+    data1: root.math.Vec4 = root.math.Vec4.ZERO,
+    data2: root.math.Vec4 = root.math.Vec4.ZERO,
+    data3: root.math.Vec4 = root.math.Vec4.ZERO,
+    data4: root.math.Vec4 = root.math.Vec4.ZERO,
 };
 
 pub const EffectData = struct {
@@ -33,11 +33,11 @@ const GRADIENT_EFFECT_NAME = "gradient";
 const SKY_EFFECT_NAME = "sky";
 
 pub const AllocatedData = struct {
-    draw_image: core.vma_usage.AllocatedImage,
+    draw_image: root.vma_usage.AllocatedImage,
 
     pub fn deinit(
         self: @This(),
-        vma_a: core.clibs.vma.Allocator,
+        vma_a: root.clibs.vma.Allocator,
         device: vk.Device,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) void {
@@ -228,10 +228,10 @@ pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
     );
 }
 
-pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: core.vulkan_init.Swapchain, img_idx: usize, set: vk.DescriptorSet, cmd: vk.CommandBuffer) void {
+pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: root.vulkan_init.Swapchain, img_idx: usize, set: vk.DescriptorSet, cmd: vk.CommandBuffer) void {
     const draw_image = alloc_data.draw_image;
 
-    core.vulkan_util.transitionImageLayout(
+    root.vulkan_util.transitionImageLayout(
         cmd,
         draw_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -272,7 +272,7 @@ pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: core.vul
         vk.CmdDispatch(cmd, w, h, 1);
     }
 
-    core.vulkan_util.transitionImageLayout(
+    root.vulkan_util.transitionImageLayout(
         cmd,
         draw_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
@@ -284,7 +284,7 @@ pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: core.vul
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
-    core.vulkan_util.transitionImageLayout(
+    root.vulkan_util.transitionImageLayout(
         cmd,
         swapchain.images[img_idx],
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -296,7 +296,7 @@ pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: core.vul
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
-    core.vulkan_util.copyImageToImage(
+    root.vulkan_util.copyImageToImage(
         cmd,
         draw_image.image,
         swapchain.images[img_idx],
@@ -307,7 +307,7 @@ pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: core.vul
         swapchain.extent,
     );
 
-    core.vulkan_util.transitionImageLayout(
+    root.vulkan_util.transitionImageLayout(
         cmd,
         swapchain.images[img_idx],
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -322,7 +322,10 @@ pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: core.vul
 
 pub fn drawImgui(self: *@This()) void {
     var open = true;
-    if (imgui.Begin("background", &open, 0)) {
+    const shown = imgui.Begin("background", &open, 0);
+    defer imgui.End();
+
+    if (shown) {
         var selected = self.all_effects.getPtr(self.current_effect) orelse @panic("Invalid current effect");
 
         imgui.Text("Selected effect: ", self.current_effect.ptr);

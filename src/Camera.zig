@@ -26,7 +26,7 @@ mode: Mode = .user_input,
 const DEFAULT_EYE: Vec3 = Vec3.make(2.0, 2.0, 2.0);
 const DEFAULT_TARGET: Vec3 = Vec3.make(0.0, 0.0, 1.0);
 
-const Mode = enum {
+pub const Mode = enum {
     rotate_around,
     user_input,
 };

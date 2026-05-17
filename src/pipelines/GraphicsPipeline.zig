@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const root = @import("../root.zig");
+const imgui = root.clibs.imgui;
 const pipelines = @import("root.zig");
 const log = std.log.scoped(.GraphicsPipeline);
 const mesh_mod = root.mesh;
@@ -17,15 +18,13 @@ pub const MetaData = struct {
     vertex_offset: u32,
 };
 
-/// Allocated data associated with Pipeline
 pub const AllocatedData = struct {
-    const CreateInfo = struct {
+    const CreateData = struct {
         camera_gpu_data: root.Camera.GPUData,
         materials_file: root.mtl_loader.MtlFile,
         objects: []const root.obj_loader.ObjFile,
     };
-    /// TODO
-    /// move camera related logic into GraphicsPipeline
+
     camera_uniform: vma_usage.MappedBuffer,
     textures: []root.Materials.Texture,
     meshes_vertex_buffer: vma_usage.AllocatedBuffer,
@@ -49,10 +48,10 @@ pub const AllocatedData = struct {
         upload_ctx: *root.vulkan_init.UploadContext,
         logical_device: root.vulkan_init.LogicalDevice,
         physical_device: root.vulkan_init.PhysicalDevice,
-        ci: CreateInfo,
+        cd: CreateData,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) std.mem.Allocator.Error!@This() {
-        var materials = root.Materials.initFromMaterialFile(allocs.std, ci.materials_file) catch @panic("failed to create MTL");
+        var materials = root.Materials.initFromMaterialFile(allocs.std, cd.materials_file) catch @panic("failed to create MTL");
         var mat_iter = materials.metadata.keyIterator();
         defer materials.deinit(allocs.std);
         var material_indices = std.StringHashMapUnmanaged(u32){};
@@ -77,9 +76,9 @@ pub const AllocatedData = struct {
                 mat_texture;
         }
 
-        var all_ranges = try allocs.std.alloc(MeshRanges, ci.objects.len);
+        var all_ranges = try allocs.std.alloc(MeshRanges, cd.objects.len);
 
-        var meshes = try allocs.std.alloc(root.mesh.Mesh3D, ci.objects.len);
+        var meshes = try allocs.std.alloc(root.mesh.Mesh3D, cd.objects.len);
         var all_metadata = try allocs.std.alloc(MetaData, meshes.len);
         var vertices = try std.ArrayList(root.mesh.Vertex3D).initCapacity(allocs.std, 64);
         var indices = try std.ArrayList(u32).initCapacity(allocs.std, 64);
@@ -93,8 +92,8 @@ pub const AllocatedData = struct {
         var total_verts: usize = 0;
         var total_idcs: usize = 0;
 
-        for (0..ci.objects.len) |i| {
-            const obj_file = ci.objects[i];
+        for (0..cd.objects.len) |i| {
+            const obj_file = cd.objects[i];
             const mesh = try root.mesh.Mesh3D.fromObjFile(allocs.std, obj_file);
             defer mesh.deinit(allocs.std);
             const range = MeshRanges{
@@ -275,7 +274,7 @@ pub const AllocatedData = struct {
 
         const aligned_camera: *root.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
 
-        aligned_camera.* = ci.camera_gpu_data;
+        aligned_camera.* = cd.camera_gpu_data;
         aligned_camera.*.proj.j.y *= -1;
 
         return AllocatedData{
@@ -303,6 +302,60 @@ pub const AllocatedData = struct {
 
         allocs.std.free(self.textures);
         allocs.std.free(self.mesh_ranges);
+    }
+};
+
+pub const SystemsData = struct {
+    camera: root.Camera,
+
+    pub fn update(
+        self: *@This(),
+        alloc_data: AllocatedData,
+        input: root.Input,
+        screen_extent: vk.Extent2D,
+    ) void {
+        const State = struct {
+            /// for rotation so i decided not to store it in camera
+            var start: i128 = 0;
+        };
+        if (State.start == 0)
+            State.start = std.time.nanoTimestamp();
+
+        const zoom_speed = 0.1;
+        const min_distance = 0.2;
+        const max_distance = 10.0;
+
+        self.camera.distance = std.math.clamp(self.camera.distance - input.scroll * zoom_speed, min_distance, max_distance);
+
+        // this could also be computed with a yaw/pitch if those should be added to camera
+        const dir = self.camera.target.sub(self.camera.eye).normalized();
+        self.camera.eye = self.camera.target.sub(dir.mul(self.camera.distance));
+
+        const now = std.time.nanoTimestamp();
+        const delta_ns = now - State.start;
+        const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
+
+        const aspect =
+            @as(f32, @floatFromInt(screen_extent.width)) /
+            @as(f32, @floatFromInt(screen_extent.height));
+
+        var ubo = switch (self.camera.mode) {
+            .rotate_around => root.Camera.GPUData{
+                .model = root.math.Mat4.IDENTITY.rotate(self.camera.target, time * 1.0),
+                .view = root.math.Mat4.lookAt(self.camera.eye, root.math.Vec3.ZERO, root.math.Vec3.UP),
+                .proj = root.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
+            },
+            .user_input => root.Camera.GPUData{
+                .model = root.math.Mat4.IDENTITY,
+                .view = root.math.Mat4.lookAt(self.camera.eye, root.math.Vec3.ZERO, root.math.Vec3.UP),
+                .proj = root.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
+            },
+        };
+
+        ubo.proj.j.y *= -1;
+
+        const aligned_data: *root.Camera.GPUData = @ptrCast(@alignCast(alloc_data.camera_uniform.mapped));
+        aligned_data.* = ubo;
     }
 };
 
@@ -812,8 +865,24 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
     );
 }
 
-pub fn drawImgui(self: *Self) void {
+pub fn drawImgui(self: *Self, system_data: *SystemsData) void {
     _ = self;
+    var open = true;
+    const shown = imgui.Begin("camera", &open, root.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    defer imgui.End();
+
+    if (shown) {
+        imgui.Text("Selected mode: ", @tagName(system_data.camera.mode).ptr);
+        if (imgui.BeginCombo("Camera Modes", @tagName(system_data.camera.mode).ptr, 0)) {
+            defer imgui.EndCombo();
+            for (std.meta.tags(root.Camera.Mode)) |tag| {
+                if (imgui.Selectable(@tagName(tag))) {
+                    system_data.camera.mode = tag;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 // pub fn oldDraw(

@@ -51,6 +51,7 @@ main_compute_pipeline_description: ComputePipeline.Description = undefined,
 
 main_graphics_pipeline: GraphicsPipeline = undefined,
 main_graphics_pipeline_data: GraphicsPipeline.AllocatedData = undefined,
+main_graphics_pipeline_systems_data: GraphicsPipeline.SystemsData = undefined,
 main_graphics_descriptor_set: vk.DescriptorSet = undefined,
 main_graphics_texture_descriptor_set: vk.DescriptorSet = undefined,
 main_graphics_pipeline_description: GraphicsPipeline.Description = undefined,
@@ -150,6 +151,11 @@ pub fn run(self: *Self) void {
             self.input.update(event);
         }
 
+        self.main_graphics_pipeline_systems_data.update(
+            self.main_graphics_pipeline_data,
+            self.input,
+            self.swapchain.extent,
+        );
         self.drawImgui();
         self.drawFrame();
     }
@@ -275,11 +281,12 @@ fn initVulkan(self: *Self) void {
 fn createGraphicsPipelineData(self: *Self) void {
     var materials_file = root.mtl_loader.parseFile(self.allocs.std, "assets/globals.mtl") catch @panic("failed to load materials file");
     defer materials_file.deinit();
+
     const objects = &[_]root.obj_loader.ObjFile{
         root.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
     };
-
     defer for (objects) |*o| @constCast(o).deinit();
+
     const default_camera = root.Camera{};
 
     const aspect =
@@ -313,6 +320,10 @@ fn createGraphicsPipelineData(self: *Self) void {
         },
         self.alloc_cbs,
     ) catch @panic("OOM");
+
+    self.main_graphics_pipeline_systems_data = .{
+        .camera = default_camera,
+    };
 }
 
 fn createComputePipelineData(self: *Self) void {
@@ -530,9 +541,8 @@ fn drawImgui(self: *Self) void {
     c.imgui.NewFrame();
 
     self.main_compute_pipeline.drawImgui();
-    self.main_graphics_pipeline.drawImgui();
+    self.main_graphics_pipeline.drawImgui(&self.main_graphics_pipeline_systems_data);
 
-    c.imgui.End();
     c.imgui.Render();
 }
 

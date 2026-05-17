@@ -835,6 +835,9 @@ pub const imgui = struct {
     pub const InputFloat4 = c.ImGui_InputFloat4;
     pub const SliderFloat4 = c.ImGui_SliderFloat4;
 
+    pub const WindowFlags = c.ImGuiWindowFlags;
+    pub const WINDOW_ALWAYS_AUTO_RESIZE = c.ImGuiWindowFlags_AlwaysAutoResize;
+
     pub const impl_vulkan = struct {
         pub const Init = c.cImGui_ImplVulkan_Init;
         pub const Shutdown = c.cImGui_ImplVulkan_Shutdown;
