@@ -66,20 +66,9 @@ pub fn build(b: *std.Build) !void {
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
-    const tools_lib = buildtoolsLib(b, target, core_lib);
     buildBinaries(b, target, optimize, &[_]struct { []const u8, *std.Build.Module }{
         .{ "core", core_lib },
-        .{ "tools", tools_lib },
     });
-}
-
-fn buildtoolsLib(b: *std.Build, target: std.Build.ResolvedTarget, core_lib: *std.Build.Module) *std.Build.Module {
-    const mod = b.addModule("tools", .{
-        .root_source_file = b.path("tools/root.zig"),
-        .target = target,
-    });
-    mod.addImport("core", core_lib);
-    return mod;
 }
 
 const BINARIES_PATH = "bins";

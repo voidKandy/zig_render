@@ -1,11 +1,11 @@
 const std = @import("std");
-const root = @import("root.zig");
-const c = root.clibs;
+const core = @import("root.zig");
+const c = core.clibs;
 const vk = c.vk;
-const vki = root.vulkan_init;
+const vki = core.vulkan_init;
 const checkVk = vki.checkVk;
-const Vec3 = root.math.Vec3;
-const Mat4 = root.math.Mat4;
+const Vec3 = core.math.Vec3;
+const Mat4 = core.math.Mat4;
 
 pub const GPUData = struct {
     model: Mat4,
@@ -31,7 +31,7 @@ pub const Mode = enum {
     user_input,
 };
 
-pub fn control(self: *@This(), engine: root.VulkanEngine, desc: *root.BoundDescriptor) void {
+pub fn control(self: *@This(), engine: core.VulkanEngine, desc: *core.BoundDescriptor) void {
     const State = struct {
         /// for rotation so i decided not to store it in camera
         var start: i128 = 0;
@@ -76,7 +76,7 @@ pub fn control(self: *@This(), engine: root.VulkanEngine, desc: *root.BoundDescr
     aligned_data.* = ubo;
 }
 
-pub fn writeSet(set: vk.DescriptorSet, desc: *root.BoundDescriptor) vk.WriteDescriptorSet {
+pub fn writeSet(set: vk.DescriptorSet, desc: *core.BoundDescriptor) vk.WriteDescriptorSet {
     // const camera_data_info = ;
 
     return vk.WriteDescriptorSet{

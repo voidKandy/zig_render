@@ -1,5 +1,5 @@
 const std = @import("std");
-const root = @import("root.zig");
+const core = @import("root.zig");
 pub const c = @import("clibs.zig");
 const vma_usage = @import("vma_usage.zig");
 const vk = c.vk;
@@ -990,9 +990,9 @@ pub const Swapchain = struct {
             \\
         , .{});
         var width: c_int, var height: c_int = .{ undefined, undefined };
-        root.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
+        core.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
         while (width == 0 or height == 0) {
-            root.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
+            core.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
         }
         _ = vk.DeviceWaitIdle(opts.logical_device);
 

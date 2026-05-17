@@ -1,21 +1,17 @@
 const std = @import("std");
-
-const root = @import("root.zig");
-const vki = root.vulkan_init;
-const frames_mod = root.frames;
-const descriptor = root.descriptor;
-const c = root.clibs;
-const BoundDescriptor = root.BoundDescriptor;
-const GraphicsPipeline = root.pipelines.GraphicsPipeline;
-const ComputePipeline = root.pipelines.ComputePipeline;
-const ResourceManager = root.ResourceManager;
-const Input = root.Input;
-const vma_usage = root.vma_usage;
-const util = root.vulkan_util;
+const core = @import("root.zig");
+const vki = core.vulkan_init;
+const frames_mod = core.frames;
+const c = core.clibs;
+const GraphicsPipeline = core.GraphicsPipeline;
+const ComputePipeline = core.ComputePipeline;
+const Input = core.Input;
+const vma_usage = core.vma_usage;
+const util = core.vulkan_util;
 const vk = c.vk;
 const checkVk = vki.checkVk;
 const sdl = c.sdl;
-const checkSdl = root.checkSdl;
+const checkSdl = core.checkSdl;
 const VkError = vki.VkError;
 pub const MAIN_RENDER_PASS_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
 
@@ -279,28 +275,28 @@ fn initVulkan(self: *Self) void {
 /// Creaets description of frame models
 /// coupled with PipelineDescripotion used to create main_pipeline
 fn createGraphicsPipelineData(self: *Self) void {
-    var materials_file = root.mtl_loader.parseFile(self.allocs.std, "assets/globals.mtl") catch @panic("failed to load materials file");
+    var materials_file = core.mtl_loader.parseFile(self.allocs.std, "assets/globals.mtl") catch @panic("failed to load materials file");
     defer materials_file.deinit();
 
-    const objects = &[_]root.obj_loader.ObjFile{
-        root.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
+    const objects = &[_]core.obj_loader.ObjFile{
+        core.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
     };
     defer for (objects) |*o| @constCast(o).deinit();
 
-    const default_camera = root.Camera{};
+    const default_camera = core.Camera{};
 
     const aspect =
         @as(f32, @floatFromInt(self.swapchain.extent.width)) /
         @as(f32, @floatFromInt(self.swapchain.extent.height));
 
-    const camera_gpu_data = root.Camera.GPUData{
-        .model = root.math.Mat4.IDENTITY,
-        .view = root.math.Mat4.lookAt(
+    const camera_gpu_data = core.Camera.GPUData{
+        .model = core.math.Mat4.IDENTITY,
+        .view = core.math.Mat4.lookAt(
             default_camera.eye,
-            root.math.Vec3.ZERO,
-            root.math.Vec3.UP,
+            core.math.Vec3.ZERO,
+            core.math.Vec3.UP,
         ),
-        .proj = root.math.Mat4.perspective(
+        .proj = core.math.Mat4.perspective(
             default_camera.fov,
             aspect,
             default_camera.near_plane,
@@ -347,17 +343,17 @@ fn createComputePipelineData(self: *Self) void {
 }
 
 fn initMainComputePipeline(self: *Self) void {
-    const gradient_shader = root.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
+    const gradient_shader = core.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, gradient_shader, self.alloc_cbs);
-    const sky_shader = root.shaders.createShaderModule("sky.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
+    const sky_shader = core.shaders.createShaderModule("sky.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, sky_shader, self.alloc_cbs);
 
     const gradient_data = ComputePipeline.EffectData{ .constants = .{
-        .data1 = root.math.Vec4.make(1.0, 0.0, 0.0, 1.0),
-        .data2 = root.math.Vec4.make(0.0, 0.0, 1.0, 1.0),
+        .data1 = core.math.Vec4.make(1.0, 0.0, 0.0, 1.0),
+        .data2 = core.math.Vec4.make(0.0, 0.0, 1.0, 1.0),
     } };
     const sky_data = ComputePipeline.EffectData{ .constants = .{
-        .data1 = root.math.Vec4.make(0.1, 0.2, 0.4, 0.97),
+        .data1 = core.math.Vec4.make(0.1, 0.2, 0.4, 0.97),
     } };
 
     self.main_compute_pipeline = ComputePipeline.init(
@@ -408,7 +404,7 @@ fn initMainComputePipeline(self: *Self) void {
 }
 
 fn initMainGraphicsPipeline(self: *Self) void {
-    const vert_shader = root.shaders.createShaderModule(
+    const vert_shader = core.shaders.createShaderModule(
         "test.vert",
         self.logical_device.handle,
         self.alloc_cbs,
@@ -419,7 +415,7 @@ fn initMainGraphicsPipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    const frag_shader = root.shaders.createShaderModule(
+    const frag_shader = core.shaders.createShaderModule(
         "test.frag",
         self.logical_device.handle,
         self.alloc_cbs,

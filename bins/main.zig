@@ -6,7 +6,6 @@ const texs = core.textures;
 const vma_usage = core.vma_usage;
 const BoundDescriptor = core.BoundDescriptor;
 const ResourceManager = core.ResourceManager;
-const tools = @import("tools");
 const mesh_mod = core.mesh;
 const math_mod = core.math;
 const c = core.clibs;

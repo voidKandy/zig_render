@@ -1,14 +1,13 @@
 const std = @import("std");
 const mem = std.mem;
-const root = @import("../root.zig");
-const imgui = root.clibs.imgui;
-const pipelines = @import("root.zig");
+const core = @import("../root.zig");
+const imgui = core.clibs.imgui;
 const log = std.log.scoped(.GraphicsPipeline);
-const mesh_mod = root.mesh;
-const vki = root.vulkan_init;
-const vk = root.clibs.vk;
-const vma = root.clibs.vma;
-const vma_usage = root.vma_usage;
+const mesh_mod = core.mesh;
+const vki = core.vulkan_init;
+const vk = core.clibs.vk;
+const vma = core.clibs.vma;
+const vma_usage = core.vma_usage;
 const checkVk = vki.checkVk;
 
 pub const MetaData = struct {
@@ -20,13 +19,13 @@ pub const MetaData = struct {
 
 pub const AllocatedData = struct {
     const CreateData = struct {
-        camera_gpu_data: root.Camera.GPUData,
-        materials_file: root.mtl_loader.MtlFile,
-        objects: []const root.obj_loader.ObjFile,
+        camera_gpu_data: core.Camera.GPUData,
+        materials_file: core.mtl_loader.MtlFile,
+        objects: []const core.obj_loader.ObjFile,
     };
 
     camera_uniform: vma_usage.MappedBuffer,
-    textures: []root.Materials.Texture,
+    textures: []core.Materials.Texture,
     meshes_vertex_buffer: vma_usage.AllocatedBuffer,
     meshes_index_buffer: vma_usage.AllocatedBuffer,
     mesh_ranges: []MeshRanges,
@@ -44,19 +43,19 @@ pub const AllocatedData = struct {
     };
 
     pub fn create(
-        allocs: root.VulkanEngine.Allocators,
-        upload_ctx: *root.vulkan_init.UploadContext,
-        logical_device: root.vulkan_init.LogicalDevice,
-        physical_device: root.vulkan_init.PhysicalDevice,
+        allocs: core.VulkanEngine.Allocators,
+        upload_ctx: *core.vulkan_init.UploadContext,
+        logical_device: core.vulkan_init.LogicalDevice,
+        physical_device: core.vulkan_init.PhysicalDevice,
         cd: CreateData,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) std.mem.Allocator.Error!@This() {
-        var materials = root.Materials.initFromMaterialFile(allocs.std, cd.materials_file) catch @panic("failed to create MTL");
+        var materials = core.Materials.initFromMaterialFile(allocs.std, cd.materials_file) catch @panic("failed to create MTL");
         var mat_iter = materials.metadata.keyIterator();
         defer materials.deinit(allocs.std);
         var material_indices = std.StringHashMapUnmanaged(u32){};
         defer material_indices.deinit(allocs.std);
-        const textures = try allocs.std.alloc(root.Materials.Texture, materials.metadata.size);
+        const textures = try allocs.std.alloc(core.Materials.Texture, materials.metadata.size);
 
         var k: u32 = 0;
         while (mat_iter.next()) |key| : (k += 1) {
@@ -78,9 +77,9 @@ pub const AllocatedData = struct {
 
         var all_ranges = try allocs.std.alloc(MeshRanges, cd.objects.len);
 
-        var meshes = try allocs.std.alloc(root.mesh.Mesh3D, cd.objects.len);
+        var meshes = try allocs.std.alloc(core.mesh.Mesh3D, cd.objects.len);
         var all_metadata = try allocs.std.alloc(MetaData, meshes.len);
-        var vertices = try std.ArrayList(root.mesh.Vertex3D).initCapacity(allocs.std, 64);
+        var vertices = try std.ArrayList(core.mesh.Vertex3D).initCapacity(allocs.std, 64);
         var indices = try std.ArrayList(u32).initCapacity(allocs.std, 64);
         defer {
             allocs.std.free(meshes);
@@ -94,7 +93,7 @@ pub const AllocatedData = struct {
 
         for (0..cd.objects.len) |i| {
             const obj_file = cd.objects[i];
-            const mesh = try root.mesh.Mesh3D.fromObjFile(allocs.std, obj_file);
+            const mesh = try core.mesh.Mesh3D.fromObjFile(allocs.std, obj_file);
             defer mesh.deinit(allocs.std);
             const range = MeshRanges{
                 .vertex_range = .{
@@ -141,7 +140,7 @@ pub const AllocatedData = struct {
         }
 
         const vert_alloc_size, const idx_alloc_size = .{
-            vertices.items.len * @sizeOf(root.mesh.Vertex3D),
+            vertices.items.len * @sizeOf(core.mesh.Vertex3D),
             indices.items.len * @sizeOf(u32),
         };
 
@@ -179,7 +178,7 @@ pub const AllocatedData = struct {
             checkVk(vma.MapMemory(allocs.vma, vert_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
             defer vma.UnmapMemory(allocs.vma, vert_staging_buffer.allocation);
 
-            const vert_aligned_data: [*]root.mesh.Vertex3D = @ptrCast(@alignCast(data));
+            const vert_aligned_data: [*]core.mesh.Vertex3D = @ptrCast(@alignCast(data));
             @memcpy(vert_aligned_data, vertices.items);
 
             data = undefined;
@@ -262,7 +261,7 @@ pub const AllocatedData = struct {
 
         const camera_alloc = vma_usage.AllocatedBuffer.create(
             allocs.vma,
-            @sizeOf(root.Camera.GPUData),
+            @sizeOf(core.Camera.GPUData),
             vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             vma.MEMORY_USAGE_CPU_TO_GPU,
             0,
@@ -272,7 +271,7 @@ pub const AllocatedData = struct {
         };
         checkVk(vma.MapMemory(allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
 
-        const aligned_camera: *root.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
+        const aligned_camera: *core.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
 
         aligned_camera.* = cd.camera_gpu_data;
         aligned_camera.*.proj.j.y *= -1;
@@ -287,7 +286,7 @@ pub const AllocatedData = struct {
         };
     }
 
-    pub fn deinit(self: @This(), device: vk.Device, allocs: root.VulkanEngine.Allocators, alloc_cbs: ?*vk.AllocationCallbacks) void {
+    pub fn deinit(self: @This(), device: vk.Device, allocs: core.VulkanEngine.Allocators, alloc_cbs: ?*vk.AllocationCallbacks) void {
         self.meshes_vertex_buffer.deinit(allocs.vma);
         self.meshes_index_buffer.deinit(allocs.vma);
         self.meta_data.deinit(allocs.vma);
@@ -306,12 +305,12 @@ pub const AllocatedData = struct {
 };
 
 pub const SystemsData = struct {
-    camera: root.Camera,
+    camera: core.Camera,
 
     pub fn update(
         self: *@This(),
         alloc_data: AllocatedData,
-        input: root.Input,
+        input: core.Input,
         screen_extent: vk.Extent2D,
     ) void {
         const State = struct {
@@ -340,21 +339,21 @@ pub const SystemsData = struct {
             @as(f32, @floatFromInt(screen_extent.height));
 
         var ubo = switch (self.camera.mode) {
-            .rotate_around => root.Camera.GPUData{
-                .model = root.math.Mat4.IDENTITY.rotate(self.camera.target, time * 1.0),
-                .view = root.math.Mat4.lookAt(self.camera.eye, root.math.Vec3.ZERO, root.math.Vec3.UP),
-                .proj = root.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
+            .rotate_around => core.Camera.GPUData{
+                .model = core.math.Mat4.IDENTITY.rotate(self.camera.target, time * 1.0),
+                .view = core.math.Mat4.lookAt(self.camera.eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
+                .proj = core.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
             },
-            .user_input => root.Camera.GPUData{
-                .model = root.math.Mat4.IDENTITY,
-                .view = root.math.Mat4.lookAt(self.camera.eye, root.math.Vec3.ZERO, root.math.Vec3.UP),
-                .proj = root.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
+            .user_input => core.Camera.GPUData{
+                .model = core.math.Mat4.IDENTITY,
+                .view = core.math.Mat4.lookAt(self.camera.eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
+                .proj = core.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
             },
         };
 
         ubo.proj.j.y *= -1;
 
-        const aligned_data: *root.Camera.GPUData = @ptrCast(@alignCast(alloc_data.camera_uniform.mapped));
+        const aligned_data: *core.Camera.GPUData = @ptrCast(@alignCast(alloc_data.camera_uniform.mapped));
         aligned_data.* = ubo;
     }
 };
@@ -868,14 +867,14 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 pub fn drawImgui(self: *Self, system_data: *SystemsData) void {
     _ = self;
     var open = true;
-    const shown = imgui.Begin("camera", &open, root.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    const shown = imgui.Begin("camera", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
 
     if (shown) {
         imgui.Text("Selected mode: ", @tagName(system_data.camera.mode).ptr);
         if (imgui.BeginCombo("Camera Modes", @tagName(system_data.camera.mode).ptr, 0)) {
             defer imgui.EndCombo();
-            for (std.meta.tags(root.Camera.Mode)) |tag| {
+            for (std.meta.tags(core.Camera.Mode)) |tag| {
                 if (imgui.Selectable(@tagName(tag))) {
                     system_data.camera.mode = tag;
                     break;

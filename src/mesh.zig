@@ -1,8 +1,8 @@
 const std = @import("std");
-const root = @import("root.zig");
-const vma_usage = root.vma_usage;
+const core = @import("root.zig");
+const vma_usage = core.vma_usage;
 const AllocatedBuffer = vma_usage.AllocatedBuffer;
-const checkVk = root.vulkan_init.checkVk;
+const checkVk = core.vulkan_init.checkVk;
 const m3d = @import("math3d.zig");
 const checkTol = @import("tiny_obj_loader.zig").checkTol;
 // const obj_loader = @import("obj_loader.zig");
@@ -64,8 +64,8 @@ pub const Mesh2D = struct {
     pub fn upload(
         self: *@This(),
         vma_a: c.vma.Allocator,
-        upload_ctx: *root.vulkan_init.UploadContext,
-        device: root.vulkan_init.LogicalDevice,
+        upload_ctx: *core.vulkan_init.UploadContext,
+        device: core.vulkan_init.LogicalDevice,
     ) void {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex2D),
@@ -246,7 +246,7 @@ pub const Mesh3D = struct {
         }
     };
 
-    pub fn fromObjFile(a: std.mem.Allocator, obj_mesh: root.obj_loader.ObjFile) std.mem.Allocator.Error!Self {
+    pub fn fromObjFile(a: std.mem.Allocator, obj_mesh: core.obj_loader.ObjFile) std.mem.Allocator.Error!Self {
         var indices = try std.ArrayList(u32).initCapacity(a, obj_mesh.vertices.len);
         var vertices = try std.ArrayList(Vertex3D).initCapacity(a, obj_mesh.vertices.len);
         var uniques = std.HashMap(
@@ -294,7 +294,7 @@ pub const Mesh3D = struct {
         allocator.free(self.indices);
     }
 
-    pub fn createBuffers(self: *Self, vma_a: c.vma.Allocator, upload_ctx: *root.vulkan_init.UploadContext, device: root.vulkan_init.LogicalDevice) Buffers {
+    pub fn createBuffers(self: *Self, vma_a: c.vma.Allocator, upload_ctx: *core.vulkan_init.UploadContext, device: core.vulkan_init.LogicalDevice) Buffers {
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.len * @sizeOf(Vertex3D),
             self.indices.len * @sizeOf(u32),
