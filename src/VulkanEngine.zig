@@ -278,10 +278,12 @@ fn createGraphicsPipelineData(self: *Self) void {
     var materials_file = core.mtl_loader.parseFile(self.allocs.std, "assets/globals.mtl") catch @panic("failed to load materials file");
     defer materials_file.deinit();
 
-    const objects = &[_]core.obj_loader.ObjFile{
-        core.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
+    const objects = &[_]GraphicsPipeline.AllocatedData.SceneObject{
+        .{
+            .object = core.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
+        },
     };
-    defer for (objects) |*o| @constCast(o).deinit();
+    defer for (objects) |*o| @constCast(&o.object).deinit();
 
     const default_camera = core.Camera{};
 
@@ -290,7 +292,7 @@ fn createGraphicsPipelineData(self: *Self) void {
         @as(f32, @floatFromInt(self.swapchain.extent.height));
 
     const camera_gpu_data = core.Camera.GPUData{
-        .model = core.math.Mat4.IDENTITY,
+        // .model = core.math.Mat4.IDENTITY,
         .view = core.math.Mat4.lookAt(
             default_camera.eye,
             core.math.Vec3.ZERO,
@@ -392,20 +394,11 @@ fn initMainComputePipeline(self: *Self) void {
         self.main_compute_pipeline_data,
         self.main_compute_descriptor_set,
     ) catch @panic("OOM");
-    // self.descriptor_sets = self.main_graphics_pipeline.allocateDescriptorSets(
-    //     self.logical_device.handle,
-    //     self.allocs.std,
-    //     // this should be num submeshes
-    //     // BAD
-    //     1,
-    // ) catch @panic("OOM");
-
-    // self.main_graphics_pipeline.allocateTextureDescriptorSet(self.logical_device.handle, &self.texture_descriptor_set);
 }
 
 fn initMainGraphicsPipeline(self: *Self) void {
     const vert_shader = core.shaders.createShaderModule(
-        "test.vert",
+        "main_graphics.vert",
         self.logical_device.handle,
         self.alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
@@ -416,7 +409,7 @@ fn initMainGraphicsPipeline(self: *Self) void {
     );
 
     const frag_shader = core.shaders.createShaderModule(
-        "test.frag",
+        "main_graphics.frag",
         self.logical_device.handle,
         self.alloc_cbs,
     ) orelse @panic("failed to create frag shader module");

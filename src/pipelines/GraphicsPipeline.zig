@@ -15,20 +15,27 @@ pub const MetaData = struct {
     index_offset: u32,
     index_count: u32,
     vertex_offset: u32,
+
+    model_transform: core.math.Mat4,
 };
 
 pub const AllocatedData = struct {
+    pub const SceneObject = struct {
+        object: core.obj_loader.ObjFile,
+        transform: core.math.Mat4 = .IDENTITY,
+    };
     const CreateData = struct {
         camera_gpu_data: core.Camera.GPUData,
         materials_file: core.mtl_loader.MtlFile,
-        objects: []const core.obj_loader.ObjFile,
+        objects: []const SceneObject,
     };
 
-    camera_uniform: vma_usage.MappedBuffer,
+    mesh_ranges: []MeshRanges,
     textures: []core.Materials.Texture,
+
+    camera_uniform: vma_usage.MappedBuffer,
     meshes_vertex_buffer: vma_usage.AllocatedBuffer,
     meshes_index_buffer: vma_usage.AllocatedBuffer,
-    mesh_ranges: []MeshRanges,
     meta_data: vma_usage.MappedBuffer,
 
     const RangeDesc = struct {
@@ -92,8 +99,8 @@ pub const AllocatedData = struct {
         var total_idcs: usize = 0;
 
         for (0..cd.objects.len) |i| {
-            const obj_file = cd.objects[i];
-            const mesh = try core.mesh.Mesh3D.fromObjFile(allocs.std, obj_file);
+            const scene_obj = cd.objects[i];
+            const mesh = try core.mesh.Mesh3D.fromObjFile(allocs.std, scene_obj.object);
             defer mesh.deinit(allocs.std);
             const range = MeshRanges{
                 .vertex_range = .{
@@ -106,20 +113,21 @@ pub const AllocatedData = struct {
                 },
             };
 
-            if (!std.mem.eql(u8, obj_file.material_library_name, materials.library_name)) {
+            if (!std.mem.eql(u8, scene_obj.object.material_library_name, materials.library_name)) {
                 const msg =
                     try std.fmt.allocPrint(allocs.std,
                         \\ Obj file references a materials library that is not loaded: `{s}`
-                    , .{obj_file.material_library_name});
+                    , .{scene_obj.object.material_library_name});
                 defer allocs.std.free(msg);
                 @panic(msg);
             }
 
             const metadata = MetaData{
-                .material_index = material_indices.get(obj_file.objects[0].material_name) orelse {
+                .model_transform = scene_obj.transform,
+                .material_index = material_indices.get(scene_obj.object.objects[0].material_name) orelse {
                     const msg = try std.fmt.allocPrint(allocs.std,
                         \\ Could not find material with name `{s}`
-                    , .{obj_file.objects[0].material_name});
+                    , .{scene_obj.object.objects[0].material_name});
                     defer allocs.std.free(msg);
                     @panic(msg);
                 },
@@ -314,8 +322,8 @@ pub const SystemsData = struct {
         screen_extent: vk.Extent2D,
     ) void {
         const State = struct {
-            /// for rotation so i decided not to store it in camera
             var start: i128 = 0;
+            var yaw: f32 = 0.0;
         };
         if (State.start == 0)
             State.start = std.time.nanoTimestamp();
@@ -333,19 +341,24 @@ pub const SystemsData = struct {
         const now = std.time.nanoTimestamp();
         const delta_ns = now - State.start;
         const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
+        State.yaw = time * 1.0;
 
         const aspect =
             @as(f32, @floatFromInt(screen_extent.width)) /
             @as(f32, @floatFromInt(screen_extent.height));
 
+        const eye = core.math.Vec3.make(
+            self.camera.target.x + self.camera.distance * @sin(State.yaw),
+            self.camera.target.y + self.camera.distance * @cos(State.yaw),
+            self.camera.target.z,
+        );
+
         var ubo = switch (self.camera.mode) {
             .rotate_around => core.Camera.GPUData{
-                .model = core.math.Mat4.IDENTITY.rotate(self.camera.target, time * 1.0),
-                .view = core.math.Mat4.lookAt(self.camera.eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
+                .view = core.math.Mat4.lookAt(eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
                 .proj = core.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
             },
             .user_input => core.Camera.GPUData{
-                .model = core.math.Mat4.IDENTITY,
                 .view = core.math.Mat4.lookAt(self.camera.eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
                 .proj = core.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
             },
@@ -883,67 +896,3 @@ pub fn drawImgui(self: *Self, system_data: *SystemsData) void {
         }
     }
 }
-
-// pub fn oldDraw(
-//     self: Self,
-//     sets: std.ArrayList(std.ArrayList(vk.DescriptorSet)),
-//     window_extent: vk.Extent2D,
-//     cmd: vk.CommandBuffer,
-// ) void {
-//     const viewport = vk.Viewport{
-//         .x = 0,
-//         .y = 0,
-//         .width = @as(f32, (@floatFromInt(window_extent.width))),
-//         .height = @as(f32, (@floatFromInt(window_extent.height))),
-//         .minDepth = 0.0,
-//         .maxDepth = 1.0,
-//     };
-//     vk.CmdSetViewport(cmd, 0, 1, &viewport);
-
-//     const scissor = vk.Rect2D{
-//         .offset = .{
-//             .x = 0,
-//             .y = 0,
-//         },
-//         .extent = window_extent,
-//     };
-
-//     vk.CmdSetScissor(cmd, 0, 1, &scissor);
-
-//     for (sets.items) |set_array| {
-//         vk.CmdBindDescriptorSets(
-//             cmd,
-//             vk.PIPELINE_BIND_POINT_GRAPHICS,
-//             self.pipeline_layout,
-//             0,
-//             1,
-//             set_array.items.ptr,
-//             0,
-//             null,
-//         );
-//     }
-//     for (model_desc.ranges, 0..) |range, submesh_index| {
-//         // bind set 0: VB, IB, UBO for this submesh
-//         vk.CmdBindDescriptorSets(
-//             cmd,
-//             vk.PIPELINE_BIND_POINT_GRAPHICS,
-//             self.pipeline_layout,
-//             0, // set index 0
-//             1,
-//             &sets.items[submesh_index].items[0],
-//             0,
-//             null,
-//         );
-
-//         // no vertex/index buffer binding -- shader reads from storage buffers
-//         // firstInstance = submesh_index so gl_BaseInstance == DrawId in shader
-//         vk.CmdDrawIndexed(
-//             cmd,
-//             @intCast(range.index_range.range / @sizeOf(u16)),
-//             1, // instance count
-//             @intCast(range.index_range.offset / @sizeOf(u16)), // firstIndex
-//             @intCast(range.vertex_range.offset / @sizeOf(mesh_mod.Vertex3D)), // vertexOffset... but unused since shader indexes manually
-//             @intCast(submesh_index), // firstInstance = DrawId
-//         );
-//     }
-// }
