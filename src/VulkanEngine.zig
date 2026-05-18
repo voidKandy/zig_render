@@ -284,6 +284,11 @@ fn createGraphicsPipelineData(self: *Self) void {
         },
         .{
             .object = core.obj_loader.parseFile(self.allocs.std, "assets/monkey.obj") catch @panic("failed to read monkey.obj"),
+            .transform = blk: {
+                const translate = core.math.Mat4.IDENTITY.translate(core.math.Vec3.make(0, 2, 0));
+                const rotate = core.math.Mat4.IDENTITY.rotate(core.math.Vec3.make(0, 1, 0), std.math.pi / 2.0).rotate(core.math.Vec3.make(1, 0, 0), std.math.pi / 2.0);
+                break :blk translate.mul(rotate);
+            },
         },
     };
     defer for (objects) |*o| @constCast(&o.object).deinit();
@@ -672,8 +677,8 @@ fn recordCommandBuffer(
     const viewport = vk.Viewport{
         .x = 0,
         .y = 0,
-        .width = @floatFromInt(window_extent.width),
-        .height = @floatFromInt(window_extent.height),
+        .width = @floatFromInt(self.swapchain.extent.width),
+        .height = @floatFromInt(self.swapchain.extent.height),
         .minDepth = 0.0,
         .maxDepth = 1.0,
     };
@@ -681,7 +686,7 @@ fn recordCommandBuffer(
 
     const scissor = vk.Rect2D{
         .offset = .{ .x = 0, .y = 0 },
-        .extent = window_extent,
+        .extent = self.swapchain.extent,
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
