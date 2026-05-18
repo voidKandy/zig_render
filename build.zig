@@ -22,7 +22,6 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/imgui/"));
     core_lib.addIncludePath(b.path("libs/tinyobjloader/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/stb_image.c"), .flags = &.{""} });
-    core_lib.addCSourceFile(.{ .file = b.path("src/tiny_obj_loader.c"), .flags = &.{""} });
 
     compileAllShaders(b, core_lib);
 

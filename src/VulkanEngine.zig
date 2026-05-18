@@ -13,11 +13,11 @@ const checkVk = vki.checkVk;
 const sdl = c.sdl;
 const checkSdl = core.checkSdl;
 const VkError = vki.VkError;
-pub const MAIN_RENDER_PASS_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
-
 const log = std.log.scoped(.VulkanEngine);
+
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
-const window_extent = vk.Extent2D{ .width = 1600, .height = 900 };
+pub const MAIN_RENDER_PASS_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
+const INITIAL_WINDOW_EXTENT = vk.Extent2D{ .width = 1600, .height = 900 };
 
 const Self = @This();
 
@@ -61,12 +61,10 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 pub fn init(
     a: std.mem.Allocator,
     alloc_cbs: ?*vk.AllocationCallbacks,
-    // createResourcesFn: *const fn (*@This()) anyerror!ResourceManager,
 ) Self {
     return .{
         .alloc_cbs = alloc_cbs,
         .allocs = .{ .std = a },
-        // .createResourcesFn = createResourcesFn,
     };
 }
 
@@ -161,7 +159,7 @@ pub fn run(self: *Self) void {
 
 fn initWindow(self: *Self) void {
     checkSdl(sdl.Init(sdl.INIT_VIDEO));
-    const window = sdl.CreateWindow("Vulkan", window_extent.width, window_extent.height, sdl.WINDOW_VULKAN | sdl.WINDOW_RESIZABLE) orelse @panic("Failed to create SDL window");
+    const window = sdl.CreateWindow("Vulkan", INITIAL_WINDOW_EXTENT.width, INITIAL_WINDOW_EXTENT.height, sdl.WINDOW_VULKAN | sdl.WINDOW_RESIZABLE) orelse @panic("Failed to create SDL window");
     self.window = window;
 }
 
@@ -612,8 +610,8 @@ fn drawFrame(self: *Self) void {
                     .surface = self.surface,
                     .old_swapchain = self.swapchain.handle,
                     .vsync = true,
-                    .window_width = @intCast(window_extent.width),
-                    .window_height = @intCast(window_extent.height),
+                    .window_width = @intCast(INITIAL_WINDOW_EXTENT.width),
+                    .window_height = @intCast(INITIAL_WINDOW_EXTENT.height),
                     .alloc_cb = self.alloc_cbs,
                     .depth_buffer = true,
                 },

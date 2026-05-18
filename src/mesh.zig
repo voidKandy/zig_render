@@ -4,8 +4,6 @@ const vma_usage = core.vma_usage;
 const AllocatedBuffer = vma_usage.AllocatedBuffer;
 const checkVk = core.vulkan_init.checkVk;
 const m3d = @import("math3d.zig");
-const checkTol = @import("tiny_obj_loader.zig").checkTol;
-// const obj_loader = @import("obj_loader.zig");
 const c = @import("clibs.zig");
 const vk = c.vk;
 
