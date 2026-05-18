@@ -20,14 +20,14 @@ pub const MetaData = struct {
 };
 
 pub const AllocatedData = struct {
-    pub const SceneObject = struct {
+    pub const MeshObject = struct {
         object: core.obj_loader.ObjFile,
         transform: core.math.Mat4 = .IDENTITY,
     };
     const CreateData = struct {
         camera_gpu_data: core.Camera.GPUData,
         materials_file: core.mtl_loader.MtlFile,
-        objects: []const SceneObject,
+        mesh_objects: []const MeshObject,
     };
 
     mesh_ranges: []MeshRanges,
@@ -82,9 +82,9 @@ pub const AllocatedData = struct {
                 mat_texture;
         }
 
-        var all_ranges = try allocs.std.alloc(MeshRanges, cd.objects.len);
+        var all_ranges = try allocs.std.alloc(MeshRanges, cd.mesh_objects.len);
 
-        var meshes = try allocs.std.alloc(core.mesh.Mesh3D, cd.objects.len);
+        var meshes = try allocs.std.alloc(core.mesh.Mesh3D, cd.mesh_objects.len);
         var all_metadata = try allocs.std.alloc(MetaData, meshes.len);
         var vertices = try std.ArrayList(core.mesh.Vertex3D).initCapacity(allocs.std, 64);
         var indices = try std.ArrayList(u32).initCapacity(allocs.std, 64);
@@ -98,8 +98,8 @@ pub const AllocatedData = struct {
         var total_verts: usize = 0;
         var total_idcs: usize = 0;
 
-        for (0..cd.objects.len) |i| {
-            const scene_obj = cd.objects[i];
+        for (0..cd.mesh_objects.len) |i| {
+            const scene_obj = cd.mesh_objects[i];
             const mesh = try core.mesh.Mesh3D.fromObjFile(allocs.std, scene_obj.object);
             defer mesh.deinit(allocs.std);
             const range = MeshRanges{
@@ -124,13 +124,10 @@ pub const AllocatedData = struct {
 
             const metadata = MetaData{
                 .model_transform = scene_obj.transform,
-                .material_index = material_indices.get(scene_obj.object.objects[0].material_name) orelse {
-                    const msg = try std.fmt.allocPrint(allocs.std,
+                .material_index = material_indices.get(scene_obj.object.objects[0].material_name) orelse
+                    std.debug.panic(
                         \\ Could not find material with name `{s}`
-                    , .{scene_obj.object.objects[0].material_name});
-                    defer allocs.std.free(msg);
-                    @panic(msg);
-                },
+                    , .{scene_obj.object.objects[0].material_name}),
                 .index_count = @as(u32, @intCast(range.index_range.range)),
                 .index_offset = @as(u32, @intCast(range.index_range.offset)),
                 .vertex_offset = @as(u32, @intCast(range.vertex_range.offset)),
@@ -446,6 +443,10 @@ fn initCommon(
 
     const vertex_input_ci = vk.PipelineVertexInputStateCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 0,
+        .pVertexBindingDescriptions = null,
+        .vertexAttributeDescriptionCount = 0,
+        .pVertexAttributeDescriptions = null,
     };
 
     const input_assembly_ci = vk.PipelineInputAssemblyStateCreateInfo{

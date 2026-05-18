@@ -246,9 +246,9 @@ pub const Mesh3D = struct {
         }
     };
 
-    pub fn fromObjFile(a: std.mem.Allocator, obj_mesh: core.obj_loader.ObjFile) std.mem.Allocator.Error!Self {
-        var indices = try std.ArrayList(u32).initCapacity(a, obj_mesh.vertices.len);
-        var vertices = try std.ArrayList(Vertex3D).initCapacity(a, obj_mesh.vertices.len);
+    pub fn fromObjFile(a: std.mem.Allocator, obj_file: core.obj_loader.ObjFile) std.mem.Allocator.Error!Self {
+        var indices = try std.ArrayList(u32).initCapacity(a, obj_file.vertices.len);
+        var vertices = try std.ArrayList(Vertex3D).initCapacity(a, obj_file.vertices.len);
         var uniques = std.HashMap(
             Vertex3D,
             u32,
@@ -256,31 +256,41 @@ pub const Mesh3D = struct {
             std.hash_map.default_max_load_percentage,
         ).init(a);
         defer uniques.deinit();
+        var current_vert_idx: u32 = 0;
+        if (obj_file.objects.len != 1) @panic("multiple objects in obj file not implemented!");
 
-        var current_idx_idx: u32 = 0;
-        if (obj_mesh.objects.len != 1) @panic("multiple objects in obj file not implemented!");
+        const object = obj_file.objects[0];
+        var face_base_idx: usize = 0;
 
-        for (obj_mesh.objects[0].indices) |idx| {
-            var uv = Vec2.fromSizedArray(obj_mesh.uvs[idx.uv]);
-            uv.y = 1.0 - uv.y;
-            const pos = obj_mesh.vertices[idx.vertex];
-            const norm = obj_mesh.normals[idx.normal];
-
-            const vertex = Vertex3D{
-                .position = Vec4.make(pos[0], pos[1], pos[2], 0.0),
-                .uv = uv,
-                .normal = Vec4.make(norm[0], norm[1], norm[2], 0.0),
-                .color = Vec4.ZERO,
-            };
-
-            const entry = try uniques.getOrPut(vertex);
-
-            if (!entry.found_existing) {
-                entry.value_ptr.* = current_idx_idx;
-                try vertices.append(a, vertex);
-                current_idx_idx += 1;
+        for (object.face_vertices) |face_vert_count| {
+            for (0..face_vert_count - 2) |i| {
+                const tri_indices = [3]usize{
+                    face_base_idx,
+                    face_base_idx + i + 1,
+                    face_base_idx + i + 2,
+                };
+                for (tri_indices) |fi| {
+                    const idx = object.indices[fi];
+                    var uv = Vec2.fromSizedArray(obj_file.uvs[idx.uv]);
+                    uv.y = 1.0 - uv.y;
+                    const pos = obj_file.vertices[idx.vertex];
+                    const norm = obj_file.normals[idx.normal];
+                    const vertex = Vertex3D{
+                        .position = Vec4.make(pos[0], pos[1], pos[2], 0.0),
+                        .uv = uv,
+                        .normal = Vec4.make(norm[0], norm[1], norm[2], 0.0),
+                        .color = Vec4.ZERO,
+                    };
+                    const entry = try uniques.getOrPut(vertex);
+                    if (!entry.found_existing) {
+                        entry.value_ptr.* = current_vert_idx;
+                        try vertices.append(a, vertex);
+                        current_vert_idx += 1;
+                    }
+                    try indices.append(a, entry.value_ptr.*);
+                }
             }
-            try indices.append(a, entry.value_ptr.*);
+            face_base_idx += face_vert_count;
         }
 
         return .{
@@ -288,6 +298,53 @@ pub const Mesh3D = struct {
             .indices = try indices.toOwnedSlice(a),
         };
     }
+
+    // pub fn fromObjFile(a: std.mem.Allocator, obj_file: core.obj_loader.ObjFile) std.mem.Allocator.Error!Self {
+    //     var indices = try std.ArrayList(u32).initCapacity(a, obj_file.vertices.len);
+    //     var vertices = try std.ArrayList(Vertex3D).initCapacity(a, obj_file.vertices.len);
+    //     var uniques = std.HashMap(
+    //         Vertex3D,
+    //         u32,
+    //         Vertex3DHash,
+    //         std.hash_map.default_max_load_percentage,
+    //     ).init(a);
+    //     defer uniques.deinit();
+
+    //     var current_idx_idx: u32 = 0;
+    //     if (obj_file.objects.len != 1) @panic("multiple objects in obj file not implemented!");
+
+    //     if (obj_file.objects[0].face_vertices[0] != 3) {
+    //         std.debug.panic("non-triangle face: {} vertices", .{obj_file.objects[0].face_vertices[0]});
+    //     }
+
+    //     for (obj_file.objects[0].indices) |idx| {
+    //         var uv = Vec2.fromSizedArray(obj_file.uvs[idx.uv]);
+    //         uv.y = 1.0 - uv.y;
+    //         const pos = obj_file.vertices[idx.vertex];
+    //         const norm = obj_file.normals[idx.normal];
+
+    //         const vertex = Vertex3D{
+    //             .position = Vec4.make(pos[0], pos[1], pos[2], 0.0),
+    //             .uv = uv,
+    //             .normal = Vec4.make(norm[0], norm[1], norm[2], 0.0),
+    //             .color = Vec4.ZERO,
+    //         };
+
+    //         const entry = try uniques.getOrPut(vertex);
+
+    //         if (!entry.found_existing) {
+    //             entry.value_ptr.* = current_idx_idx;
+    //             try vertices.append(a, vertex);
+    //             current_idx_idx += 1;
+    //         }
+    //         try indices.append(a, entry.value_ptr.*);
+    //     }
+
+    //     return .{
+    //         .vertices = try vertices.toOwnedSlice(a),
+    //         .indices = try indices.toOwnedSlice(a),
+    //     };
+    // }
 
     pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
         allocator.free(self.vertices);

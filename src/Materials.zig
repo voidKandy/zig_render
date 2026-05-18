@@ -285,6 +285,10 @@ pub fn initFromMaterialFile(
             .width = width,
         };
         defer core.clibs.stbi.image_free(image_data);
+        log.debug(
+            \\ Material '{s}' loaded
+        , .{mat.name});
+
         try materials.appendSlice(a, image_data[0..byte_count]);
         try metadatas.put(a, mat.name, offset);
     }

@@ -29,16 +29,13 @@ layout(location = 1) flat out uint MaterialIndex;
 
 void main()
 {
-
     uint meshIdx = uint(gl_InstanceIndex);
-
     MetaData md = MetaBuf.metas[meshIdx];
-
     MaterialIndex = md.MaterialIndex;
 
     int Index = in_Indices.i[gl_VertexIndex];
 
-    VertexData vtx = in_Vertices.v[Index];
+    VertexData vtx = in_Vertices.v[Index + md.VertexOffset];
     if (gl_VertexIndex == 0) {
         debugPrintfEXT(
             "mesh=%u vert=%u idx=%u md(v=%u i=%u mat=%u) pos=(%f,%f,%f) uv=(%f,%f)\n",
@@ -55,11 +52,6 @@ void main()
             vtx.uv.y
         );
     }
-
-    // gl_Position = vec4(vtx.position.xy, 0.0, 1.0);
-    // gl_Position = camera_Ubo.model * vec4(vtx.position.xyz, 1.0);
-    // gl_Position = camera_Ubo.view * vec4(vtx.position.xyz, 1.0);
     gl_Position = camera_Ubo.proj * camera_Ubo.view * md.ModelTransform * vec4(vtx.position.xyz, 1.0);
-
     texCoord = vec2(vtx.uv.x, vtx.uv.y);
 }

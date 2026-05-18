@@ -278,9 +278,12 @@ fn createGraphicsPipelineData(self: *Self) void {
     var materials_file = core.mtl_loader.parseFile(self.allocs.std, "assets/globals.mtl") catch @panic("failed to load materials file");
     defer materials_file.deinit();
 
-    const objects = &[_]GraphicsPipeline.AllocatedData.SceneObject{
+    const objects = &[_]GraphicsPipeline.AllocatedData.MeshObject{
         .{
             .object = core.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
+        },
+        .{
+            .object = core.obj_loader.parseFile(self.allocs.std, "assets/monkey.obj") catch @panic("failed to read monkey.obj"),
         },
     };
     defer for (objects) |*o| @constCast(&o.object).deinit();
@@ -292,7 +295,6 @@ fn createGraphicsPipelineData(self: *Self) void {
         @as(f32, @floatFromInt(self.swapchain.extent.height));
 
     const camera_gpu_data = core.Camera.GPUData{
-        // .model = core.math.Mat4.IDENTITY,
         .view = core.math.Mat4.lookAt(
             default_camera.eye,
             core.math.Vec3.ZERO,
@@ -314,7 +316,7 @@ fn createGraphicsPipelineData(self: *Self) void {
         .{
             .camera_gpu_data = camera_gpu_data,
             .materials_file = materials_file,
-            .objects = objects,
+            .mesh_objects = objects,
         },
         self.alloc_cbs,
     ) catch @panic("OOM");
@@ -711,27 +713,12 @@ fn recordCommandBuffer(
             frame.main_command_buffer,
             @as(u32, @intCast(range.index_range.range)),
             1, // num instances
-            0,
-            // @as(u32, @intCast(range.vertex_range.offset)),
+            @as(u32, @intCast(range.index_range.offset)),
             @as(u32, @intCast(idx)), // first instance
         );
-        // vk.CmdBindIndexBuffer(
-        //     frame.main_command_buffer,
-        //     self.main_graphics_pipeline_data.meshes_index_buffer.buffer,
-        //     range.index_range.offset * @sizeOf(u16),
-        //     vk.INDEX_TYPE_UINT16,
-        // );
-        // vk.CmdDrawIndexed(
-        //     frame.main_command_buffer,
-        //     @intCast(range.index_range.range),
-        //     1, // instance count
-        //     @intCast(range.index_range.offset),
-        //     @intCast(range.vertex_range.offset), // vertexOffset... but unused since shader indexes manually
-        //     @intCast(idx),
-        // );
-
-        c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
     }
+
+    c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }
 
 fn initImgui(self: *Self) void {
