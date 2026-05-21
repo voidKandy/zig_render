@@ -11,7 +11,7 @@ pub inline fn abs(f: anytype) @TypeOf(f) {
     return if (f < 0) -f else f;
 }
 
-pub const Vec2 = packed struct {
+pub const Vec2 = extern struct {
     x: f32,
     y: f32,
 
@@ -30,7 +30,7 @@ pub const Vec2 = packed struct {
     }
 };
 
-pub const Vec3 = packed struct {
+pub const Vec3 = extern struct {
     x: f32,
     y: f32,
     z: f32,
@@ -108,7 +108,7 @@ pub const Vec3 = packed struct {
     }
 };
 
-pub const Vec4 = packed struct {
+pub const Vec4 = extern struct {
     x: f32,
     y: f32,
     z: f32,
@@ -130,6 +130,10 @@ pub const Vec4 = packed struct {
 
     pub inline fn make(x: f32, y: f32, z: f32, w: f32) Self {
         return .{ .x = x, .y = y, .z = z, .w = w };
+    }
+
+    pub inline fn fromSizedArray(array: [4]f32) Self {
+        return .{ .x = array[0], .y = array[1], .z = array[2], .w = array[3] };
     }
 
     pub fn ptr(self: *Vec4) [*c]f32 {
@@ -159,7 +163,7 @@ pub const Vec4 = packed struct {
     }
 };
 
-pub const Mat4 = packed struct {
+pub const Mat4 = extern struct {
     i: Vec4,
     j: Vec4,
     k: Vec4,

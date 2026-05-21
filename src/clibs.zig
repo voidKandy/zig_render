@@ -8,22 +8,7 @@ const c = @cImport({
     @cInclude("cimgui.h");
     @cInclude("cimgui_impl_vulkan.h");
     @cInclude("cimgui_impl_sdl3.h");
-    @cInclude("tiny_obj_loader_c.h");
 });
-
-pub const tol = struct {
-    pub const parseObject = c.tinyobj_parse_obj;
-    pub const FileReaderCallback = c.file_reader_callback;
-    pub const Shape = c.tinyobj_shape_t;
-    pub const Attributes = c.tinyobj_attrib_t;
-    pub const Material = c.tinyobj_material_t;
-    pub const VertexIndex = c.tinyobj_vertex_index_t;
-
-    pub const SUCCESS = c.TINYOBJ_SUCCESS;
-    pub const ERROR_EMPTY = c.TINYOBJ_ERROR_EMPTY;
-    pub const ERROR_INVALID_PARAMETER = c.TINYOBJ_ERROR_INVALID_PARAMETER;
-    pub const ERROR_FILE_OPERATION = c.TINYOBJ_ERROR_FILE_OPERATION;
-};
 
 /// SDL3
 pub const sdl = struct {
@@ -240,6 +225,9 @@ pub const vma = struct {
     pub const UnmapMemory = c.vmaUnmapMemory;
     pub const FlushAllocation = c.vmaFlushAllocation;
 
+    pub const TotalStatistics = c.VmaTotalStatistics;
+    pub const CalculateStatistics = c.vmaCalculateStatistics;
+
     pub const MEMORY_USAGE_CPU_TO_GPU = c.VMA_MEMORY_USAGE_CPU_TO_GPU;
     pub const MEMORY_USAGE_CPU_ONLY = c.VMA_MEMORY_USAGE_CPU_ONLY;
     pub const MEMORY_USAGE_GPU_ONLY = c.VMA_MEMORY_USAGE_GPU_ONLY;
@@ -259,15 +247,19 @@ pub const vk = struct {
     pub const CommandPoolCreateInfo = c.VkCommandPoolCreateInfo;
     pub const CommandBufferAllocateInfo = c.VkCommandBufferAllocateInfo;
     pub const DebugUtilsMessengerEXT = c.VkDebugUtilsMessengerEXT;
+
     pub const DependencyFlags = c.VkDependencyFlags;
     pub const DescriptorPool = c.VkDescriptorPool;
     pub const DescriptorType = c.VkDescriptorType;
     pub const DescriptorPoolSize = c.VkDescriptorPoolSize;
     pub const DescriptorSet = c.VkDescriptorSet;
     pub const DescriptorSetAllocateInfo = c.VkDescriptorSetAllocateInfo;
+    pub const DescriptorSetVariableDescriptorCountAllocateInfo = c.VkDescriptorSetVariableDescriptorCountAllocateInfo;
     pub const DescriptorSetLayout = c.VkDescriptorSetLayout;
     pub const DescriptorSetLayoutCreateFlags = c.VkDescriptorSetLayoutCreateFlags;
     pub const DescriptorSetLayoutBinding = c.VkDescriptorSetLayoutBinding;
+    pub const DescriptorSetLayoutBindingFlagsCreateInfo = c.VkDescriptorSetLayoutBindingFlagsCreateInfo;
+    pub const DescriptorBindingFlags = c.VkDescriptorBindingFlags;
     pub const Device = c.VkDevice;
     pub const DeviceAddress = c.VkDeviceAddress;
     pub const DeviceSize = c.VkDeviceSize;
@@ -290,6 +282,7 @@ pub const vk = struct {
     pub const PhysicalDevice = c.VkPhysicalDevice;
     pub const PhysicalDeviceFeatures = c.VkPhysicalDeviceFeatures;
     pub const PhysicalDeviceFeatures2 = c.VkPhysicalDeviceFeatures2;
+    pub const PhysicalDeviceDescriptorIndexingFeatures = c.VkPhysicalDeviceDescriptorIndexingFeatures;
     pub const PhysicalDeviceMemoryProperties = c.VkPhysicalDeviceMemoryProperties;
     pub const PhysicalDeviceProperties = c.VkPhysicalDeviceProperties;
     pub const Pipeline = c.VkPipeline;
@@ -310,6 +303,7 @@ pub const vk = struct {
     pub const FrontFace = c.VkFrontFace;
     pub const CullModeFlags = c.VkCullModeFlags;
     pub const PolygonMode = c.VkPolygonMode;
+    pub const CompareOp = c.VkCompareOp;
 
     /// A union of either:
     ///    **VkClearColorValue:**
@@ -368,7 +362,6 @@ pub const vk = struct {
     pub const RenderingAttachmentInfo = c.VkRenderingAttachmentInfo;
     pub const SubmitInfo = c.VkSubmitInfo;
     pub const BufferCopy = c.VkBufferCopy;
-    pub const ResetCommandPool = c.vkResetCommandPool;
     pub const SamplerCreateInfo = c.VkSamplerCreateInfo;
     pub const Sampler = c.VkSampler;
     pub const DescriptorImageInfo = c.VkDescriptorImageInfo;
@@ -416,6 +409,9 @@ pub const vk = struct {
 
     pub const MemoryRequirements = c.VkMemoryRequirements;
     pub const MemoryAllocateInfo = c.VkMemoryAllocateInfo;
+
+    pub const ValidationFeaturesEXT = c.VkValidationFeaturesEXT;
+    pub const ValidationFeatureEnableEXT = c.VkValidationFeatureEnableEXT;
 
     pub const MAKE_VERSION = c.VK_MAKE_VERSION;
     pub const TRUE = c.VK_TRUE;
@@ -466,6 +462,7 @@ pub const vk = struct {
     pub const OPERATION_NOT_DEFERRED_KHR = c.VK_OPERATION_NOT_DEFERRED_KHR;
     pub const ERROR_COMPRESSION_EXHAUSTED_EXT = c.VK_ERROR_COMPRESSION_EXHAUSTED_EXT;
     pub const ERROR_INCOMPATIBLE_SHADER_BINARY_EXT = c.VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
+    pub const STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
     pub const STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pub const STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     pub const STRUCTURE_TYPE_RENDERING_INFO = c.VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -496,6 +493,7 @@ pub const vk = struct {
     pub const STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     pub const STRUCTURE_TYPE_PRESENT_INFO_KHR = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pub const STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    pub const STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
     pub const STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     pub const STRUCTURE_TYPE_BUFFER_CREATE_INFO = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     pub const STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -510,6 +508,7 @@ pub const vk = struct {
     pub const STRUCTURE_TYPE_APPLICATION_INFO = c.VK_STRUCTURE_TYPE_APPLICATION_INFO;
     pub const STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     pub const STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+    pub const STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
     pub const STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     pub const STRUCTURE_TYPE_DEVICE_CREATE_INFO = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     pub const STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO = c.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO;
@@ -555,6 +554,8 @@ pub const vk = struct {
     pub const DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER = c.VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
     pub const DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
     pub const DESCRIPTOR_TYPE_INPUT_ATTACHMENT = c.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+    pub const DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT = c.VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+    pub const DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT = c.VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
     pub const SHADER_STAGE_VERTEX_BIT = c.VK_SHADER_STAGE_VERTEX_BIT;
     pub const SHADER_STAGE_FRAGMENT_BIT = c.VK_SHADER_STAGE_FRAGMENT_BIT;
     pub const SHADER_STAGE_COMPUTE_BIT = c.VK_SHADER_STAGE_COMPUTE_BIT;
@@ -661,6 +662,12 @@ pub const vk = struct {
 
     pub const STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
     pub const STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    pub const VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT = c.VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT;
+    pub const STRUCTURE_TYPE_VALIDATION_FEATURES_EXT = c.VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    pub const STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT = c.VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
+    pub const DEBUG_REPORT_INFORMATION_BIT_EXT = c.VK_DEBUG_REPORT_INFORMATION_BIT_EXT;
+    pub const DEBUG_REPORT_ERROR_BIT_EXT = c.VK_DEBUG_REPORT_ERROR_BIT_EXT;
+    pub const DEBUG_REPORT_WARNING_BIT_EXT = c.VK_DEBUG_REPORT_WARNING_BIT_EXT;
 
     pub const INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR = c.VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
     pub const KHR_PORTABILITY_SUBSET_EXTENSION_NAME = c.VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
@@ -677,6 +684,8 @@ pub const vk = struct {
     pub const API_VERSION_MAJOR = c.VK_API_VERSION_MAJOR;
     pub const API_VERSION_MINOR = c.VK_API_VERSION_MINOR;
     pub const API_VERSION_PATCH = c.VK_API_VERSION_PATCH;
+
+    pub const WHOLE_SIZE = c.VK_WHOLE_SIZE;
 
     pub const CreateCommandPool = c.vkCreateCommandPool;
     pub const DestroyCommandPool = c.vkDestroyCommandPool;
@@ -780,6 +789,7 @@ pub const vk = struct {
     pub const UnmapMemory = c.vkUnmapMemory;
 
     pub const GetBufferMemoryRequirements = c.vkGetBufferMemoryRequirements;
+    pub const ResetCommandPool = c.vkResetCommandPool;
 };
 
 pub const imgui = struct {
@@ -809,6 +819,9 @@ pub const imgui = struct {
     pub const EndCombo = c.ImGui_EndCombo;
     pub const InputFloat4 = c.ImGui_InputFloat4;
     pub const SliderFloat4 = c.ImGui_SliderFloat4;
+
+    pub const WindowFlags = c.ImGuiWindowFlags;
+    pub const WINDOW_ALWAYS_AUTO_RESIZE = c.ImGuiWindowFlags_AlwaysAutoResize;
 
     pub const impl_vulkan = struct {
         pub const Init = c.cImGui_ImplVulkan_Init;

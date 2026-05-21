@@ -1,5 +1,5 @@
 const std = @import("std");
-const root = @import("root.zig");
+const core = @import("root.zig");
 pub const c = @import("clibs.zig");
 const vma_usage = @import("vma_usage.zig");
 const vk = c.vk;
@@ -273,7 +273,7 @@ pub const Instance = struct {
             try checkVk(vk.EnumerateInstanceVersion(@ptrCast(&api_requested)));
         }
 
-        var enable_validation = opts.debug;
+        var debug = opts.debug;
 
         var arena_state = std.heap.ArenaAllocator.init(alloc);
         defer arena_state.deinit();
@@ -282,25 +282,16 @@ pub const Instance = struct {
         // Get supported layers and extensions
         var layer_count: u32 = undefined;
         try checkVk(vk.EnumerateInstanceLayerProperties(&layer_count, null));
-        const layer_props = try arena.alloc(vk.LayerProperties, layer_count);
-        try checkVk(vk.EnumerateInstanceLayerProperties(&layer_count, layer_props.ptr));
 
         var extension_count: u32 = undefined;
         try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, null));
         const extension_props = try arena.alloc(vk.ExtensionProperties, extension_count);
         try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, extension_props.ptr));
 
-        // Check if the validation layer is supported
         var layers = std.ArrayListUnmanaged([*c]const u8){};
-        if (enable_validation) {
-            enable_validation = blk: for (layer_props) |layer_prop| {
-                const layer_name: [*c]const u8 = @ptrCast(layer_prop.layerName[0..]);
-                const validation_layer_name: [*c]const u8 = "VK_LAYER_KHRONOS_validation";
-                if (std.mem.eql(u8, std.mem.span(validation_layer_name), std.mem.span(layer_name))) {
-                    try layers.append(arena, validation_layer_name);
-                    break :blk true;
-                }
-            } else false;
+        if (debug) {
+            const validation_layer_name: [*c]const u8 = "VK_LAYER_KHRONOS_validation";
+            try layers.append(arena, validation_layer_name);
         }
 
         // Check if the required extensions are supported
@@ -337,18 +328,18 @@ pub const Instance = struct {
         // try extensions.append(arena, vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 
         // If we need validation, also add the debug utils extension
-        if (enable_validation and ExtensionFinder.find("VK_EXT_debug_utils", extension_props)) {
+        if (debug and ExtensionFinder.find("VK_EXT_debug_utils", extension_props)) {
             try extensions.append(arena, "VK_EXT_debug_utils");
         } else {
-            enable_validation = false;
+            debug = false;
         }
 
-        const app_info = std.mem.zeroInit(vk.ApplicationInfo, .{
+        const app_info = vk.ApplicationInfo{
             .sType = vk.STRUCTURE_TYPE_APPLICATION_INFO,
             .apiVersion = opts.api_version,
             .pApplicationName = opts.application_name,
             .pEngineName = opts.engine_name orelse opts.application_name,
-        });
+        };
 
         log.info(
             \\ Creating Instance with extensions:
@@ -358,8 +349,16 @@ pub const Instance = struct {
                 \\ {s}
             , .{i});
         }
+        const validation_features = vk.ValidationFeaturesEXT{
+            .sType = vk.STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
+            .enabledValidationFeatureCount = 1,
+            .pEnabledValidationFeatures = &[_]vk.ValidationFeatureEnableEXT{
+                vk.VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+            },
+        };
 
-        const instance_info = std.mem.zeroInit(vk.InstanceCreateInfo, .{
+        const instance_info = vk.InstanceCreateInfo{
+            .pNext = if (debug) &validation_features else null,
             .flags = vk.INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
             .sType = vk.STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             .pApplicationInfo = &app_info,
@@ -367,19 +366,21 @@ pub const Instance = struct {
             .ppEnabledLayerNames = layers.items.ptr,
             .enabledExtensionCount = @as(u32, @intCast(extensions.items.len)),
             .ppEnabledExtensionNames = extensions.items.ptr,
-        });
+        };
 
         var instance: vk.Instance = undefined;
         try checkVk(vk.CreateInstance(&instance_info, opts.alloc_cb, &instance));
         log.info("Created vulkan instance.", .{});
 
-        // Create the debug messenger if needed
-        const debug_messenger = if (enable_validation)
-            try createDebugCallback(instance, opts)
+        const debug_messenger = if (debug)
+            try createDebugMessenger(instance, opts)
         else
             null;
 
-        return .{ .handle = instance, .debug_messenger = debug_messenger };
+        return .{
+            .handle = instance,
+            .debug_messenger = debug_messenger,
+        };
     }
 
     pub fn getDestroyDebugUtilsMessengerFn(self: @This()) vk.PFN_DestroyDebugUtilsMessengerEXT {
@@ -395,26 +396,27 @@ pub const Instance = struct {
         @panic("SDL_Vulkan_GetVkGetInstanceProcAddr returned null");
     }
 
-    fn createDebugCallback(instance: vk.Instance, opts: Options) !vk.DebugUtilsMessengerEXT {
-        const create_fn_opt = getVulkanInstanceFunct(vk.PFN_CreateDebugUtilsMessengerEXT, instance, "vkCreateDebugUtilsMessengerEXT");
-        if (create_fn_opt) |create_fn| {
-            const create_info = std.mem.zeroInit(vk.DebugUtilsMessengerCreateInfoEXT, .{
-                .sType = vk.STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-                .messageSeverity = vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-                    vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                    vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-                .messageType = vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                    vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                    vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-                .pfnUserCallback = opts.debug_callback orelse defaultDebugCallback,
-                .pUserData = null,
-            });
-            var debug_messenger: vk.DebugUtilsMessengerEXT = undefined;
-            try checkVk(create_fn(instance, &create_info, opts.alloc_cb, &debug_messenger));
-            log.info("Created vulkan debug messenger.", .{});
-            return debug_messenger;
-        }
-        return null;
+    fn createDebugMessenger(instance: vk.Instance, opts: Options) !vk.DebugUtilsMessengerEXT {
+        const createFn = getVulkanInstanceFunct(
+            vk.PFN_CreateDebugUtilsMessengerEXT,
+            instance,
+            "vkCreateDebugUtilsMessengerEXT",
+        ) orelse @panic("could not get create debug utils messenger ext function");
+        const ci = vk.DebugUtilsMessengerCreateInfoEXT{
+            .sType = vk.STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+            .messageSeverity = vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            .messageType = vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                vk.DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+            .pfnUserCallback = opts.debug_callback orelse defaultDebugCallback,
+            .pUserData = null,
+        };
+        var debug_messenger: vk.DebugUtilsMessengerEXT = undefined;
+        try checkVk(createFn(instance, &ci, opts.alloc_cb, &debug_messenger));
+        log.info("Created vulkan debug messenger.", .{});
+        return debug_messenger;
     }
 
     fn defaultDebugCallback(severity: vk.DebugUtilsMessageSeverityFlagBitsEXT, msg_type: vk.DebugUtilsMessageTypeFlagsEXT, callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT, user_data: ?*anyopaque) callconv(.c) vk.Bool32 {
@@ -651,18 +653,6 @@ pub const PhysicalDevice = struct {
 
 /// Options for creating a logical device.
 ///
-const DeviceCreateOpts = struct {
-    /// The physical device.
-    physical_device: PhysicalDevice,
-    /// The logical device features.
-    features: vk.PhysicalDeviceFeatures = undefined,
-    /// The logical device allocation callbacks.
-    alloc_cb: ?*const vk.AllocationCallbacks = null,
-    /// Optional pnext chain for VkDeviceCreateInfo.
-    pnext: ?*const anyopaque = null,
-    device_extensions: []const [*c]const u8 = &.{},
-};
-
 /// Result from the creation of a logical device.
 ///
 pub const LogicalDevice = struct {
@@ -672,11 +662,34 @@ pub const LogicalDevice = struct {
     compute_queue: vk.Queue = null,
     transfer_queue: vk.Queue = null,
 
+    const CreateOpts = struct {
+        /// The physical device.
+        physical_device: PhysicalDevice,
+        /// The logical device features.
+        features: vk.PhysicalDeviceFeatures = undefined,
+        /// The logical device allocation callbacks.
+        alloc_cb: ?*const vk.AllocationCallbacks = null,
+        /// Optional pnext chain for VkDeviceCreateInfo.
+        pnext: ?*const anyopaque = null,
+        device_extensions: []const [*c]const u8 = &.{},
+    };
+    /// Helper function for initializing descriptor indexing struct
+    /// must be `pNext` of createOpts
+    pub fn descriptorIndexingFeatures() vk.PhysicalDeviceDescriptorIndexingFeatures {
+        return vk.PhysicalDeviceDescriptorIndexingFeatures{
+            .sType = vk.STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES,
+            .shaderSampledImageArrayNonUniformIndexing = vk.TRUE,
+            .runtimeDescriptorArray = vk.TRUE,
+            .descriptorBindingVariableDescriptorCount = vk.TRUE,
+            .descriptorBindingPartiallyBound = vk.TRUE,
+        };
+    }
+
     /// Create logical device
     ///
     /// # Allocations
     /// This function does not require persistent allocations.
-    pub fn create(a: Allocator, opts: DeviceCreateOpts) !LogicalDevice {
+    pub fn create(a: Allocator, opts: CreateOpts) !LogicalDevice {
         var arena_state = std.heap.ArenaAllocator.init(a);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
@@ -700,12 +713,6 @@ pub const LogicalDevice = struct {
                 .pQueuePriorities = &queue_priorities,
             });
         }
-
-        // const device_extensions: []const [*c]const u8 = &.{
-        //     "VK_KHR_swapchain",
-        //     // for Mac
-        //     vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
-        // };
 
         const device_info = vk.DeviceCreateInfo{
             .sType = vk.STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -983,9 +990,9 @@ pub const Swapchain = struct {
             \\
         , .{});
         var width: c_int, var height: c_int = .{ undefined, undefined };
-        root.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
+        core.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
         while (width == 0 or height == 0) {
-            root.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
+            core.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
         }
         _ = vk.DeviceWaitIdle(opts.logical_device);
 

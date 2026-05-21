@@ -1,13 +1,24 @@
 const std = @import("std");
-const root = @import("root.zig");
-const vki = root.vulkan_init;
+const core = @import("root.zig");
+const vki = core.vulkan_init;
 const checkVk = vki.checkVk;
 const c = @import("clibs.zig");
 const vk = c.vk;
 
+pub const MappedBuffer = struct {
+    allocation: AllocatedBuffer,
+    mapped: ?*anyopaque = undefined,
+
+    pub fn deinit(self: @This(), vma_a: c.vma.Allocator) void {
+        c.vma.UnmapMemory(vma_a, self.allocation.allocation);
+        self.allocation.deinit(vma_a);
+    }
+};
+
 pub const AllocatedBuffer = struct {
-    buffer: vk.Buffer,
-    allocation: c.vma.Allocation,
+    buffer: vk.Buffer = undefined,
+    allocation: c.vma.Allocation = undefined,
+    size: usize,
 
     pub fn create(
         vma_a: c.vma.Allocator,
@@ -27,10 +38,17 @@ pub const AllocatedBuffer = struct {
             .requiredFlags = flags,
         };
 
-        var buffer: AllocatedBuffer = undefined;
+        var buffer = AllocatedBuffer{
+            .size = alloc_size,
+        };
+
         checkVk(c.vma.CreateBuffer(vma_a, &buffer_ci, &vma_alloc_info, &buffer.buffer, &buffer.allocation, null)) catch @panic("Failed to create buffer");
 
         return buffer;
+    }
+
+    pub fn deinit(self: @This(), vma_a: c.vma.Allocator) void {
+        c.vma.DestroyBuffer(vma_a, self.buffer, self.allocation);
     }
 };
 

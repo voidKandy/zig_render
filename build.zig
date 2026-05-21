@@ -1,30 +1,8 @@
 const std = @import("std");
 
-// Although this function looks imperative, it does not perform the build
-// directly and instead it mutates the build graph (`b`) that will be then
-// executed by an external runner. The functions in `std.Build` implement a DSL
-// for defining build steps and express dependencies between them, allowing the
-// build runner to parallelize the build automatically (and the cache system to
-// know when a step doesn't need to be re-run).
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    // const mod = b.addModule("zig_render", .{
-    //     .root_source_file = b.path("src/root.zig"),
-    //     .target = target,
-    // });
-
-    // const exe = b.addExecutable(.{
-    //     .name = "zig_render",
-    //     .root_module = b.createModule(.{
-    //         .root_source_file = b.path("src/main.zig"),
-    //         .target = target,
-    //         .optimize = optimize,
-    //         .imports = &.{
-    //             .{ .name = "zig_render", .module = mod },
-    //         },
-    //     }),
-    // });
     const core_lib = b.addModule("core", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -44,13 +22,8 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/imgui/"));
     core_lib.addIncludePath(b.path("libs/tinyobjloader/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/stb_image.c"), .flags = &.{""} });
-    core_lib.addCSourceFile(.{ .file = b.path("src/tiny_obj_loader.c"), .flags = &.{""} });
 
     compileAllShaders(b, core_lib);
-    // core_lib.linkLibCpp();
-    // b.installArtifact(exe);
-    // b.installBinFile("libs/sdl3/lib/libSDL3.so", "libSDL3.so.0");
-    // exe.root_module.addRPathSpecial("$ORIGIN");
 
     const imgui_lib = b.addLibrary(.{
         .linkage = .static,
@@ -61,8 +34,6 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         }),
     });
-    // imgui_lib.root_module.linkSystemLibrary("vulkan", .{});
-    // imgui_lib.root_module.linkSystemLibrary("SDL3", .{});
     imgui_lib.root_module.addIncludePath(b.path("libs/imgui/"));
     imgui_lib.root_module.addIncludePath(b.path("libs/sdl3/include/"));
     imgui_lib.root_module.linkSystemLibrary("vulkan", .{});
@@ -84,23 +55,6 @@ pub fn build(b: *std.Build) !void {
 
     core_lib.linkLibrary(imgui_lib);
 
-    // compileAllShaders(b, core_lib);
-
-    // const run_step = b.step("run", "Run the app");
-    // const run_cmd = b.addRunArtifact(exe);
-    // run_step.dependOn(&run_cmd.step);
-    // run_cmd.step.dependOn(b.getInstallStep());
-
-    // if (b.args) |args| {
-    //     run_cmd.addArgs(args);
-    // }
-
-    // const mod_tests = b.addTest(.{
-    //     .root_module = mod,
-    // });
-
-    // const run_mod_tests = b.addRunArtifact(mod_tests);
-
     const exe_tests = b.addTest(.{
         .root_module = core_lib,
     });
@@ -111,26 +65,19 @@ pub fn build(b: *std.Build) !void {
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
-    const tools_lib = buildtoolsLib(b, target, core_lib);
     buildBinaries(b, target, optimize, &[_]struct { []const u8, *std.Build.Module }{
         .{ "core", core_lib },
-        .{ "tools", tools_lib },
     });
 }
 
-fn buildtoolsLib(b: *std.Build, target: std.Build.ResolvedTarget, core_lib: *std.Build.Module) *std.Build.Module {
-    const mod = b.addModule("tools", .{
-        .root_source_file = b.path("tools/root.zig"),
-        .target = target,
-    });
-    mod.addImport("core", core_lib);
-    return mod;
-}
-
-fn buildBinaries(b: *std.Build, target: std.Build.ResolvedTarget, opt: std.builtin.OptimizeMode, imports: []const struct { []const u8, *std.Build.Module }) void {
-    // const bins_entry = b.path("bins/all.zig");
-    const bins_dir = "bins";
-    const dir = std.fs.cwd().openDir(bins_dir, .{}) catch @panic("Failed to get directory");
+const BINARIES_PATH = "bins";
+fn buildBinaries(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    opt: std.builtin.OptimizeMode,
+    imports: []const struct { []const u8, *std.Build.Module },
+) void {
+    const dir = std.fs.cwd().openDir(BINARIES_PATH, .{}) catch @panic("Failed to get directory");
     var buffer: [256]u8 = undefined;
     @memset(&buffer, 0);
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
@@ -142,7 +89,7 @@ fn buildBinaries(b: *std.Build, target: std.Build.ResolvedTarget, opt: std.built
             break :name split.next() orelse @panic("malformed test file name");
         };
 
-        const fullpath = std.fmt.allocPrint(fba.allocator(), "{s}/{s}", .{ bins_dir, f.name }) catch |e| std.debug.panic("Failed to get full path: {}\n", .{e});
+        const fullpath = std.fmt.allocPrint(fba.allocator(), "{s}/{s}", .{ BINARIES_PATH, f.name }) catch |e| std.debug.panic("Failed to get full path: {}\n", .{e});
         const exe = b.addExecutable(.{
             .name = name,
             .root_module = b.createModule(.{
@@ -167,14 +114,16 @@ fn buildBinaries(b: *std.Build, target: std.Build.ResolvedTarget, opt: std.built
     }
 }
 
+const SHADERS_PATH = "shaders";
+
 fn compileAllShaders(
     b: *std.Build,
     lib: *std.Build.Module,
 ) void {
     const shaders_dir = if (@hasDecl(@TypeOf(b.build_root.handle), "openIterableDir"))
-        b.build_root.handle.openIterableDir("shaders", .{}) catch @panic("Failed to open shaders directory")
+        b.build_root.handle.openIterableDir(SHADERS_PATH, .{}) catch @panic("Failed to open shaders directory")
     else
-        b.build_root.handle.openDir("shaders", .{ .iterate = true }) catch @panic("Failed to open shaders directory");
+        b.build_root.handle.openDir(SHADERS_PATH, .{ .iterate = true }) catch @panic("Failed to open shaders directory");
 
     var file_it = shaders_dir.iterate();
     while (file_it.next() catch @panic("Failed to iterate shader directory")) |entry| {
@@ -197,8 +146,8 @@ fn addShader(
     lib: *std.Build.Module,
     name: []const u8,
 ) void {
-    const source = std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name}) catch @panic("OOM");
-    const outpath = std.fmt.allocPrint(b.allocator, "shaders/{s}.spv", .{name}) catch @panic("OOM");
+    const source = std.fmt.allocPrint(b.allocator, SHADERS_PATH ++ "/{s}.glsl", .{name}) catch @panic("OOM");
+    const outpath = std.fmt.allocPrint(b.allocator, SHADERS_PATH ++ "/{s}.spv", .{name}) catch @panic("OOM");
 
     const shader_compilation = b.addSystemCommand(&.{"glslangValidator"});
     shader_compilation.addArg("-V");

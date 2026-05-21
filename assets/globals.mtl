@@ -1,0 +1,5 @@
+newmtl viking_room
+map_Kd viking_room.png
+
+newmtl statue
+map_Kd test_img.jpg
