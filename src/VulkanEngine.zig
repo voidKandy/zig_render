@@ -45,6 +45,7 @@ main_compute_pipeline_data: ComputePipeline.AllocatedData = undefined,
 main_compute_descriptor_set: vk.DescriptorSet = undefined,
 main_compute_pipeline_description: ComputePipeline.Description = undefined,
 
+main_graphics_pipeline_create_data: GraphicsPipeline.AllocatedData.CreateData,
 main_graphics_pipeline: GraphicsPipeline = undefined,
 main_graphics_pipeline_data: GraphicsPipeline.AllocatedData = undefined,
 main_graphics_pipeline_systems_data: GraphicsPipeline.SystemsData = undefined,
@@ -61,10 +62,12 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 pub fn init(
     a: std.mem.Allocator,
     alloc_cbs: ?*vk.AllocationCallbacks,
+    graphics_pipeline_cd: GraphicsPipeline.AllocatedData.CreateData,
 ) Self {
     return .{
         .alloc_cbs = alloc_cbs,
         .allocs = .{ .std = a },
+        .main_graphics_pipeline_create_data = graphics_pipeline_cd,
     };
 }
 
@@ -273,59 +276,18 @@ fn initVulkan(self: *Self) void {
 /// Creaets description of frame models
 /// coupled with PipelineDescripotion used to create main_pipeline
 fn createGraphicsPipelineData(self: *Self) void {
-    var materials_file = core.mtl_loader.parseFile(self.allocs.std, "assets/globals.mtl") catch @panic("failed to load materials file");
-    defer materials_file.deinit();
-
-    const objects = &[_]GraphicsPipeline.AllocatedData.MeshObject{
-        .{
-            .object = core.obj_loader.parseFile(self.allocs.std, "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
-        },
-        .{
-            .object = core.obj_loader.parseFile(self.allocs.std, "assets/monkey.obj") catch @panic("failed to read monkey.obj"),
-            .transform = blk: {
-                const translate = core.math.Mat4.IDENTITY.translate(core.math.Vec3.make(0, 2, 0));
-                const rotate = core.math.Mat4.IDENTITY.rotate(core.math.Vec3.make(0, 1, 0), std.math.pi / 2.0).rotate(core.math.Vec3.make(1, 0, 0), std.math.pi / 2.0);
-                break :blk translate.mul(rotate);
-            },
-        },
-    };
-    defer for (objects) |*o| @constCast(&o.object).deinit();
-
-    const default_camera = core.Camera{};
-
-    const aspect =
-        @as(f32, @floatFromInt(self.swapchain.extent.width)) /
-        @as(f32, @floatFromInt(self.swapchain.extent.height));
-
-    const camera_gpu_data = core.Camera.GPUData{
-        .view = core.math.Mat4.lookAt(
-            default_camera.eye,
-            core.math.Vec3.ZERO,
-            core.math.Vec3.UP,
-        ),
-        .proj = core.math.Mat4.perspective(
-            default_camera.fov,
-            aspect,
-            default_camera.near_plane,
-            default_camera.far_plane,
-        ),
-    };
-
     self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData.create(
         self.allocs,
         &self.upload_context,
         self.logical_device,
         self.physical_device,
-        .{
-            .camera_gpu_data = camera_gpu_data,
-            .materials_file = materials_file,
-            .mesh_objects = objects,
-        },
+        self.swapchain.extent,
+        self.main_graphics_pipeline_create_data,
         self.alloc_cbs,
     ) catch @panic("OOM");
 
     self.main_graphics_pipeline_systems_data = .{
-        .camera = default_camera,
+        .camera = self.main_graphics_pipeline_create_data.camera,
     };
 }
 

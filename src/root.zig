@@ -2,6 +2,7 @@
 const std = @import("std");
 const sdl = clibs.sdl;
 pub const shaders = @import("shaders.zig");
+pub const terrain = @import("terrain.zig");
 pub const mesh = @import("mesh.zig");
 pub const frames = @import("frames.zig");
 pub const math = @import("math3d.zig");

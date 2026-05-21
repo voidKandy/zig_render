@@ -24,8 +24,8 @@ pub const AllocatedData = struct {
         object: core.obj_loader.ObjFile,
         transform: core.math.Mat4 = .IDENTITY,
     };
-    const CreateData = struct {
-        camera_gpu_data: core.Camera.GPUData,
+    pub const CreateData = struct {
+        camera: core.Camera,
         materials_file: core.mtl_loader.MtlFile,
         mesh_objects: []const MeshObject,
     };
@@ -54,6 +54,7 @@ pub const AllocatedData = struct {
         upload_ctx: *core.vulkan_init.UploadContext,
         logical_device: core.vulkan_init.LogicalDevice,
         physical_device: core.vulkan_init.PhysicalDevice,
+        camera_extent: vk.Extent2D,
         cd: CreateData,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) std.mem.Allocator.Error!@This() {
@@ -82,10 +83,12 @@ pub const AllocatedData = struct {
                 mat_texture;
         }
 
-        var all_ranges = try allocs.std.alloc(MeshRanges, cd.mesh_objects.len);
-
-        var meshes = try allocs.std.alloc(core.mesh.Mesh3D, cd.mesh_objects.len);
+        // BAD!
+        // terrqain manually added
+        var meshes = try allocs.std.alloc(core.mesh.Mesh3D, cd.mesh_objects.len + 1);
+        var all_ranges = try allocs.std.alloc(MeshRanges, meshes.len);
         var all_metadata = try allocs.std.alloc(MetaData, meshes.len);
+
         var vertices = try std.ArrayList(core.mesh.Vertex3D).initCapacity(allocs.std, 64);
         var indices = try std.ArrayList(u32).initCapacity(allocs.std, 64);
         defer {
@@ -98,9 +101,37 @@ pub const AllocatedData = struct {
         var total_verts: usize = 0;
         var total_idcs: usize = 0;
 
-        for (0..cd.mesh_objects.len) |i| {
-            const scene_obj = cd.mesh_objects[i];
-            const mesh = try core.mesh.Mesh3D.fromObjFile(allocs.std, scene_obj.object);
+        // BAD
+        for (0..cd.mesh_objects.len + 1) |i| {
+            // BAD
+            const mesh, const material_index, const transform = blk: {
+                if (i == cd.mesh_objects.len) break :blk .{
+                    try core.terrain.fromHeightmap(
+                        allocs.std,
+                        "assets/terrain_tst.png",
+                        128, // vertex resolution X
+                        128, // vertex resolution Z
+                        2.0, // max height
+                        10.0, // world size
+                    ),
+                    0,
+                    core.math.Mat4.IDENTITY,
+                } else {
+                    const scene_obj = cd.mesh_objects[i];
+
+                    if (!std.mem.eql(u8, scene_obj.object.material_library_name, materials.library_name)) {
+                        std.debug.panic(
+                            \\ Obj file references a materials library that is not loaded: `{s}`
+                        , .{scene_obj.object.material_library_name});
+                    }
+
+                    break :blk .{
+                        try core.mesh.Mesh3D.fromObjFile(allocs.std, scene_obj.object),
+                        material_indices.get(scene_obj.object.objects[0].material_name) orelse @panic("failed to get material for object"),
+                        scene_obj.transform,
+                    };
+                }
+            };
             defer mesh.deinit(allocs.std);
             const range = MeshRanges{
                 .vertex_range = .{
@@ -113,21 +144,9 @@ pub const AllocatedData = struct {
                 },
             };
 
-            if (!std.mem.eql(u8, scene_obj.object.material_library_name, materials.library_name)) {
-                const msg =
-                    try std.fmt.allocPrint(allocs.std,
-                        \\ Obj file references a materials library that is not loaded: `{s}`
-                    , .{scene_obj.object.material_library_name});
-                defer allocs.std.free(msg);
-                @panic(msg);
-            }
-
             const metadata = MetaData{
-                .model_transform = scene_obj.transform,
-                .material_index = material_indices.get(scene_obj.object.objects[0].material_name) orelse
-                    std.debug.panic(
-                        \\ Could not find material with name `{s}`
-                    , .{scene_obj.object.objects[0].material_name}),
+                .model_transform = transform,
+                .material_index = material_index,
                 .index_count = @as(u32, @intCast(range.index_range.range)),
                 .index_offset = @as(u32, @intCast(range.index_range.offset)),
                 .vertex_offset = @as(u32, @intCast(range.vertex_range.offset)),
@@ -278,7 +297,7 @@ pub const AllocatedData = struct {
 
         const aligned_camera: *core.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
 
-        aligned_camera.* = cd.camera_gpu_data;
+        aligned_camera.* = cd.camera.createGPUData(camera_extent);
         aligned_camera.*.proj.j.y *= -1;
 
         return AllocatedData{

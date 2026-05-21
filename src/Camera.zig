@@ -29,3 +29,23 @@ pub const Mode = enum {
     rotate_around,
     user_input,
 };
+
+pub fn createGPUData(self: @This(), extent: vk.Extent2D) GPUData {
+    const aspect =
+        @as(f32, @floatFromInt(extent.width)) /
+        @as(f32, @floatFromInt(extent.height));
+
+    return core.Camera.GPUData{
+        .view = core.math.Mat4.lookAt(
+            self.eye,
+            core.math.Vec3.ZERO,
+            core.math.Vec3.UP,
+        ),
+        .proj = core.math.Mat4.perspective(
+            self.fov,
+            aspect,
+            self.near_plane,
+            self.far_plane,
+        ),
+    };
+}
