@@ -28,6 +28,10 @@ pub const AllocatedData = struct {
         camera: core.Camera,
         materials_file: core.mtl_loader.MtlFile,
         mesh_objects: []const MeshObject,
+        // for now, we support a single terrain file
+        // eventually, we will have both the heightmap file & type file
+        terrain_heightmap_file_name: []const u8,
+        terrain_material_name: []const u8,
     };
 
     mesh_ranges: []MeshRanges,
@@ -46,7 +50,6 @@ pub const AllocatedData = struct {
     const MeshRanges = struct {
         vertex_range: RangeDesc,
         index_range: RangeDesc,
-        // uniform_range: RangeDesc,
     };
 
     pub fn create(
@@ -75,7 +78,7 @@ pub const AllocatedData = struct {
                 physical_device,
                 alloc_cbs,
             ) catch @panic("failed to upload material");
-            log.warn(
+            log.debug(
                 \\ Adding {s} as {d}
             , .{ mat.name, k });
             try material_indices.put(allocs.std, mat.name, k);
@@ -83,11 +86,11 @@ pub const AllocatedData = struct {
                 mat_texture;
         }
 
-        // BAD!
-        // terrqain manually added
-        var meshes = try allocs.std.alloc(core.mesh.Mesh3D, cd.mesh_objects.len + 1);
-        var all_ranges = try allocs.std.alloc(MeshRanges, meshes.len);
-        var all_metadata = try allocs.std.alloc(MetaData, meshes.len);
+        // currently, the first mesh of the meshes is always the terrain heightmap
+        const amt_meshes = cd.mesh_objects.len + 1;
+        var meshes = try allocs.std.alloc(core.mesh.Mesh3D, amt_meshes);
+        var all_ranges = try allocs.std.alloc(MeshRanges, amt_meshes);
+        var all_metadata = try allocs.std.alloc(MetaData, amt_meshes);
 
         var vertices = try std.ArrayList(core.mesh.Vertex3D).initCapacity(allocs.std, 64);
         var indices = try std.ArrayList(u32).initCapacity(allocs.std, 64);
@@ -101,23 +104,23 @@ pub const AllocatedData = struct {
         var total_verts: usize = 0;
         var total_idcs: usize = 0;
 
-        // BAD
-        for (0..cd.mesh_objects.len + 1) |i| {
-            // BAD
+        for (0..amt_meshes) |i| {
+            // Not a great way to do this
+            // If we are on index 0 we load the terrain
             const mesh, const material_index, const transform = blk: {
-                if (i == cd.mesh_objects.len) break :blk .{
+                if (i == 0) break :blk .{
                     try core.terrain.fromHeightmap(
                         allocs.std,
-                        "assets/terrain_tst.png",
+                        cd.terrain_heightmap_file_name,
                         128, // vertex resolution X
                         128, // vertex resolution Z
                         2.0, // max height
                         10.0, // world size
                     ),
-                    0,
+                    material_indices.get(cd.terrain_material_name) orelse @panic("failed to get material for object"),
                     core.math.Mat4.IDENTITY,
                 } else {
-                    const scene_obj = cd.mesh_objects[i];
+                    const scene_obj = cd.mesh_objects[i - 1];
 
                     if (!std.mem.eql(u8, scene_obj.object.material_library_name, materials.library_name)) {
                         std.debug.panic(
@@ -393,9 +396,6 @@ pub const Description = struct {
     window_extent: vk.Extent2D,
     vertex_shader: vk.ShaderModule = undefined,
     fragment_shader: vk.ShaderModule = undefined,
-    num_images: u32 = 0,
-    // color_format: vk.Format = vk.FORMAT_UNDEFINED,
-    // depth_format: vk.Format = vk.FORMAT_UNDEFINED,
     depth_compare_op: vk.CompareOp = vk.COMPARE_OP_LESS,
 };
 
@@ -833,7 +833,7 @@ fn updateTextureDescriptorSet(
     texture_set: vk.DescriptorSet,
 ) mem.Allocator.Error!void {
     const texture_count = alloc_data.textures.len;
-    log.warn(
+    log.debug(
         \\ materials count: {}
     , .{texture_count});
     var image_infos = try a.alloc(vk.DescriptorImageInfo, texture_count);

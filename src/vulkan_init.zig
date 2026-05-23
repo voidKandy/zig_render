@@ -985,10 +985,6 @@ pub const Swapchain = struct {
     }
 
     pub fn recreate(self: *@This(), a: Allocator, vma_a: c.vma.Allocator, opts: SwapchainCreateOpts, window: *c.sdl.Window, render_pass: vk.RenderPass, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
-        log.warn(
-            \\ Recreating Swapchain!
-            \\
-        , .{});
         var width: c_int, var height: c_int = .{ undefined, undefined };
         core.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
         while (width == 0 or height == 0) {

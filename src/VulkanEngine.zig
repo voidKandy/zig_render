@@ -4,6 +4,7 @@ const vki = core.vulkan_init;
 const frames_mod = core.frames;
 const c = core.clibs;
 const GraphicsPipeline = core.GraphicsPipeline;
+const DebugPipeline = core.DebugPipeline;
 const ComputePipeline = core.ComputePipeline;
 const Input = core.Input;
 const vma_usage = core.vma_usage;
@@ -44,6 +45,10 @@ main_compute_pipeline: ComputePipeline = undefined,
 main_compute_pipeline_data: ComputePipeline.AllocatedData = undefined,
 main_compute_descriptor_set: vk.DescriptorSet = undefined,
 main_compute_pipeline_description: ComputePipeline.Description = undefined,
+
+debug_pipeline: DebugPipeline = undefined,
+debug_pipeline_descriptor_set: vk.DescriptorSet = undefined,
+debug_pipeline_data: DebugPipeline.AllocatedData = undefined,
 
 main_graphics_pipeline_create_data: GraphicsPipeline.AllocatedData.CreateData,
 main_graphics_pipeline: GraphicsPipeline = undefined,
@@ -86,15 +91,17 @@ pub fn deinit(self: *Self) void {
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
     log.debug("destroyed imgui descriptor pool", .{});
 
+    self.debug_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed debug graphics pipeline", .{});
+    self.debug_pipeline_data.deinit(self.allocs.vma);
+    log.debug("destroyed debug graphics pipeline data", .{});
+
     self.main_graphics_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline", .{});
-
     self.main_graphics_pipeline_data.deinit(self.logical_device.handle, self.allocs, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline data", .{});
-
     self.main_compute_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline", .{});
-
     self.main_compute_pipeline_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline data", .{});
 
@@ -262,6 +269,8 @@ fn initVulkan(self: *Self) void {
     self.initMainRenderPass();
     self.createGraphicsPipelineData();
     self.initMainGraphicsPipeline();
+    self.initDebugPipeline();
+    self.debug_pipeline_data = DebugPipeline.createAllocatedData(self.allocs.vma, &self.upload_context, self.logical_device);
 
     self.swapchain.createFramebuffers(
         self.allocs.std,
@@ -422,6 +431,60 @@ fn initMainGraphicsPipeline(self: *Self) void {
     ) catch @panic("OOM");
 }
 
+fn initDebugPipeline(self: *Self) void {
+    const vert_shader = core.shaders.createShaderModule(
+        "debug.vert",
+        self.logical_device.handle,
+        self.alloc_cbs,
+    ) orelse @panic("failed to create vert shader module");
+    defer vk.DestroyShaderModule(
+        self.logical_device.handle,
+        vert_shader,
+        self.alloc_cbs,
+    );
+
+    const frag_shader = core.shaders.createShaderModule(
+        "debug.frag",
+        self.logical_device.handle,
+        self.alloc_cbs,
+    ) orelse @panic("failed to create frag shader module");
+
+    defer vk.DestroyShaderModule(
+        self.logical_device.handle,
+        frag_shader,
+        self.alloc_cbs,
+    );
+
+    self.debug_pipeline = DebugPipeline.init(
+        .{
+            .device = self.logical_device.handle,
+            .render_pass = self.main_render_pass,
+            .window_extent = self.swapchain.extent,
+            .vertex_shader = vert_shader,
+            .fragment_shader = frag_shader,
+        },
+        self.alloc_cbs,
+    );
+
+    self.debug_pipeline.createDescriptorPool(
+        self.logical_device.handle,
+        1, // uniform buffer
+        0, // storage buffer
+        1, // max sets
+        self.alloc_cbs,
+    );
+
+    self.debug_pipeline_descriptor_set = self.debug_pipeline.allocateDescriptorSet(
+        self.logical_device.handle,
+    ) catch @panic("OOM");
+
+    DebugPipeline.updateDescriptorSets(
+        self.logical_device.handle,
+        self.main_graphics_pipeline_data,
+        self.debug_pipeline_descriptor_set,
+    ) catch @panic("OOM");
+}
+
 fn initMainRenderPass(self: *Self) void {
     const color_attachment = vk.AttachmentDescription{
         .format = MAIN_RENDER_PASS_IMAGE_FORMAT,
@@ -515,12 +578,7 @@ fn drawFrame(self: *Self) void {
             VkError.ErrorOutOfDateKHR => {
                 self.framebuffer_resized = true;
             },
-            VkError.SuboptimalKHR => {
-                log.warn(
-                    \\ Suboptimal KHR!
-                    \\
-                , .{});
-            },
+            VkError.SuboptimalKHR => {},
             else => @panic("failed to acquire next image"),
         };
 
@@ -631,7 +689,6 @@ fn recordCommandBuffer(
         vki.DepthResource.transition(frame.main_command_buffer, res);
 
     vk.CmdBeginRenderPass(frame.main_command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
-
     defer vk.CmdEndRenderPass(frame.main_command_buffer);
 
     const viewport = vk.Viewport{
@@ -682,6 +739,9 @@ fn recordCommandBuffer(
             @as(u32, @intCast(idx)), // first instance
         );
     }
+
+    self.debug_pipeline.bind(frame.main_command_buffer);
+    self.debug_pipeline.recordCommands(self.debug_pipeline_data, frame.main_command_buffer, self.debug_pipeline_descriptor_set);
 
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }

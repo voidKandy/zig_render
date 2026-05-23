@@ -2,10 +2,7 @@ const std = @import("std");
 const log = std.log;
 const core = @import("core");
 const vki = core.vulkan_init;
-const texs = core.textures;
 const vma_usage = core.vma_usage;
-const BoundDescriptor = core.BoundDescriptor;
-const ResourceManager = core.ResourceManager;
 const mesh_mod = core.mesh;
 const math_mod = core.math;
 const c = core.clibs;
@@ -68,6 +65,8 @@ pub fn main() void {
             .camera = core.Camera{},
             .materials_file = materials_file,
             .mesh_objects = objects,
+            .terrain_heightmap_file_name = "assets/terrain_tst.png",
+            .terrain_material_name = "statue",
         },
     );
 

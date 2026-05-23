@@ -5,6 +5,23 @@ const Vertex3D = core.mesh.Vertex3D;
 const Vec4 = core.math.Vec4;
 const Vec2 = core.math.Vec2;
 
+fn sampleHeight(px: [*c]u8, iw: u32, ih: u32, u: f32, v: f32) f32 {
+    const x: u32 = @intFromFloat(
+        @min(
+            u * @as(f32, @floatFromInt(iw)),
+            @as(f32, @floatFromInt(iw - 1)),
+        ),
+    );
+    const y: u32 = @intFromFloat(
+        @min(
+            v * @as(f32, @floatFromInt(ih)),
+            @as(f32, @floatFromInt(ih - 1)),
+        ),
+    );
+    const byte = px[y * iw + x];
+    return @as(f32, @floatFromInt(byte)) / 255.0;
+}
+
 pub fn fromHeightmap(
     a: std.mem.Allocator,
     image_path: []const u8,
@@ -29,14 +46,6 @@ pub fn fromHeightmap(
     const img_h: u32 = @intCast(height);
 
     // sample heightmap at normalized UV
-    const sampleHeight = struct {
-        fn call(px: [*c]u8, iw: u32, ih: u32, u: f32, v: f32) f32 {
-            const x: u32 = @intFromFloat(@min(u * @as(f32, @floatFromInt(iw)), @as(f32, @floatFromInt(iw - 1))));
-            const y: u32 = @intFromFloat(@min(v * @as(f32, @floatFromInt(ih)), @as(f32, @floatFromInt(ih - 1))));
-            const byte = px[y * iw + x];
-            return @as(f32, @floatFromInt(byte)) / 255.0;
-        }
-    }.call;
 
     var vertices = try std.ArrayList(Vertex3D).initCapacity(a, width_verts * depth_verts);
     var indices = try std.ArrayList(u32).initCapacity(a, (width_verts - 1) * (depth_verts - 1) * 6);

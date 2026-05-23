@@ -38,7 +38,8 @@ pub fn createGPUData(self: @This(), extent: vk.Extent2D) GPUData {
     return core.Camera.GPUData{
         .view = core.math.Mat4.lookAt(
             self.eye,
-            core.math.Vec3.ZERO,
+            self.target,
+            // core.math.Vec3.ZERO,
             core.math.Vec3.UP,
         ),
         .proj = core.math.Mat4.perspective(

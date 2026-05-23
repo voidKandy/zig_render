@@ -228,7 +228,14 @@ pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
     );
 }
 
-pub fn recordCommands(self: Self, alloc_data: AllocatedData, swapchain: core.vulkan_init.Swapchain, img_idx: usize, set: vk.DescriptorSet, cmd: vk.CommandBuffer) void {
+pub fn recordCommands(
+    self: Self,
+    alloc_data: AllocatedData,
+    swapchain: core.vulkan_init.Swapchain,
+    img_idx: usize,
+    set: vk.DescriptorSet,
+    cmd: vk.CommandBuffer,
+) void {
     const draw_image = alloc_data.draw_image;
 
     core.vulkan_util.transitionImageLayout(
