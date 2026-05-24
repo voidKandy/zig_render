@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/tinyobjloader/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/stb_image.c"), .flags = &.{""} });
 
-    compileAllShaders(b, core_lib);
+    addAllShaders(b, core_lib);
 
     const imgui_lib = b.addLibrary(.{
         .linkage = .static,
@@ -116,7 +116,7 @@ fn buildBinaries(
 
 const SHADERS_PATH = "shaders";
 
-fn compileAllShaders(
+fn addAllShaders(
     b: *std.Build,
     lib: *std.Build.Module,
 ) void {
@@ -150,8 +150,11 @@ fn addShader(
     const outpath = std.fmt.allocPrint(b.allocator, SHADERS_PATH ++ "/{s}.spv", .{name}) catch @panic("OOM");
 
     const shader_compilation = b.addSystemCommand(&.{"glslangValidator"});
+    // this allows shader compilation errors to be printed to stdout
+    shader_compilation.stdio = .inherit;
     shader_compilation.addArg("-V");
     shader_compilation.addArg("-o");
+    shader_compilation.addCheck(.{ .expect_term = .{ .Exited = 0 } });
     const output = shader_compilation.addOutputFileArg(outpath);
     shader_compilation.addFileArg(b.path(source));
 
