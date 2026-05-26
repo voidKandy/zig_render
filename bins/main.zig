@@ -42,32 +42,16 @@ pub fn main() void {
     var materials_file = core.mtl_loader.parseFile(gpa.allocator(), "assets/globals.mtl") catch @panic("failed to load materials file");
     defer materials_file.deinit();
 
-    const objects = &[_]core.GraphicsPipeline.AllocatedData.MeshObject{
-        .{
-            .object = core.obj_loader.parseFile(gpa.allocator(), "assets/viking_room.obj") catch @panic("failed to read viking_room.obj"),
-        },
-        .{
-            .object = core.obj_loader.parseFile(gpa.allocator(), "assets/monkey.obj") catch @panic("failed to read monkey.obj"),
-            .transform = blk: {
-                const translate = core.math.Mat4.IDENTITY.translate(core.math.Vec3.make(0, 2, 0));
-                const rotate = core.math.Mat4.IDENTITY.rotate(core.math.Vec3.make(0, 1, 0), std.math.pi / 2.0).rotate(core.math.Vec3.make(1, 0, 0), std.math.pi / 2.0);
-                break :blk translate.mul(rotate);
-            },
-        },
-    };
-    defer for (objects) |*o| @constCast(&o.object).deinit();
-
     var engine = core.VulkanEngine.init(
         gpa.allocator(),
-        null,
-
         .{
             .camera = core.Camera{},
             .materials_file = materials_file,
-            .mesh_objects = objects,
+            .meshes_path = "assets/meshes",
             .terrain_heightmap_file_name = "assets/terrain_tst.png",
             .terrain_material_name = "statue",
         },
+        null,
     );
 
     defer engine.deinit();

@@ -20,166 +20,118 @@ pub const Description = struct {
 };
 
 pub const AllocatedData = struct {
-    gizmo_verts: vma_usage.AllocatedBuffer = undefined,
-    gizmo_indices: vma_usage.AllocatedBuffer = undefined,
+    meshes: mesh_mod.Meshes.AllocatedData,
+    materials: core.Materials.AllocatedData,
 
-    pub fn deinit(self: @This(), vma_a: vma.Allocator) void {
-        self.gizmo_indices.deinit(vma_a);
-        self.gizmo_verts.deinit(vma_a);
+    pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+        self.meshes.deinit(allocs);
+        self.materials.deinit(allocs, device, alloc_cbs);
+    }
+
+    pub fn create(
+        allocs: core.VulkanEngine.Allocators,
+        upload_ctx: *core.vulkan_init.UploadContext,
+        logical_device: core.vulkan_init.LogicalDevice,
+        physical_device: core.vulkan_init.PhysicalDevice,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) @This() {
+        var materials_file = core.mtl_loader.parseFile(allocs.std, DEBUG_MATERIALS_PATH) catch @panic("failed to load materials file");
+        defer materials_file.deinit();
+        var materials = core.Materials.initFromMaterialFile(allocs.std, materials_file) catch @panic("failed to init materials");
+        defer materials.deinit(allocs.std);
+        const uploaded_materials = materials.upload(
+            allocs,
+            upload_ctx,
+            logical_device,
+            physical_device,
+            alloc_cbs,
+        );
+
+        const widget_objs = core.obj_loader.readObjDirectory(allocs.std, WIDGET_DIR) catch @panic("failed to read widgets");
+        defer allocs.std.free(widget_objs);
+
+        var meshes = core.mesh.Meshes.init(allocs.std) catch @panic("OOM");
+        defer meshes.deinit(allocs.std);
+
+        for (widget_objs) |*obj| {
+            const mesh = core.mesh.Mesh3D.fromObjFile(allocs.std, obj.*) catch @panic("failed to load mesh");
+            defer mesh.deinit(allocs.std);
+            defer obj.deinit();
+
+            const material_index = uploaded_materials.indices.get(obj.*.objects[0].material_name) orelse {
+                log.err(
+                    \\ Failed to get material for object: {s}
+                , .{obj.objects[0].material_name});
+                unreachable;
+            };
+            meshes.appendMesh(
+                allocs.std,
+                mesh,
+                // BAD
+                .IDENTITY,
+                material_index,
+            ) catch @panic("OOM");
+        }
+
+        const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
+
+        return .{
+            .meshes = uploaded_meshes,
+            .materials = uploaded_materials,
+        };
     }
 };
 
-pub fn createAllocatedData(vma_a: vma.Allocator, upload_ctx: *core.vulkan_init.UploadContext, device: core.vulkan_init.LogicalDevice) AllocatedData {
+const DebugMesh = struct {
+    vertices: []core.mesh.Vertex3D,
+    indices: []u32,
+};
+
+fn computeBackground(meshs: []const DebugMesh) DebugMesh {
+    // Find the AABB of all vertices across all meshs
+    var min_x: f32 = std.math.floatMax(f32);
+    var min_y: f32 = std.math.floatMax(f32);
+    var max_x: f32 = -std.math.floatMax(f32);
+    var max_y: f32 = -std.math.floatMax(f32);
+
+    for (meshs) |obj| {
+        for (obj.vertices) |v| {
+            min_x = @min(min_x, v.position.x);
+            min_y = @min(min_y, v.position.y);
+            max_x = @max(max_x, v.position.x);
+            max_y = @max(max_y, v.position.y);
+        }
+    }
+
+    const padding: f32 = 0.1;
+    min_x -= padding;
+    min_y -= padding;
+    max_x += padding;
+    max_y += padding;
+
+    const bg_color = core.math.Vec4.make(0, 0, 0, 0.5);
+    const z: f32 = 0.999; // far back in clip space, behind gizmo
+
     const vertices = [_]core.mesh.Vertex3D{
-        // X axis (red)
-        .{
-            .position = core.math.Vec4.make(0, 0, 0, 1),
-            .normal = core.math.Vec4.ZERO,
-            .color = core.math.Vec4.make(1, 0, 0, 1),
-            .uv = core.math.Vec2.ZERO,
-        },
-        .{
-            .position = core.math.Vec4.make(1, 0, 0, 1),
-            .normal = core.math.Vec4.ZERO,
-            .color = core.math.Vec4.make(1, 0, 0, 1),
-            .uv = core.math.Vec2.ZERO,
-        },
-
-        // Y axis (green)
-        .{
-            .position = core.math.Vec4.make(0, 0, 0, 1),
-            .normal = core.math.Vec4.ZERO,
-            .color = core.math.Vec4.make(0, 1, 0, 1),
-            .uv = core.math.Vec2.ZERO,
-        },
-        .{
-            .position = core.math.Vec4.make(0, 1, 0, 1),
-            .normal = core.math.Vec4.ZERO,
-            .color = core.math.Vec4.make(0, 1, 0, 1),
-            .uv = core.math.Vec2.ZERO,
-        },
-
-        // Z axis (blue)
-        .{
-            .position = core.math.Vec4.make(0, 0, 0, 1),
-            .normal = core.math.Vec4.ZERO,
-            .color = core.math.Vec4.make(0, 0, 1, 1),
-            .uv = core.math.Vec2.ZERO,
-        },
-        .{
-            .position = core.math.Vec4.make(0, 0, 1, 1),
-            .normal = core.math.Vec4.ZERO,
-            .color = core.math.Vec4.make(0, 0, 1, 1),
-            .uv = core.math.Vec2.ZERO,
-        },
+        .{ .position = core.math.Vec4.make(min_x, min_y, z, 1), .normal = core.math.Vec4.ZERO, .color = bg_color, .uv = core.math.Vec2.ZERO },
+        .{ .position = core.math.Vec4.make(max_x, min_y, z, 1), .normal = core.math.Vec4.ZERO, .color = bg_color, .uv = core.math.Vec2.ZERO },
+        .{ .position = core.math.Vec4.make(max_x, max_y, z, 1), .normal = core.math.Vec4.ZERO, .color = bg_color, .uv = core.math.Vec2.ZERO },
+        .{ .position = core.math.Vec4.make(min_x, max_y, z, 1), .normal = core.math.Vec4.ZERO, .color = bg_color, .uv = core.math.Vec2.ZERO },
     };
 
-    const indices = [_]u16{
-        0, 1, // X
-        2, 3, // Y
-        4, 5, // Z
+    const indices = [_]u32{
+        0, 1, 2, // first triangle
+        2, 3, 0, // second triangle
     };
 
-    const vert_alloc_size, const idx_alloc_size = .{
-        vertices.len * @sizeOf(core.mesh.Vertex3D),
-        indices.len * @sizeOf(u32),
+    return .{
+        .vertices = &vertices,
+        .indices = &indices,
     };
-
-    const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
-        const vert_ci = vk.BufferCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = vert_alloc_size,
-            .usage = vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-        };
-        const idx_ci = vk.BufferCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = idx_alloc_size,
-            .usage = vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-        };
-
-        const ai = vma.AllocationCreateInfo{
-            .usage = vma.MEMORY_USAGE_CPU_ONLY,
-        };
-
-        var vert_buf: vma_usage.AllocatedBuffer = undefined;
-        checkVk(vma.CreateBuffer(vma_a, &vert_ci, &ai, &vert_buf.buffer, &vert_buf.allocation, null)) catch @panic("Failed to create vertex buffer");
-        var idx_buf: vma_usage.AllocatedBuffer = undefined;
-        checkVk(vma.CreateBuffer(vma_a, &idx_ci, &ai, &idx_buf.buffer, &idx_buf.allocation, null)) catch @panic("Failed to create index buffer");
-        break :stage_cpu .{ vert_buf, idx_buf };
-    };
-
-    defer {
-        vert_staging_buffer.deinit(vma_a);
-        idx_staging_buffer.deinit(vma_a);
-    }
-
-    // mapping memory
-    {
-        var data: ?*anyopaque = undefined;
-        checkVk(vma.MapMemory(vma_a, vert_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
-        defer vma.UnmapMemory(vma_a, vert_staging_buffer.allocation);
-
-        const vert_aligned_data: [*]core.mesh.Vertex3D = @ptrCast(@alignCast(data));
-        @memcpy(vert_aligned_data, vertices[0..vertices.len]);
-
-        data = undefined;
-        checkVk(vma.MapMemory(vma_a, idx_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
-        defer vma.UnmapMemory(vma_a, idx_staging_buffer.allocation);
-
-        const idx_aligned_data: [*]u16 = @ptrCast(@alignCast(data));
-        @memcpy(idx_aligned_data, indices[0..indices.len]);
-    }
-
-    // gpu allocation
-    var alloc_data = AllocatedData{};
-    {
-        const vert_ci = vk.BufferCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = vert_alloc_size,
-            .usage = vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        };
-        const idx_ci = vk.BufferCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = idx_alloc_size,
-            .usage = vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        };
-
-        const ai = vma.AllocationCreateInfo{
-            .usage = vma.MEMORY_USAGE_GPU_ONLY,
-        };
-
-        checkVk(vma.CreateBuffer(vma_a, &vert_ci, &ai, &alloc_data.gizmo_verts.buffer, &alloc_data.gizmo_verts.allocation, null)) catch @panic("Failed to create vertex buffer");
-        checkVk(vma.CreateBuffer(vma_a, &idx_ci, &ai, &alloc_data.gizmo_indices.buffer, &alloc_data.gizmo_indices.allocation, null)) catch @panic("Failed to create index buffer");
-    }
-
-    const SubmitCtx =
-        struct {
-            mesh_buffer: vk.Buffer,
-            staging_buffer: vk.Buffer,
-            size: usize,
-
-            pub fn submit(ctx: @This(), cmd: vk.CommandBuffer) void {
-                const copy_region = vk.BufferCopy{
-                    .size = ctx.size,
-                };
-                vk.CmdCopyBuffer(cmd, ctx.staging_buffer, ctx.mesh_buffer, 1, &copy_region);
-            }
-        };
-
-    upload_ctx.immediateSubmit(device, SubmitCtx{
-        .mesh_buffer = alloc_data.gizmo_verts.buffer,
-        .staging_buffer = vert_staging_buffer.buffer,
-        .size = vert_alloc_size,
-    });
-
-    upload_ctx.immediateSubmit(device, SubmitCtx{
-        .mesh_buffer = alloc_data.gizmo_indices.buffer,
-        .staging_buffer = idx_staging_buffer.buffer,
-        .size = idx_alloc_size,
-    });
-
-    return alloc_data;
 }
+
+const DEBUG_MATERIALS_PATH = "assets/debug.mtl";
+const WIDGET_DIR = "assets/widgets/";
 
 pub const VertexInputDescription = struct {
     bindings: []const vk.VertexInputBindingDescription,
@@ -553,7 +505,7 @@ pub fn recordCommands(self: Self, alloc_data: AllocatedData, cmd_buf: vk.Command
 
     // vertex buffer
     const vertex_buffers = [_]vk.Buffer{
-        alloc_data.gizmo_verts.buffer,
+        alloc_data.meshes.vertex_buffer.buffer,
     };
 
     const offsets = [_]vk.DeviceSize{0};
@@ -569,7 +521,7 @@ pub fn recordCommands(self: Self, alloc_data: AllocatedData, cmd_buf: vk.Command
     // index buffer
     vk.CmdBindIndexBuffer(
         cmd_buf,
-        alloc_data.gizmo_indices.buffer,
+        alloc_data.meshes.index_buffer.buffer,
         0,
         vk.INDEX_TYPE_UINT16,
     );

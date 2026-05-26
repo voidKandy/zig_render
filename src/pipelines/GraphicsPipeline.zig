@@ -9,49 +9,29 @@ const vk = core.clibs.vk;
 const vma = core.clibs.vma;
 const vma_usage = core.vma_usage;
 const checkVk = vki.checkVk;
-
-pub const MetaData = struct {
-    material_index: u32,
-    index_offset: u32,
-    index_count: u32,
-    vertex_offset: u32,
-
-    model_transform: core.math.Mat4,
-};
+const Mesh = mesh_mod.Mesh3D;
 
 pub const AllocatedData = struct {
-    pub const MeshObject = struct {
-        object: core.obj_loader.ObjFile,
-        transform: core.math.Mat4 = .IDENTITY,
-    };
     pub const CreateData = struct {
         camera: core.Camera,
         materials_file: core.mtl_loader.MtlFile,
-        mesh_objects: []const MeshObject,
+        meshes_path: []const u8,
+
         // for now, we support a single terrain file
         // eventually, we will have both the heightmap file & type file
         terrain_heightmap_file_name: []const u8,
         terrain_material_name: []const u8,
     };
 
-    mesh_ranges: []MeshRanges,
-    textures: []core.Materials.Texture,
-
+    materials: core.Materials.AllocatedData,
+    meshes: core.mesh.Meshes.AllocatedData,
     camera_uniform: vma_usage.MappedBuffer,
-    meshes_vertex_buffer: vma_usage.AllocatedBuffer,
-    meshes_index_buffer: vma_usage.AllocatedBuffer,
-    meta_data: vma_usage.MappedBuffer,
 
-    const RangeDesc = struct {
-        offset: vk.DeviceSize = 0,
-        range: vk.DeviceSize = 0,
-    };
-
-    const MeshRanges = struct {
-        vertex_range: RangeDesc,
-        index_range: RangeDesc,
-    };
-
+    pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+        self.meshes.deinit(allocs);
+        self.camera_uniform.deinit(allocs.vma);
+        self.materials.deinit(allocs, device, alloc_cbs);
+    }
     pub fn create(
         allocs: core.VulkanEngine.Allocators,
         upload_ctx: *core.vulkan_init.UploadContext,
@@ -62,272 +42,66 @@ pub const AllocatedData = struct {
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) std.mem.Allocator.Error!@This() {
         var materials = core.Materials.initFromMaterialFile(allocs.std, cd.materials_file) catch @panic("failed to create MTL");
-        var mat_iter = materials.metadata.keyIterator();
         defer materials.deinit(allocs.std);
-        var material_indices = std.StringHashMapUnmanaged(u32){};
-        defer material_indices.deinit(allocs.std);
-        const textures = try allocs.std.alloc(core.Materials.Texture, materials.metadata.size);
+        const uploaded_materials = materials.upload(
+            allocs,
+            upload_ctx,
+            logical_device,
+            physical_device,
+            alloc_cbs,
+        );
+        var meshes = try core.mesh.Meshes.init(allocs.std);
+        defer meshes.deinit(allocs.std);
 
-        var k: u32 = 0;
-        while (mat_iter.next()) |key| : (k += 1) {
-            const mat = materials.getMaterialData(key.*) orelse @panic("No material found?");
-            const mat_texture = mat.upload(
-                allocs.vma,
-                upload_ctx,
-                logical_device,
-                physical_device,
-                alloc_cbs,
-            ) catch @panic("failed to upload material");
-            log.debug(
-                \\ Adding {s} as {d}
-            , .{ mat.name, k });
-            try material_indices.put(allocs.std, mat.name, k);
-            textures[k] =
-                mat_texture;
-        }
+        const terrain_material = uploaded_materials.indices.get(cd.terrain_material_name) orelse @panic("failed to get material for object");
+        const heightmap_mesh =
+            try core.terrain.fromHeightmap(
+                allocs.std,
+                cd.terrain_heightmap_file_name,
+                128, // vertex resolution X
+                128, // vertex resolution Z
+                2.0, // max height
+                10.0, // world size
+            );
+        meshes.appendMesh(allocs.std, heightmap_mesh, core.math.Mat4.IDENTITY, terrain_material) catch @panic("OOM");
+        defer heightmap_mesh.deinit(allocs.std);
 
-        // currently, the first mesh of the meshes is always the terrain heightmap
-        const amt_meshes = cd.mesh_objects.len + 1;
-        var meshes = try allocs.std.alloc(core.mesh.Mesh3D, amt_meshes);
-        var all_ranges = try allocs.std.alloc(MeshRanges, amt_meshes);
-        var all_metadata = try allocs.std.alloc(MetaData, amt_meshes);
+        const meshes_object_files = core.obj_loader.readObjDirectory(allocs.std, cd.meshes_path) catch @panic("failed to read objects");
+        defer allocs.std.free(meshes_object_files);
 
-        var vertices = try std.ArrayList(core.mesh.Vertex3D).initCapacity(allocs.std, 64);
-        var indices = try std.ArrayList(u32).initCapacity(allocs.std, 64);
-        defer {
-            allocs.std.free(meshes);
-            allocs.std.free(all_metadata);
-            vertices.deinit(allocs.std);
-            indices.deinit(allocs.std);
-        }
-
-        var total_verts: usize = 0;
-        var total_idcs: usize = 0;
-
-        for (0..amt_meshes) |i| {
-            // Not a great way to do this
-            // If we are on index 0 we load the terrain
-            const mesh, const material_index, const transform = blk: {
-                if (i == 0) break :blk .{
-                    try core.terrain.fromHeightmap(
-                        allocs.std,
-                        cd.terrain_heightmap_file_name,
-                        128, // vertex resolution X
-                        128, // vertex resolution Z
-                        2.0, // max height
-                        10.0, // world size
-                    ),
-                    material_indices.get(cd.terrain_material_name) orelse @panic("failed to get material for object"),
-                    core.math.Mat4.IDENTITY,
-                } else {
-                    const scene_obj = cd.mesh_objects[i - 1];
-
-                    if (!std.mem.eql(u8, scene_obj.object.material_library_name, materials.library_name)) {
-                        std.debug.panic(
-                            \\ Obj file references a materials library that is not loaded: `{s}`
-                        , .{scene_obj.object.material_library_name});
-                    }
-
-                    break :blk .{
-                        try core.mesh.Mesh3D.fromObjFile(allocs.std, scene_obj.object),
-                        material_indices.get(scene_obj.object.objects[0].material_name) orelse @panic("failed to get material for object"),
-                        scene_obj.transform,
-                    };
-                }
-            };
+        for (meshes_object_files) |*obj| {
+            const mesh = core.mesh.Mesh3D.fromObjFile(allocs.std, obj.*) catch @panic("failed to load mesh");
             defer mesh.deinit(allocs.std);
-            const range = MeshRanges{
-                .vertex_range = .{
-                    .offset = total_verts,
-                    .range = mesh.vertices.len,
-                },
-                .index_range = .{
-                    .offset = total_idcs,
-                    .range = mesh.indices.len,
-                },
-            };
+            defer obj.deinit();
 
-            const metadata = MetaData{
-                .model_transform = transform,
-                .material_index = material_index,
-                .index_count = @as(u32, @intCast(range.index_range.range)),
-                .index_offset = @as(u32, @intCast(range.index_range.offset)),
-                .vertex_offset = @as(u32, @intCast(range.vertex_range.offset)),
-            };
+            const material_index = uploaded_materials.indices.get(obj.*.objects[0].material_name) orelse @panic("failed to get material for object");
+            const transform = core.math.Mat4.IDENTITY;
 
-            try vertices.appendSlice(allocs.std, mesh.vertices);
-            try indices.appendSlice(allocs.std, mesh.indices);
-
-            total_verts += mesh.vertices.len;
-            total_idcs += mesh.indices.len;
-
-            all_metadata[i] = metadata;
-            all_ranges[i] = range;
-            meshes[i] = mesh;
+            meshes.appendMesh(allocs.std, mesh, transform, material_index) catch @panic("OOM");
         }
-
-        const vert_alloc_size, const idx_alloc_size = .{
-            vertices.items.len * @sizeOf(core.mesh.Vertex3D),
-            indices.items.len * @sizeOf(u32),
-        };
-
-        const vert_staging_buffer, const idx_staging_buffer = stage_cpu: {
-            const vert_ci = vk.BufferCreateInfo{
-                .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                .size = vert_alloc_size,
-                .usage = vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-            };
-            const idx_ci = vk.BufferCreateInfo{
-                .sType = vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                .size = idx_alloc_size,
-                .usage = vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-            };
-
-            const ai = vma.AllocationCreateInfo{
-                .usage = vma.MEMORY_USAGE_CPU_ONLY,
-            };
-
-            var vert_buf: vma_usage.AllocatedBuffer = undefined;
-            checkVk(vma.CreateBuffer(allocs.vma, &vert_ci, &ai, &vert_buf.buffer, &vert_buf.allocation, null)) catch @panic("Failed to create vertex buffer");
-            var idx_buf: vma_usage.AllocatedBuffer = undefined;
-            checkVk(vma.CreateBuffer(allocs.vma, &idx_ci, &ai, &idx_buf.buffer, &idx_buf.allocation, null)) catch @panic("Failed to create index buffer");
-            break :stage_cpu .{ vert_buf, idx_buf };
-        };
-
-        defer {
-            vert_staging_buffer.deinit(allocs.vma);
-            idx_staging_buffer.deinit(allocs.vma);
-        }
-
-        // mapping memory
-        {
-            var data: ?*anyopaque = undefined;
-            checkVk(vma.MapMemory(allocs.vma, vert_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
-            defer vma.UnmapMemory(allocs.vma, vert_staging_buffer.allocation);
-
-            const vert_aligned_data: [*]core.mesh.Vertex3D = @ptrCast(@alignCast(data));
-            @memcpy(vert_aligned_data, vertices.items);
-
-            data = undefined;
-            checkVk(vma.MapMemory(allocs.vma, idx_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
-            defer vma.UnmapMemory(allocs.vma, idx_staging_buffer.allocation);
-
-            const idx_aligned_data: [*]u32 = @ptrCast(@alignCast(data));
-            @memcpy(idx_aligned_data, indices.items);
-        }
-
-        const meshes_vertex_buffer = vma_usage.AllocatedBuffer.create(
-            allocs.vma,
-            vert_alloc_size,
-            vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            vma.MEMORY_USAGE_GPU_ONLY,
-            0,
-        );
-        const meshes_index_buffer = vma_usage.AllocatedBuffer.create(
-            allocs.vma,
-            idx_alloc_size,
-            vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            vma.MEMORY_USAGE_GPU_ONLY,
-            0,
-        );
-
-        const SubmitCtx =
-            struct {
-                mesh_buffer: vk.Buffer,
-                staging_buffer: vk.Buffer,
-                size: usize,
-
-                pub fn submit(ctx: @This(), cmd: vk.CommandBuffer) void {
-                    const copy_region = vk.BufferCopy{
-                        .size = ctx.size,
-                    };
-                    vk.CmdCopyBuffer(cmd, ctx.staging_buffer, ctx.mesh_buffer, 1, &copy_region);
-                }
-            };
-
-        log.debug(
-            \\Vertex buffer size: {}
-            \\Index buffer size: {}
-        , .{ meshes_vertex_buffer.size, meshes_index_buffer.size });
-
-        upload_ctx.immediateSubmit(logical_device, SubmitCtx{
-            .mesh_buffer = meshes_vertex_buffer.buffer,
-            .staging_buffer = vert_staging_buffer.buffer,
-            .size = vert_alloc_size,
-        });
-
-        upload_ctx.immediateSubmit(logical_device, SubmitCtx{
-            .mesh_buffer = meshes_index_buffer.buffer,
-            .staging_buffer = idx_staging_buffer.buffer,
-            .size = idx_alloc_size,
-        });
-
-        const metadata_alloc = vma_usage.AllocatedBuffer.create(
-            allocs.vma,
-            @sizeOf(MetaData) * meshes.len,
-            vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            vma.MEMORY_USAGE_CPU_TO_GPU,
-            0,
-        );
-
-        var mapped_metadata = vma_usage.MappedBuffer{
-            .allocation = metadata_alloc,
-        };
-
-        checkVk(vma.MapMemory(
-            allocs.vma,
-            metadata_alloc.allocation,
-            &mapped_metadata.mapped,
-        )) catch @panic("Failed to map metadata");
-
-        // const aligned_metadata: *GraphicsPipeline.MetaData = @ptrCast(@alignCast(mapped_metadata.mapped));
-        const aligned_metadata: [*]MetaData =
-            @ptrCast(@alignCast(mapped_metadata.mapped));
-
-        @memcpy(aligned_metadata, all_metadata);
 
         const camera_alloc = vma_usage.AllocatedBuffer.create(
             allocs.vma,
             @sizeOf(core.Camera.GPUData),
             vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            vma.MEMORY_USAGE_CPU_TO_GPU,
+            core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
             0,
         );
-        var mapped_camera: vma_usage.MappedBuffer = .{
-            .allocation = camera_alloc,
-        };
-        checkVk(vma.MapMemory(allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
+        var mapped_camera: vma_usage.MappedBuffer = .{ .allocation = camera_alloc };
+        checkVk(core.clibs.vma.MapMemory(allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
 
         const aligned_camera: *core.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
 
         aligned_camera.* = cd.camera.createGPUData(camera_extent);
         aligned_camera.*.proj.j.y *= -1;
 
-        return AllocatedData{
-            .mesh_ranges = all_ranges,
+        const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
+
+        return .{
+            .materials = uploaded_materials,
+            .meshes = uploaded_meshes,
             .camera_uniform = mapped_camera,
-            .textures = textures,
-            .meshes_vertex_buffer = meshes_vertex_buffer,
-            .meshes_index_buffer = meshes_index_buffer,
-            .meta_data = mapped_metadata,
         };
-    }
-
-    pub fn deinit(self: @This(), device: vk.Device, allocs: core.VulkanEngine.Allocators, alloc_cbs: ?*vk.AllocationCallbacks) void {
-        self.meshes_vertex_buffer.deinit(allocs.vma);
-        self.meshes_index_buffer.deinit(allocs.vma);
-        self.meta_data.deinit(allocs.vma);
-
-        self.camera_uniform.deinit(allocs.vma);
-
-        // perhaps this should be in a separate deinit function for TextureInfo?
-        for (self.textures) |mat| {
-            mat.image_alloc.deinit(allocs.vma, device, alloc_cbs);
-            vk.DestroySampler(device, mat.sampler, alloc_cbs);
-        }
-
-        allocs.std.free(self.textures);
-        allocs.std.free(self.mesh_ranges);
     }
 };
 
@@ -770,14 +544,14 @@ pub fn updateDescriptorSets(
     try updateTextureDescriptorSet(device, a, alloc_data, textures_set);
 
     const vertex_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.meshes_vertex_buffer.buffer,
+        .buffer = alloc_data.meshes.vertex_buffer.buffer,
         .offset = 0,
-        .range = alloc_data.meshes_vertex_buffer.size,
+        .range = alloc_data.meshes.vertex_buffer.size,
     };
     const index_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.meshes_index_buffer.buffer,
+        .buffer = alloc_data.meshes.index_buffer.buffer,
         .offset = 0,
-        .range = alloc_data.meshes_index_buffer.size,
+        .range = alloc_data.meshes.index_buffer.size,
     };
     const camera_uniform_info = vk.DescriptorBufferInfo{
         .buffer = alloc_data.camera_uniform.allocation.buffer,
@@ -832,7 +606,7 @@ fn updateTextureDescriptorSet(
     alloc_data: AllocatedData,
     texture_set: vk.DescriptorSet,
 ) mem.Allocator.Error!void {
-    const texture_count = alloc_data.textures.len;
+    const texture_count = alloc_data.materials.textures.len;
     log.debug(
         \\ materials count: {}
     , .{texture_count});
@@ -841,14 +615,14 @@ fn updateTextureDescriptorSet(
 
     for (0..texture_count) |i| {
         image_infos[i] = .{
-            .sampler = alloc_data.textures[i].sampler,
-            .imageView = alloc_data.textures[i].image_alloc.view,
+            .sampler = alloc_data.materials.textures[i].sampler,
+            .imageView = alloc_data.materials.textures[i].image_alloc.view,
             .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         };
     }
 
     const buffer_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.meta_data.allocation.buffer,
+        .buffer = alloc_data.meshes.metadata.allocation.buffer,
         .offset = 0,
         .range = vk.WHOLE_SIZE,
     };

@@ -4,7 +4,8 @@ const Allocator = std.mem.Allocator;
 
 pub const Material = struct {
     name: []const u8,
-    map_Kd: []const u8,
+    map_Kd: ?[]const u8,
+    Kd: ?[3]f32 = null,
 };
 
 const ParseContext = struct {
@@ -19,6 +20,7 @@ const ParseContext = struct {
     // current material being parsed
     current_name: ?[]const u8 = null,
     current_map_Kd: ?[]const u8 = null,
+    current_Kd: ?[3]f32 = null,
 
     fn init(allocator: Allocator, temp_alloc: Allocator, filename: []const u8) Allocator.Error!ParseContext {
         return .{
@@ -44,7 +46,7 @@ pub const MtlFile = struct {
     pub fn deinit(self: *MtlFile) void {
         for (self.materials) |mat| {
             self.allocator.free(mat.name);
-            self.allocator.free(mat.map_Kd);
+            if (mat.map_Kd) |m| self.allocator.free(m);
         }
         self.allocator.free(self.materials);
         self.allocator.free(self.name);
@@ -111,18 +113,19 @@ fn parseString(a: Allocator, content: []const u8, filename: []const u8) Allocato
 
 fn flushMaterial(ctx: *ParseContext) Allocator.Error!void {
     const name = ctx.current_name orelse return; // nothing to flush
-    const map_Kd = ctx.current_map_Kd orelse "";
 
     try ctx.materials.append(ctx.allocator, .{
         .name = try ctx.allocator.dupe(u8, name),
-        .map_Kd = try ctx.allocator.dupe(u8, map_Kd),
+        .map_Kd = if (ctx.current_map_Kd) |m| try ctx.allocator.dupe(u8, m) else null,
+        .Kd = if (ctx.current_Kd) |k| k else null,
     });
 
     ctx.current_name = null;
     ctx.current_map_Kd = null;
+    ctx.current_Kd = null;
 }
 
-fn parseContent(ctx: *ParseContext, content: []const u8) Allocator.Error!void {
+fn parseContent(ctx: *ParseContext, content: []const u8) (Allocator.Error || std.fmt.ParseFloatError)!void {
     var lines = std.mem.tokenizeAny(u8, content, "\n\r");
     while (lines.next()) |raw_line| {
         ctx.line += 1;
@@ -137,7 +140,15 @@ fn parseContent(ctx: *ParseContext, content: []const u8) Allocator.Error!void {
             ctx.current_name = std.mem.trim(u8, line["newmtl ".len..], " \t");
         } else if (std.mem.startsWith(u8, line, "map_Kd ")) {
             ctx.current_map_Kd = std.mem.trim(u8, line["map_Kd ".len..], " \t");
+        } else if (std.mem.startsWith(u8, line, "Kd ")) {
+            const rest = std.mem.trim(u8, line["Kd ".len..], " \t");
+            var it = std.mem.tokenizeScalar(u8, rest, ' ');
+            const r = try std.fmt.parseFloat(f32, it.next() orelse "0");
+            const g = try std.fmt.parseFloat(f32, it.next() orelse "0");
+            const b = try std.fmt.parseFloat(f32, it.next() orelse "0");
+            ctx.current_Kd = .{ r, g, b };
         }
+
         // everything else is intentionally ignored
     }
 }

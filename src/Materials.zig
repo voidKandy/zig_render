@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const log = std.log.scoped(.ResourceManager);
+const log = std.log.scoped(.Materials);
 const core = @import("root.zig");
 const vma = core.clibs.vma;
 const vk = core.clibs.vk;
@@ -225,6 +225,25 @@ library_name: []u8,
 const Error = std.fmt.BufPrintError || error{FailedToLoadImage};
 const ASSETS_PATH = "assets/";
 
+pub const AllocatedData = struct {
+    textures: []Texture,
+    indices: std.StringHashMapUnmanaged(u32),
+
+    pub fn deinit(
+        self: *@This(),
+        allocs: core.VulkanEngine.Allocators,
+        device: vk.Device,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) void {
+        for (self.textures) |mat| {
+            mat.image_alloc.deinit(allocs.vma, device, alloc_cbs);
+            vk.DestroySampler(device, mat.sampler, alloc_cbs);
+        }
+        allocs.std.free(self.textures);
+        self.indices.deinit(allocs.std);
+    }
+};
+
 pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
     a.free(self.materials_blob);
     a.free(self.library_name);
@@ -252,49 +271,102 @@ pub fn initFromMaterialFile(
     var metadatas = std.StringHashMapUnmanaged(Metadata){};
 
     for (mtl.materials) |mat| {
-        const path = try std.fmt.allocPrint(a, ASSETS_PATH ++ "{s}", .{mat.map_Kd});
-        defer a.free(path);
+        if (mat.map_Kd) |basename| {
+            const path = try std.fmt.allocPrint(a, ASSETS_PATH ++ "{s}", .{basename});
+            defer a.free(path);
 
-        var width: c_int = undefined;
-        var height: c_int = undefined;
-        var channels: c_int = undefined;
+            var width: c_int = undefined;
+            var height: c_int = undefined;
+            var channels: c_int = undefined;
 
-        // This is just to make the API more zig friendly. Convert to C 0-term string
-        // on the stack.
-        var buffer: [512]u8 = undefined;
-        const filepathz = try std.fmt.bufPrintZ(buffer[0..], ASSETS_PATH ++ "{s}", .{mat.map_Kd});
+            // This is just to make the API more zig friendly. Convert to C 0-term string
+            // on the stack.
+            var buffer: [512]u8 = undefined;
+            const filepathz = try std.fmt.bufPrintZ(buffer[0..], ASSETS_PATH ++ "{s}", .{basename});
 
-        log.info("Attempting to load image from: {s}", .{filepathz});
+            log.info("Attempting to load image from: {s}", .{filepathz});
 
-        const image_data = core.clibs.stbi.load(
-            filepathz.ptr,
-            &width,
-            &height,
-            &channels,
-            core.clibs.stbi.rgb_alpha,
-        );
-        if (image_data == null) {
-            return error.FailedToLoadImage;
+            const image_data = core.clibs.stbi.load(
+                filepathz.ptr,
+                &width,
+                &height,
+                &channels,
+                core.clibs.stbi.rgb_alpha,
+            );
+            if (image_data == null) {
+                return error.FailedToLoadImage;
+            }
+            const byte_count: usize = @intCast(width * height * core.clibs.stbi.rgb_alpha);
+            const offset = Metadata{
+                .offset = materials.items.len,
+                .range = byte_count,
+                .channels = channels,
+                .height = height,
+                .width = width,
+            };
+            defer core.clibs.stbi.image_free(image_data);
+            log.debug(
+                \\ Material '{s}' loaded
+            , .{mat.name});
+
+            try materials.appendSlice(a, image_data[0..byte_count]);
+            try metadatas.put(a, mat.name, offset);
+        } else if (mat.Kd) |kd| {
+            const pixel = [4]u8{
+                @intFromFloat(kd[0] * 255.0),
+                @intFromFloat(kd[1] * 255.0),
+                @intFromFloat(kd[2] * 255.0),
+                255,
+            };
+            const offset = Metadata{
+                .offset = materials.items.len,
+                .range = 4,
+                .channels = 4,
+                .height = 1,
+                .width = 1,
+            };
+            try materials.appendSlice(a, &pixel);
+            try metadatas.put(a, mat.name, offset);
+            log.debug("Material '{s}' loaded as flat color", .{mat.name});
         }
-        const byte_count: usize = @intCast(width * height * core.clibs.stbi.rgb_alpha);
-        const offset = Metadata{
-            .offset = materials.items.len,
-            .range = byte_count,
-            .channels = channels,
-            .height = height,
-            .width = width,
-        };
-        defer core.clibs.stbi.image_free(image_data);
-        log.debug(
-            \\ Material '{s}' loaded
-        , .{mat.name});
-
-        try materials.appendSlice(a, image_data[0..byte_count]);
-        try metadatas.put(a, mat.name, offset);
     }
     return .{
         .materials_blob = try materials.toOwnedSlice(a),
         .metadata = metadatas,
         .library_name = try a.dupe(u8, mtl.name),
+    };
+}
+
+pub fn upload(
+    self: @This(),
+    allocs: core.VulkanEngine.Allocators,
+    upload_ctx: *core.vulkan_init.UploadContext,
+    logical_device: vk_init.LogicalDevice,
+    physical_device: vk_init.PhysicalDevice,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) AllocatedData {
+    var iter = self.metadata.keyIterator();
+    var material_indices = std.StringHashMapUnmanaged(u32){};
+    const textures = allocs.std.alloc(core.Materials.Texture, self.metadata.size) catch @panic("OOM");
+    var i: u32 = 0;
+    while (iter.next()) |key| : (i += 1) {
+        const mat = self.getMaterialData(key.*) orelse @panic("No material found?");
+        const mat_texture = mat.upload(
+            allocs.vma,
+            upload_ctx,
+            logical_device,
+            physical_device,
+            alloc_cbs,
+        ) catch @panic("failed to upload material");
+        log.debug(
+            \\ Adding {s} as {d}
+        , .{ mat.name, i });
+        material_indices.put(allocs.std, mat.name, i) catch @panic("OOM");
+        textures[i] = mat_texture;
+    }
+
+    return .{
+        .indices = material_indices,
+        .textures = textures,
     };
 }

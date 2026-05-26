@@ -154,7 +154,6 @@ fn addShader(
     shader_compilation.stdio = .inherit;
     shader_compilation.addArg("-V");
     shader_compilation.addArg("-o");
-    shader_compilation.addCheck(.{ .expect_term = .{ .Exited = 0 } });
     const output = shader_compilation.addOutputFileArg(outpath);
     shader_compilation.addFileArg(b.path(source));
 

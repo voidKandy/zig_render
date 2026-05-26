@@ -24,19 +24,44 @@ pub const Index = struct {
     uv: u32,
 };
 
+pub const MaterialRange = struct {
+    material_name: []u8,
+    first_index: u32,
+    index_count: u32,
+};
+
 pub const Object = struct {
     name: []u8,
     material_name: []u8,
     face_vertices: []u32,
     indices: []Index,
+    material_ranges: []MaterialRange,
 
     pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
         a.free(self.face_vertices);
         a.free(self.name);
         a.free(self.material_name);
         a.free(self.indices);
+        for (self.material_ranges) |*r| a.free(r.material_name);
+        a.free(self.material_ranges);
     }
 };
+
+pub fn readObjDirectory(a: std.mem.Allocator, dir_path: []const u8) ![]ObjFile {
+    var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+    var iter = try dir.walk(a);
+    defer iter.deinit();
+    var obj_files = try std.ArrayList(ObjFile).initCapacity(a, 3);
+
+    while (try iter.next()) |entry| {
+        const path = std.fmt.allocPrint(a, "{s}/{s}", .{ dir_path, entry.basename }) catch @panic("failed to alloc path");
+        defer a.free(path);
+        const obj = try parseFile(a, path);
+        try obj_files.append(a, obj);
+    }
+
+    return try obj_files.toOwnedSlice(a);
+}
 
 // TODO
 // remove ownership of allocator
@@ -51,13 +76,14 @@ pub const ObjFile = struct {
     uvs: [][2]f32,
 
     pub fn deinit(self: *@This()) void {
-        for (self.objects) |*object| object.deinit(self.allocator);
-
         self.allocator.free(self.material_library_name);
-        self.allocator.free(self.objects);
         self.allocator.free(self.vertices);
         self.allocator.free(self.normals);
         self.allocator.free(self.uvs);
+        for (self.objects) |*object|
+            object.deinit(self.allocator);
+
+        self.allocator.free(self.objects);
     }
 };
 
@@ -81,6 +107,9 @@ const ParseContext = struct {
     material_library_name: []const u8 = "",
     current_material_name: []const u8 = "",
 
+    material_ranges: std.ArrayList(MaterialRange) = .{},
+    current_range_first_index: u32 = 0,
+
     object_name: []const u8 = "",
     vertices: std.ArrayList([3]f32) = .{},
     normals: std.ArrayList([3]f32) = .{},
@@ -90,10 +119,12 @@ const ParseContext = struct {
     face_parsing_state: FaceParsingState = .undefined,
 
     fn deinit(self: *ParseContext) void {
-        self.temp_alloc.deinit();
         self.vertices.deinit(self.allocator);
         self.normals.deinit(self.allocator);
+        self.material_ranges.deinit(self.allocator);
         self.uvs.deinit(self.allocator);
+        self.face_vertices.deinit(self.allocator);
+        self.indices.deinit(self.allocator);
     }
 };
 
@@ -119,6 +150,7 @@ pub fn parseFile(a: std.mem.Allocator, filepath: []const u8) !ObjFile {
         .line_content = "",
         .filename = filepath,
     };
+    defer ctx.deinit();
 
     try ctx.vertices.append(ctx.allocator, .{ 0, 0, 0 });
     try ctx.normals.append(ctx.allocator, .{ 0, 0, 0 });
@@ -197,15 +229,24 @@ fn parseContent(ctx: *ParseContext, content: []const u8) !void {
             },
             'u' => {
                 if (std.mem.startsWith(u8, line, "usemtl")) {
-                    ctx.current_material_name = std.mem.trim(u8, line["usemtl".len..], " \t\r");
+                    const new_material = std.mem.trim(u8, line["usemtl".len..], " \t\r");
+                    // flush current range if it has any indices
+                    const current_index_count = @as(u32, @intCast(ctx.indices.items.len)) - ctx.current_range_first_index;
+                    if (current_index_count > 0) {
+                        try ctx.material_ranges.append(ctx.allocator, .{
+                            .material_name = try ctx.allocator.dupe(u8, ctx.current_material_name),
+                            .first_index = ctx.current_range_first_index,
+                            .index_count = current_index_count,
+                        });
+                        ctx.current_range_first_index = @intCast(ctx.indices.items.len);
+                    }
+                    ctx.current_material_name = new_material;
                 } else {
                     logErr(ctx, "Unknown token at beginning of line: {s}", .{line});
                     return ParseError.InvalidToken;
                 }
             },
-            'l' => {
-                logWarn(ctx, "Lines are not supported", .{});
-            },
+            'l' => try parseLine(ctx, line[1..]),
             's' => {
                 logWarn(ctx, "Smoothing groups are not supported", .{});
             },
@@ -235,6 +276,41 @@ fn parseValues(ctx: *ParseContext, line: []const u8, values: []f32, type_name: [
     }
 
     return count;
+}
+
+fn parseLine(ctx: *ParseContext, line: []const u8) !void {
+    var it = std.mem.tokenizeAny(u8, line, " \t");
+    var count: u32 = 0;
+    while (it.next()) |token| {
+        var pos_index = std.fmt.parseInt(i32, token, 10) catch {
+            logErr(ctx, "Invalid line element. Invalid index: {s}", .{token});
+            return ParseError.InvalidIndex;
+        };
+
+        if (pos_index < 0) {
+            pos_index = @as(i32, @intCast(ctx.vertices.items.len)) + pos_index;
+        }
+        if (pos_index < 0 or pos_index >= ctx.vertices.items.len) {
+            logErr(ctx, "Invalid line element. Index out of bounds: {}", .{pos_index});
+            return ParseError.InvalidIndex;
+        }
+
+        const index = Index{
+            .vertex = @as(u32, @intCast(pos_index)),
+            .uv = 0,
+            .normal = 0,
+        };
+        try ctx.indices.append(ctx.allocator, index);
+        count += 1;
+    }
+
+    if (count < 2) {
+        logErr(ctx, "Invalid line element. Expected at least 2 indices, found: {}", .{count});
+        return ParseError.InvalidEntry;
+    }
+
+    // store count like faces do so addCurrentObject knows how many verts per element
+    try ctx.face_vertices.append(ctx.allocator, count);
 }
 
 inline fn parseVertex(ctx: *ParseContext, line: []const u8) !void {
@@ -383,12 +459,29 @@ inline fn parseMaterial(ctx: *ParseContext, line: []const u8) !void {
 
 fn addCurrentObject(ctx: *ParseContext) !void {
     if (ctx.face_vertices.items.len > 0) {
+        // flush final material range
+        const current_index_count = @as(u32, @intCast(ctx.indices.items.len)) - ctx.current_range_first_index;
+        if (current_index_count > 0) {
+            try ctx.material_ranges.append(ctx.allocator, .{
+                .material_name = try ctx.allocator.dupe(u8, ctx.current_material_name),
+                .first_index = ctx.current_range_first_index,
+                .index_count = current_index_count,
+            });
+            ctx.current_range_first_index = @intCast(ctx.indices.items.len);
+        }
+
         try ctx.objects.append(ctx.allocator, .{
             .name = try ctx.allocator.dupe(u8, ctx.object_name),
             .material_name = try ctx.allocator.dupe(u8, ctx.current_material_name),
-            .face_vertices = try ctx.face_vertices.toOwnedSlice(ctx.allocator),
-            .indices = try ctx.indices.toOwnedSlice(ctx.allocator),
+            .face_vertices = try ctx.allocator.dupe(u32, ctx.face_vertices.items),
+            .indices = try ctx.allocator.dupe(Index, ctx.indices.items),
+            .material_ranges = try ctx.allocator.dupe(MaterialRange, ctx.material_ranges.items),
         });
+
+        ctx.face_vertices.clearRetainingCapacity();
+        ctx.indices.clearRetainingCapacity();
+        ctx.material_ranges.clearRetainingCapacity();
+        ctx.current_range_first_index = 0;
     }
 }
 

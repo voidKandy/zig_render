@@ -66,13 +66,13 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
 pub fn init(
     a: std.mem.Allocator,
-    alloc_cbs: ?*vk.AllocationCallbacks,
     graphics_pipeline_cd: GraphicsPipeline.AllocatedData.CreateData,
+    alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     return .{
-        .alloc_cbs = alloc_cbs,
-        .allocs = .{ .std = a },
         .main_graphics_pipeline_create_data = graphics_pipeline_cd,
+        .allocs = .{ .std = a },
+        .alloc_cbs = alloc_cbs,
     };
 }
 
@@ -83,7 +83,6 @@ pub fn deinit(self: *Self) void {
     log.debug("destroyed swapchain", .{});
 
     c.imgui.impl_vulkan.Shutdown();
-    log.debug("shutdown imgui", .{});
 
     self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed frames", .{});
@@ -93,13 +92,14 @@ pub fn deinit(self: *Self) void {
 
     self.debug_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed debug graphics pipeline", .{});
-    self.debug_pipeline_data.deinit(self.allocs.vma);
+    self.debug_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed debug graphics pipeline data", .{});
 
     self.main_graphics_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline", .{});
-    self.main_graphics_pipeline_data.deinit(self.logical_device.handle, self.allocs, self.alloc_cbs);
+    self.main_graphics_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline data", .{});
+
     self.main_compute_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline", .{});
     self.main_compute_pipeline_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
@@ -267,24 +267,6 @@ fn initVulkan(self: *Self) void {
     self.initMainComputePipeline();
 
     self.initMainRenderPass();
-    self.createGraphicsPipelineData();
-    self.initMainGraphicsPipeline();
-    self.initDebugPipeline();
-    self.debug_pipeline_data = DebugPipeline.createAllocatedData(self.allocs.vma, &self.upload_context, self.logical_device);
-
-    self.swapchain.createFramebuffers(
-        self.allocs.std,
-        self.logical_device.handle,
-        self.main_render_pass,
-        self.alloc_cbs,
-    ) catch @panic("failed to create framebuffers");
-
-    self.initImgui();
-}
-
-/// Creaets description of frame models
-/// coupled with PipelineDescripotion used to create main_pipeline
-fn createGraphicsPipelineData(self: *Self) void {
     self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData.create(
         self.allocs,
         &self.upload_context,
@@ -298,6 +280,24 @@ fn createGraphicsPipelineData(self: *Self) void {
     self.main_graphics_pipeline_systems_data = .{
         .camera = self.main_graphics_pipeline_create_data.camera,
     };
+    self.debug_pipeline_data = DebugPipeline.AllocatedData.create(
+        self.allocs,
+        &self.upload_context,
+        self.logical_device,
+        self.physical_device,
+        self.alloc_cbs,
+    );
+    self.initMainGraphicsPipeline();
+    self.initDebugPipeline();
+
+    self.swapchain.createFramebuffers(
+        self.allocs.std,
+        self.logical_device.handle,
+        self.main_render_pass,
+        self.alloc_cbs,
+    ) catch @panic("failed to create framebuffers");
+
+    self.initImgui();
 }
 
 fn createComputePipelineData(self: *Self) void {
@@ -719,7 +719,7 @@ fn recordCommandBuffer(
         null,
     );
 
-    for (self.main_graphics_pipeline_data.mesh_ranges, 0..) |range, idx| {
+    for (self.main_graphics_pipeline_data.meshes.ranges, 0..) |range, idx| {
         // bind set 0: VB, IB, UBO for this submesh
         vk.CmdBindDescriptorSets(
             frame.main_command_buffer,

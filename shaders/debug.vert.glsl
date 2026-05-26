@@ -6,6 +6,10 @@ layout(set = 0, binding = 0) uniform CameraData {
     mat4 proj;
 } camera_ubo;
 
+
+
+layout(location = 0) out vec3 outColor;
+
 void main() {
     mat4 view_rotation = camera_ubo.view;
     view_rotation[3] = vec4(0, 0, -3.0, 1); // strip translation, keep Z pushback
