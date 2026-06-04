@@ -1,10 +1,22 @@
 #version 460
+#extension GL_EXT_nonuniform_qualifier : require
 
-layout(location = 0) in vec3 outColor;
-layout(location = 0) out vec4 fragColor;
+layout(location = 0) in vec2 texCoord;
+layout(location = 1) flat in uint MaterialIndex;
 
-void main() {
-    /// makes the fragment depth always 0, so it renders on top of everything
-    gl_FragDepth = 0.0;
-    fragColor = vec4(outColor, 1.0);
+layout(location = 0) out vec4 outColor;
+
+layout(set = 1, binding = 0) uniform sampler2D Textures[];
+
+vec4 TextureBindless2D(uint MaterialIndex, vec2 uv)
+{
+     return texture(Textures[nonuniformEXT(MaterialIndex)], uv);
+}
+
+
+void main()
+{
+    outColor = TextureBindless2D(MaterialIndex, texCoord);
+    // out_Color = vec4(1,0,0,1);
+    // out_Color = vec4(texCoord, 0.0, 1.0);
 }

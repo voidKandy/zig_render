@@ -46,16 +46,17 @@ main_compute_pipeline_data: ComputePipeline.AllocatedData = undefined,
 main_compute_descriptor_set: vk.DescriptorSet = undefined,
 main_compute_pipeline_description: ComputePipeline.Description = undefined,
 
-debug_pipeline: DebugPipeline = undefined,
-debug_pipeline_descriptor_set: vk.DescriptorSet = undefined,
-debug_pipeline_data: DebugPipeline.AllocatedData = undefined,
+// debug_pipeline: DebugPipeline = undefined,
+// debug_pipeline_descriptor_set: vk.DescriptorSet = undefined,
+// debug_texture_set: vk.DescriptorSet = undefined,
+// debug_pipeline_data: DebugPipeline.AllocatedData = undefined,
 
 main_graphics_pipeline_create_data: GraphicsPipeline.AllocatedData.CreateData,
 main_graphics_pipeline: GraphicsPipeline = undefined,
 main_graphics_pipeline_data: GraphicsPipeline.AllocatedData = undefined,
 main_graphics_pipeline_systems_data: GraphicsPipeline.SystemsData = undefined,
 main_graphics_descriptor_set: vk.DescriptorSet = undefined,
-main_graphics_texture_descriptor_set: vk.DescriptorSet = undefined,
+main_graphics_texture_set: vk.DescriptorSet = undefined,
 main_graphics_pipeline_description: GraphicsPipeline.Description = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
@@ -90,15 +91,17 @@ pub fn deinit(self: *Self) void {
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
     log.debug("destroyed imgui descriptor pool", .{});
 
-    self.debug_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed debug graphics pipeline", .{});
-    self.debug_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed debug graphics pipeline data", .{});
+    // self.debug_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    // log.debug("destroyed debug graphics pipeline", .{});
+    // self.debug_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
+    // log.debug("destroyed debug graphics pipeline data", .{});
 
     self.main_graphics_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline", .{});
     self.main_graphics_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline data", .{});
+    self.main_graphics_pipeline_systems_data.deinit(self.allocs);
+    log.debug("destroyed main graphics pipeline systems data", .{});
 
     self.main_compute_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline", .{});
@@ -267,7 +270,7 @@ fn initVulkan(self: *Self) void {
     self.initMainComputePipeline();
 
     self.initMainRenderPass();
-    self.main_graphics_pipeline_data = GraphicsPipeline.AllocatedData.create(
+    self.main_graphics_pipeline_data, self.main_graphics_pipeline_systems_data = GraphicsPipeline.AllocatedData.create(
         self.allocs,
         &self.upload_context,
         self.logical_device,
@@ -277,18 +280,15 @@ fn initVulkan(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("OOM");
 
-    self.main_graphics_pipeline_systems_data = .{
-        .camera = self.main_graphics_pipeline_create_data.camera,
-    };
-    self.debug_pipeline_data = DebugPipeline.AllocatedData.create(
-        self.allocs,
-        &self.upload_context,
-        self.logical_device,
-        self.physical_device,
-        self.alloc_cbs,
-    );
+    // self.debug_pipeline_data = DebugPipeline.AllocatedData.create(
+    //     self.allocs,
+    //     &self.upload_context,
+    //     self.logical_device,
+    //     self.physical_device,
+    //     self.alloc_cbs,
+    // );
     self.initMainGraphicsPipeline();
-    self.initDebugPipeline();
+    // self.initDebugPipeline();
 
     self.swapchain.createFramebuffers(
         self.allocs.std,
@@ -420,68 +420,14 @@ fn initMainGraphicsPipeline(self: *Self) void {
         self.logical_device.handle,
     ) catch @panic("OOM");
 
-    self.main_graphics_pipeline.allocateTextureDescriptorSet(self.logical_device.handle, &self.main_graphics_texture_descriptor_set);
+    self.main_graphics_texture_set = self.main_graphics_pipeline.allocateTextureDescriptorSet(self.logical_device.handle);
 
     GraphicsPipeline.updateDescriptorSets(
         self.logical_device.handle,
         self.allocs.std,
         self.main_graphics_pipeline_data,
         self.main_graphics_descriptor_set,
-        self.main_graphics_texture_descriptor_set,
-    ) catch @panic("OOM");
-}
-
-fn initDebugPipeline(self: *Self) void {
-    const vert_shader = core.shaders.createShaderModule(
-        "debug.vert",
-        self.logical_device.handle,
-        self.alloc_cbs,
-    ) orelse @panic("failed to create vert shader module");
-    defer vk.DestroyShaderModule(
-        self.logical_device.handle,
-        vert_shader,
-        self.alloc_cbs,
-    );
-
-    const frag_shader = core.shaders.createShaderModule(
-        "debug.frag",
-        self.logical_device.handle,
-        self.alloc_cbs,
-    ) orelse @panic("failed to create frag shader module");
-
-    defer vk.DestroyShaderModule(
-        self.logical_device.handle,
-        frag_shader,
-        self.alloc_cbs,
-    );
-
-    self.debug_pipeline = DebugPipeline.init(
-        .{
-            .device = self.logical_device.handle,
-            .render_pass = self.main_render_pass,
-            .window_extent = self.swapchain.extent,
-            .vertex_shader = vert_shader,
-            .fragment_shader = frag_shader,
-        },
-        self.alloc_cbs,
-    );
-
-    self.debug_pipeline.createDescriptorPool(
-        self.logical_device.handle,
-        1, // uniform buffer
-        0, // storage buffer
-        1, // max sets
-        self.alloc_cbs,
-    );
-
-    self.debug_pipeline_descriptor_set = self.debug_pipeline.allocateDescriptorSet(
-        self.logical_device.handle,
-    ) catch @panic("OOM");
-
-    DebugPipeline.updateDescriptorSets(
-        self.logical_device.handle,
-        self.main_graphics_pipeline_data,
-        self.debug_pipeline_descriptor_set,
+        self.main_graphics_texture_set,
     ) catch @panic("OOM");
 }
 
@@ -560,7 +506,7 @@ fn drawImgui(self: *Self) void {
     c.imgui.NewFrame();
 
     self.main_compute_pipeline.drawImgui();
-    self.main_graphics_pipeline.drawImgui(&self.main_graphics_pipeline_systems_data);
+    self.main_graphics_pipeline.drawImgui(self.allocs.std, &self.main_graphics_pipeline_systems_data);
 
     c.imgui.Render();
 }
@@ -670,8 +616,6 @@ fn recordCommandBuffer(
         frame.main_command_buffer,
     );
 
-    self.main_graphics_pipeline.bind(frame.main_command_buffer);
-
     var render_pass_info = vk.RenderPassBeginInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = self.main_render_pass,
@@ -707,41 +651,20 @@ fn recordCommandBuffer(
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
-    // bind set 1: textures + metadata (global, same for all submeshes)
-    vk.CmdBindDescriptorSets(
+    self.main_graphics_pipeline.bind(frame.main_command_buffer);
+    self.main_graphics_pipeline.recordCommands(
+        self.main_graphics_pipeline_systems_data,
+        self.main_graphics_descriptor_set,
+        self.main_graphics_texture_set,
         frame.main_command_buffer,
-        vk.PIPELINE_BIND_POINT_GRAPHICS,
-        self.main_graphics_pipeline.pipeline_layout,
-        1, // set index 1
-        1,
-        &self.main_graphics_texture_descriptor_set,
-        0,
-        null,
     );
 
-    for (self.main_graphics_pipeline_data.meshes.ranges, 0..) |range, idx| {
-        // bind set 0: VB, IB, UBO for this submesh
-        vk.CmdBindDescriptorSets(
-            frame.main_command_buffer,
-            vk.PIPELINE_BIND_POINT_GRAPHICS,
-            self.main_graphics_pipeline.pipeline_layout,
-            0, // set index 0
-            1,
-            &self.main_graphics_descriptor_set,
-            0,
-            null,
-        );
-        vk.CmdDraw(
-            frame.main_command_buffer,
-            @as(u32, @intCast(range.index_range.range)),
-            1, // num instances
-            @as(u32, @intCast(range.index_range.offset)),
-            @as(u32, @intCast(idx)), // first instance
-        );
-    }
-
-    self.debug_pipeline.bind(frame.main_command_buffer);
-    self.debug_pipeline.recordCommands(self.debug_pipeline_data, frame.main_command_buffer, self.debug_pipeline_descriptor_set);
+    // self.debug_pipeline.bind(frame.main_command_buffer);
+    // self.debug_pipeline.recordCommands(
+    //     self.debug_pipeline_data,
+    //     frame.main_command_buffer,
+    //     self.debug_pipeline_descriptor_set,
+    // );
 
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }

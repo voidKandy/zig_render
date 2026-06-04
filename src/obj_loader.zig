@@ -15,6 +15,7 @@
 // For simple use and triangulation, check src/mesh.zig in the same repo.
 //
 const std = @import("std");
+const core = @import("root.zig");
 
 const log = std.log.scoped(.obj_loader);
 
@@ -24,10 +25,9 @@ pub const Index = struct {
     uv: u32,
 };
 
-pub const MaterialRange = struct {
+pub const MaterialInfo = struct {
     material_name: []u8,
-    first_index: u32,
-    index_count: u32,
+    range: core.mesh.RangeDesc,
 };
 
 pub const Object = struct {
@@ -35,7 +35,7 @@ pub const Object = struct {
     material_name: []u8,
     face_vertices: []u32,
     indices: []Index,
-    material_ranges: []MaterialRange,
+    material_ranges: []MaterialInfo,
 
     pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
         a.free(self.face_vertices);
@@ -107,7 +107,7 @@ const ParseContext = struct {
     material_library_name: []const u8 = "",
     current_material_name: []const u8 = "",
 
-    material_ranges: std.ArrayList(MaterialRange) = .{},
+    material_ranges: std.ArrayList(MaterialInfo) = .{},
     current_range_first_index: u32 = 0,
 
     object_name: []const u8 = "",
@@ -235,8 +235,10 @@ fn parseContent(ctx: *ParseContext, content: []const u8) !void {
                     if (current_index_count > 0) {
                         try ctx.material_ranges.append(ctx.allocator, .{
                             .material_name = try ctx.allocator.dupe(u8, ctx.current_material_name),
-                            .first_index = ctx.current_range_first_index,
-                            .index_count = current_index_count,
+                            .range = .{
+                                .offset = ctx.current_range_first_index,
+                                .range = current_index_count,
+                            },
                         });
                         ctx.current_range_first_index = @intCast(ctx.indices.items.len);
                     }
@@ -464,8 +466,10 @@ fn addCurrentObject(ctx: *ParseContext) !void {
         if (current_index_count > 0) {
             try ctx.material_ranges.append(ctx.allocator, .{
                 .material_name = try ctx.allocator.dupe(u8, ctx.current_material_name),
-                .first_index = ctx.current_range_first_index,
-                .index_count = current_index_count,
+                .range = .{
+                    .offset = ctx.current_range_first_index,
+                    .range = current_index_count,
+                },
             });
             ctx.current_range_first_index = @intCast(ctx.indices.items.len);
         }
@@ -475,7 +479,7 @@ fn addCurrentObject(ctx: *ParseContext) !void {
             .material_name = try ctx.allocator.dupe(u8, ctx.current_material_name),
             .face_vertices = try ctx.allocator.dupe(u32, ctx.face_vertices.items),
             .indices = try ctx.allocator.dupe(Index, ctx.indices.items),
-            .material_ranges = try ctx.allocator.dupe(MaterialRange, ctx.material_ranges.items),
+            .material_ranges = try ctx.allocator.dupe(MaterialInfo, ctx.material_ranges.items),
         });
 
         ctx.face_vertices.clearRetainingCapacity();

@@ -27,19 +27,15 @@ pub const Vertex3D = extern struct {
     _: Vec2 = .ZERO,
 };
 
+/// i dont know where this should live
+pub const RangeDesc = struct {
+    offset: u32,
+    range: u32,
+};
+
 pub const Mesh3D = struct {
     vertices: []Vertex3D,
     indices: []u32,
-
-    pub const RangeDesc = struct {
-        offset: vk.DeviceSize = 0,
-        range: vk.DeviceSize = 0,
-    };
-
-    pub const Ranges = struct {
-        vertex_range: RangeDesc,
-        index_range: RangeDesc,
-    };
 
     pub const Buffers = struct {
         vertex: vma_usage.AllocatedBuffer = undefined,
@@ -76,6 +72,10 @@ pub const Mesh3D = struct {
 
     pub fn fromObjFile(a: std.mem.Allocator, obj_file: core.obj_loader.ObjFile) std.mem.Allocator.Error!Self {
         if (obj_file.objects.len == 0) @panic("tried to turn an empty object into a mesh");
+        if (obj_file.objects.len > 1) for (obj_file.objects) |object| {
+            log.warn("multiple objects in obj file not implemented!: {s}", .{object.name});
+            unreachable;
+        };
 
         var indices = try std.ArrayList(u32).initCapacity(a, obj_file.vertices.len);
         var vertices = try std.ArrayList(Vertex3D).initCapacity(a, obj_file.vertices.len);
@@ -87,12 +87,6 @@ pub const Mesh3D = struct {
         ).init(a);
         defer uniques.deinit();
         var current_vert_idx: u32 = 0;
-        if (obj_file.objects.len > 1) {
-            for (obj_file.objects) |object| {
-                log.warn("multiple objects in obj file not implemented!: {s}", .{object.name});
-                unreachable;
-            }
-        }
         const object = obj_file.objects[0];
         var face_base_idx: usize = 0;
         for (object.face_vertices) |face_vert_count| {
@@ -168,8 +162,13 @@ pub const Meshes = struct {
         model_transform: core.math.Mat4,
     };
 
+    pub const MeshRanges = struct {
+        vertex: RangeDesc,
+        index: RangeDesc,
+        metadata: RangeDesc,
+    };
+
     pub const AllocatedData = struct {
-        ranges: []Mesh3D.Ranges,
         vertex_buffer: vma_usage.AllocatedBuffer = undefined,
         index_buffer: vma_usage.AllocatedBuffer = undefined,
         metadata: vma_usage.MappedBuffer = undefined,
@@ -181,19 +180,13 @@ pub const Meshes = struct {
             self.vertex_buffer.deinit(allocs.vma);
             self.index_buffer.deinit(allocs.vma);
             self.metadata.deinit(allocs.vma);
-            allocs.std.free(self.ranges);
         }
-    };
-
-    pub const MeshObject = struct {
-        object: core.obj_loader.ObjFile,
-        transform: core.math.Mat4 = .IDENTITY,
     };
 
     vertices: std.ArrayList(Vertex3D),
     indices: std.ArrayList(u32),
     meta_data: std.ArrayList(MetaData),
-    ranges: std.ArrayList(Mesh3D.Ranges),
+    ranges: std.ArrayList(MeshRanges),
     amt_meshes: usize = 0,
 
     pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
@@ -201,7 +194,7 @@ pub const Meshes = struct {
             .vertices = try std.ArrayList(Vertex3D).initCapacity(a, 64),
             .indices = try std.ArrayList(u32).initCapacity(a, 64),
             .meta_data = try std.ArrayList(MetaData).initCapacity(a, 16),
-            .ranges = try std.ArrayList(Mesh3D.Ranges).initCapacity(a, 16),
+            .ranges = try std.ArrayList(MeshRanges).initCapacity(a, 16),
         };
     }
 
@@ -213,38 +206,48 @@ pub const Meshes = struct {
         self.meta_data.deinit(a);
     }
 
-    /// dupicates mesh vertex and index data
     pub fn appendMesh(
         self: *@This(),
         a: std.mem.Allocator,
         mesh: Mesh3D,
         transform: core.math.Mat4,
-        material_index: u32,
+        material_lookup_offset: u32,
+        material_lookup: std.StringHashMapUnmanaged(u32),
+        material_infos: []core.obj_loader.MaterialInfo,
     ) std.mem.Allocator.Error!void {
         defer self.amt_meshes += 1;
-        const range = Mesh3D.Ranges{
-            .vertex_range = .{
-                .offset = self.vertices.items.len,
-                .range = mesh.vertices.len,
+        const mesh_range = MeshRanges{
+            .vertex = .{
+                .offset = @as(u32, @intCast(self.vertices.items.len)),
+                .range = @as(u32, @intCast(mesh.vertices.len)),
             },
-            .index_range = .{
-                .offset = self.indices.items.len,
-                .range = mesh.indices.len,
+            .index = .{
+                .offset = @as(u32, @intCast(self.indices.items.len)),
+                .range = @as(u32, @intCast(mesh.indices.len)),
             },
-        };
-
-        const metadata = MetaData{
-            .model_transform = transform,
-            .material_index = material_index,
-            .index_count = @as(u32, @intCast(range.index_range.range)),
-            .index_offset = @as(u32, @intCast(range.index_range.offset)),
-            .vertex_offset = @as(u32, @intCast(range.vertex_range.offset)),
+            .metadata = .{
+                .offset = @as(u32, @intCast(self.meta_data.items.len)),
+                .range = @as(u32, @intCast(material_infos.len)),
+            },
         };
 
         try self.vertices.appendSlice(a, mesh.vertices);
         try self.indices.appendSlice(a, mesh.indices);
-        try self.meta_data.append(a, metadata);
-        try self.ranges.append(a, range);
+
+        for (material_infos) |mat_info| {
+            const material_index = material_lookup.get(mat_info.material_name) orelse std.debug.panic(
+                \\ Material not found: {s}
+            , .{mat_info.material_name}) + material_lookup_offset;
+
+            try self.meta_data.append(a, MetaData{
+                .model_transform = transform,
+                .material_index = material_index,
+                .index_count = mat_info.range.range,
+                .index_offset = @intCast(mesh_range.index.offset + mat_info.range.offset),
+                .vertex_offset = @intCast(mesh_range.vertex.offset),
+            });
+        }
+        try self.ranges.append(a, mesh_range);
     }
 
     pub fn upload(
@@ -253,9 +256,7 @@ pub const Meshes = struct {
         upload_ctx: *core.vulkan_init.UploadContext,
         device: core.vulkan_init.LogicalDevice,
     ) AllocatedData {
-        var alloc_data = AllocatedData{
-            .ranges = self.ranges.toOwnedSlice(allocs.std) catch @panic("OOM"),
-        };
+        var alloc_data = AllocatedData{};
         const vert_alloc_size, const idx_alloc_size = .{
             self.vertices.items.len * @sizeOf(core.mesh.Vertex3D),
             self.indices.items.len * @sizeOf(u32),

@@ -13,9 +13,13 @@ const Mesh = mesh_mod.Mesh3D;
 
 pub const AllocatedData = struct {
     pub const CreateData = struct {
+        pub const MeshCreateInfo = struct {
+            obj: core.obj_loader.ObjFile,
+            transform: core.math.Mat4 = .IDENTITY,
+        };
         camera: core.Camera,
-        materials_file: core.mtl_loader.MtlFile,
-        meshes_path: []const u8,
+        materials_files: []const core.mtl_loader.MtlFile,
+        mesh_objs: []const MeshCreateInfo,
 
         // for now, we support a single terrain file
         // eventually, we will have both the heightmap file & type file
@@ -23,15 +27,23 @@ pub const AllocatedData = struct {
         terrain_material_name: []const u8,
     };
 
-    materials: core.Materials.AllocatedData,
+    const MaterialEntry = struct {
+        alloc_data: core.Materials.AllocatedData,
+        offset: u32,
+    };
+    materials: std.StringHashMap(MaterialEntry),
     meshes: core.mesh.Meshes.AllocatedData,
     camera_uniform: vma_usage.MappedBuffer,
 
     pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
         self.meshes.deinit(allocs);
         self.camera_uniform.deinit(allocs.vma);
-        self.materials.deinit(allocs, device, alloc_cbs);
+        var iter = self.materials.valueIterator();
+        while (iter.next()) |mt|
+            mt.alloc_data.deinit(allocs, device, alloc_cbs);
+        self.materials.deinit();
     }
+
     pub fn create(
         allocs: core.VulkanEngine.Allocators,
         upload_ctx: *core.vulkan_init.UploadContext,
@@ -40,44 +52,69 @@ pub const AllocatedData = struct {
         camera_extent: vk.Extent2D,
         cd: CreateData,
         alloc_cbs: ?*vk.AllocationCallbacks,
-    ) std.mem.Allocator.Error!@This() {
-        var materials = core.Materials.initFromMaterialFile(allocs.std, cd.materials_file) catch @panic("failed to create MTL");
-        defer materials.deinit(allocs.std);
-        const uploaded_materials = materials.upload(
-            allocs,
-            upload_ctx,
-            logical_device,
-            physical_device,
-            alloc_cbs,
-        );
+    ) std.mem.Allocator.Error!struct {
+        @This(),
+        SystemsData,
+    } {
+        var all_uploaded_materials = std.StringHashMap(MaterialEntry).init(allocs.std);
+
+        var current_mtl_offset: u32 = 0;
+        for (cd.materials_files) |mtl| {
+            var materials = core.Materials.initFromMaterialFile(allocs.std, mtl) catch @panic("failed to create MTL");
+            defer materials.deinit(allocs.std);
+            const uploaded = materials.upload(
+                allocs,
+                upload_ctx,
+                logical_device,
+                physical_device,
+                alloc_cbs,
+            );
+
+            try all_uploaded_materials.put(mtl.name, .{ .alloc_data = uploaded, .offset = current_mtl_offset });
+            current_mtl_offset += @as(u32, @intCast(uploaded.textures.len));
+        }
+
         var meshes = try core.mesh.Meshes.init(allocs.std);
         defer meshes.deinit(allocs.std);
 
-        const terrain_material = uploaded_materials.indices.get(cd.terrain_material_name) orelse @panic("failed to get material for object");
-        const heightmap_mesh =
-            try core.terrain.fromHeightmap(
-                allocs.std,
-                cd.terrain_heightmap_file_name,
-                128, // vertex resolution X
-                128, // vertex resolution Z
-                2.0, // max height
-                10.0, // world size
-            );
-        meshes.appendMesh(allocs.std, heightmap_mesh, core.math.Mat4.IDENTITY, terrain_material) catch @panic("OOM");
-        defer heightmap_mesh.deinit(allocs.std);
+        var camera_gpu_data = cd.camera.createGPUData(camera_extent);
+        camera_gpu_data.proj.j.y *= -1;
 
-        const meshes_object_files = core.obj_loader.readObjDirectory(allocs.std, cd.meshes_path) catch @panic("failed to read objects");
-        defer allocs.std.free(meshes_object_files);
+        for (cd.mesh_objs) |obj| {
 
-        for (meshes_object_files) |*obj| {
-            const mesh = core.mesh.Mesh3D.fromObjFile(allocs.std, obj.*) catch @panic("failed to load mesh");
+            // BAD
+            // const transform = if (std.mem.eql(u8, obj.obj.objects[0].name, "gizmo")) blk: {
+
+            //     // strip translation from view
+            //     var view_rotation = camera_gpu_data.view;
+            //     view_rotation.t = core.math.Vec4.make(0, 0, -3.0, 1);
+
+            //     // scale + offset to top-right corner in NDC
+            //     const corner = core.math.Mat4{
+            //         .i = core.math.Vec4.make(0.15, 0, 0, 0),
+            //         .j = core.math.Vec4.make(0, 0.15, 0, 0),
+            //         .k = core.math.Vec4.make(0, 0, 0.15, 0),
+            //         .t = core.math.Vec4.make(0.75, -0.75, 0, 1),
+            //     };
+
+            //     break :blk corner.mul(camera_gpu_data.proj).mul(view_rotation);
+            // } else obj.transform;
+
+            const this_mat_lib =
+                all_uploaded_materials.get(obj.obj.material_library_name) orelse std.debug.panic(
+                    \\ Failed to get material library "{s}"
+                , .{obj.obj.material_library_name});
+
+            const mesh = core.mesh.Mesh3D.fromObjFile(allocs.std, obj.obj) catch @panic("failed to load mesh");
             defer mesh.deinit(allocs.std);
-            defer obj.deinit();
-
-            const material_index = uploaded_materials.indices.get(obj.*.objects[0].material_name) orelse @panic("failed to get material for object");
-            const transform = core.math.Mat4.IDENTITY;
-
-            meshes.appendMesh(allocs.std, mesh, transform, material_index) catch @panic("OOM");
+            meshes.appendMesh(
+                allocs.std,
+                mesh,
+                obj.transform,
+                this_mat_lib.offset,
+                this_mat_lib.alloc_data.indices,
+                obj.obj.objects[0].material_ranges,
+            ) catch @panic("OOM");
         }
 
         const camera_alloc = vma_usage.AllocatedBuffer.create(
@@ -92,21 +129,36 @@ pub const AllocatedData = struct {
 
         const aligned_camera: *core.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
 
-        aligned_camera.* = cd.camera.createGPUData(camera_extent);
-        aligned_camera.*.proj.j.y *= -1;
+        aligned_camera.* = camera_gpu_data;
 
         const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
 
         return .{
-            .materials = uploaded_materials,
-            .meshes = uploaded_meshes,
-            .camera_uniform = mapped_camera,
+            @This(){
+                .materials = all_uploaded_materials,
+                .meshes = uploaded_meshes,
+                .camera_uniform = mapped_camera,
+            },
+            SystemsData{
+                .camera = cd.camera,
+                .mesh_ranges = try meshes.ranges.toOwnedSlice(allocs.std),
+                .mesh_metadatas = try meshes.meta_data.toOwnedSlice(allocs.std),
+            },
         };
     }
 };
 
 pub const SystemsData = struct {
     camera: core.Camera,
+    mesh_metadatas: []mesh_mod.Meshes.MetaData,
+    mesh_ranges: []mesh_mod.Meshes.MeshRanges,
+    edited_meshes: std.ArrayListUnmanaged(usize) = .{},
+
+    pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators) void {
+        allocs.std.free(self.mesh_metadatas);
+        allocs.std.free(self.mesh_ranges);
+        self.edited_meshes.deinit(allocs.std);
+    }
 
     pub fn update(
         self: *@This(),
@@ -114,6 +166,7 @@ pub const SystemsData = struct {
         input: core.Input,
         screen_extent: vk.Extent2D,
     ) void {
+        // Camera system
         const State = struct {
             var start: i128 = 0;
             var yaw: f32 = 0.0;
@@ -159,8 +212,30 @@ pub const SystemsData = struct {
 
         ubo.proj.j.y *= -1;
 
-        const aligned_data: *core.Camera.GPUData = @ptrCast(@alignCast(alloc_data.camera_uniform.mapped));
-        aligned_data.* = ubo;
+        const aligned_camera: *core.Camera.GPUData = @ptrCast(@alignCast(alloc_data.camera_uniform.mapped));
+        aligned_camera.* = ubo;
+
+        // metadata system
+        if (self.edited_meshes.items.len > 0) {
+            const aligned_metadatas: [*]core.mesh.Meshes.MetaData = @ptrCast(@alignCast(alloc_data.meshes.metadata.mapped));
+            for (self.edited_meshes.items) |i| {
+                const mesh = self.mesh_ranges[i];
+                const mds = self.mesh_metadatas[mesh.metadata.offset .. mesh.metadata.offset + mesh.metadata.range];
+                for (0..mds.len) |k| {
+                    const md = mds[k];
+                    const gpu_md: core.mesh.Meshes.MetaData = .{
+                        .material_index = md.material_index,
+                        .index_offset = md.index_offset,
+                        .index_count = md.index_count,
+                        .vertex_offset = md.vertex_offset,
+                        .model_transform = md.model_transform,
+                    };
+                    aligned_metadatas[k + mesh.metadata.offset] = gpu_md;
+                }
+            }
+
+            self.edited_meshes.clearRetainingCapacity();
+        }
     }
 };
 
@@ -174,9 +249,11 @@ pub const Description = struct {
 };
 
 const Bindings = struct {
+    /// Set 0
     const VERTEX = 0;
     const INDEX = 1;
-    const UNIFORM = 2;
+    const CAMERA = 2;
+    /// Set 1
     const TEXTURE2D = 0;
     const METADATA = 1;
 };
@@ -187,13 +264,13 @@ pipeline: vk.Pipeline = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 descriptor_pool: vk.DescriptorPool = undefined,
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-descriptor_set_layout_textures: vk.DescriptorSetLayout = undefined,
+texture_set_layout: vk.DescriptorSetLayout = undefined,
 
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
-    vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout_textures, alloc_cbs);
+    vk.DestroyDescriptorSetLayout(device, self.texture_set_layout, alloc_cbs);
     vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
     vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
@@ -319,7 +396,7 @@ fn initCommon(
 
     const set_layouts = [_]vk.DescriptorSetLayout{
         self.descriptor_set_layout,
-        self.descriptor_set_layout_textures,
+        self.texture_set_layout,
     };
 
     const layout_ci = vk.PipelineLayoutCreateInfo{
@@ -441,9 +518,8 @@ fn createDescriptorSetLayout(
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
 
-        // Current uniform stores camera data
         .{
-            .binding = Bindings.UNIFORM,
+            .binding = Bindings.CAMERA,
             .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
@@ -494,7 +570,7 @@ fn createDescriptorSetLayoutTextures(
         device,
         &ci,
         alloc_cbs,
-        &self.descriptor_set_layout_textures,
+        &self.texture_set_layout,
     )) catch @panic("Failed to create descriptor set layout");
 }
 
@@ -518,20 +594,22 @@ pub fn allocateDescriptorSet(
     return set;
 }
 
-pub fn allocateTextureDescriptorSet(self: Self, device: vk.Device, set: *vk.DescriptorSet) void {
-    const alloc_info = vk.DescriptorSetAllocateInfo{
+pub fn allocateTextureDescriptorSet(self: Self, device: vk.Device) vk.DescriptorSet {
+    var set: vk.DescriptorSet = undefined;
+    const ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .pNext = null,
         .descriptorPool = self.descriptor_pool,
         .descriptorSetCount = 1,
-        .pSetLayouts = &self.descriptor_set_layout_textures,
+        .pSetLayouts = &self.texture_set_layout,
     };
-    checkVk(vk.AllocateDescriptorSets(device, &alloc_info, set)) catch |e| {
+    checkVk(vk.AllocateDescriptorSets(device, &ai, &set)) catch |e| {
         log.err(
             \\failed to allocate texture descriptor set: {s}
         , .{@errorName(e)});
         @panic("failed to allocate texture descriptor set");
     };
+    return set;
 }
 
 pub fn updateDescriptorSets(
@@ -584,7 +662,7 @@ pub fn updateDescriptorSets(
             .{
                 .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = set,
-                .dstBinding = Bindings.UNIFORM,
+                .dstBinding = Bindings.CAMERA,
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -606,20 +684,34 @@ fn updateTextureDescriptorSet(
     alloc_data: AllocatedData,
     texture_set: vk.DescriptorSet,
 ) mem.Allocator.Error!void {
-    const texture_count = alloc_data.materials.textures.len;
+    const texture_count = blk: {
+        var i: usize = 0;
+        var iter = alloc_data.materials.valueIterator();
+        while (iter.next()) |val| {
+            i += val.alloc_data.textures.len;
+        }
+        break :blk i;
+    };
     log.debug(
         \\ materials count: {}
     , .{texture_count});
     var image_infos = try a.alloc(vk.DescriptorImageInfo, texture_count);
     defer a.free(image_infos);
 
-    for (0..texture_count) |i| {
-        image_infos[i] = .{
-            .sampler = alloc_data.materials.textures[i].sampler,
-            .imageView = alloc_data.materials.textures[i].image_alloc.view,
-            .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
+    var iter = alloc_data.materials.valueIterator();
+    var i: usize = 0;
+    while (iter.next()) |val| {
+        for (val.alloc_data.textures) |tx| {
+            image_infos[i] = .{
+                .sampler = tx.sampler,
+                .imageView = tx.image_alloc.view,
+                .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+            i += 1;
+        }
     }
+
+    std.debug.assert(i == texture_count);
 
     const buffer_info = vk.DescriptorBufferInfo{
         .buffer = alloc_data.meshes.metadata.allocation.buffer,
@@ -671,22 +763,120 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
     );
 }
 
-pub fn drawImgui(self: *Self, system_data: *SystemsData) void {
+pub fn recordCommands(
+    self: Self,
+    sys_data: SystemsData,
+    set: vk.DescriptorSet,
+    tx_set: vk.DescriptorSet,
+    cmd: vk.CommandBuffer,
+) void {
+    // bind set 1: textures + metadata (global, same for all submeshes)
+    vk.CmdBindDescriptorSets(
+        cmd,
+        vk.PIPELINE_BIND_POINT_GRAPHICS,
+        self.pipeline_layout,
+        1, // set index 1
+        1,
+        &tx_set,
+        0,
+        null,
+    );
+
+    for (sys_data.mesh_ranges, 0..) |range, idx| {
+        // bind set 0: VB, IB, UBO for this submesh
+        vk.CmdBindDescriptorSets(
+            cmd,
+            vk.PIPELINE_BIND_POINT_GRAPHICS,
+            self.pipeline_layout,
+            0, // set index 0
+            1,
+            &set,
+            0,
+            null,
+        );
+        vk.CmdDraw(
+            cmd,
+            @as(u32, @intCast(range.index.range)),
+            1, // num instances
+            @as(u32, @intCast(range.index.offset)),
+            @as(u32, @intCast(idx)), // first instance
+        );
+    }
+}
+
+pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) void {
     _ = self;
+
     var open = true;
     const shown = imgui.Begin("camera", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
 
-    if (shown) {
-        imgui.Text("Selected mode: ", @tagName(system_data.camera.mode).ptr);
-        if (imgui.BeginCombo("Camera Modes", @tagName(system_data.camera.mode).ptr, 0)) {
-            defer imgui.EndCombo();
-            for (std.meta.tags(core.Camera.Mode)) |tag| {
-                if (imgui.Selectable(@tagName(tag))) {
-                    system_data.camera.mode = tag;
-                    break;
+    if (!shown) return;
+
+    // -------------------------
+    // Camera mode
+    // -------------------------
+    const current_mode_name = @tagName(system_data.camera.mode);
+
+    imgui.Text("Selected mode: %s", current_mode_name.ptr);
+
+    if (imgui.BeginCombo("Camera Modes", current_mode_name.ptr, 0)) {
+        defer imgui.EndCombo();
+
+        for (std.meta.tags(core.Camera.Mode)) |tag| {
+            const name = @tagName(tag);
+            if (imgui.Selectable(name))
+                system_data.camera.mode = tag;
+        }
+    }
+
+    imgui.Separator();
+
+    // -------------------------
+    // Metadata editing
+    // -------------------------
+    for (system_data.mesh_ranges, 0..) |*range, idx| {
+        const mesh_metadatas = system_data.mesh_metadatas[range.metadata.offset .. range.metadata.offset + range.metadata.range];
+        var transform = mesh_metadatas[0].model_transform;
+
+        const label = std.fmt.allocPrintSentinel(std.heap.c_allocator, "Mesh {d}", .{idx}, 0) catch @panic("OOM");
+        defer std.heap.c_allocator.free(label);
+
+        if (imgui.TreeNode(label)) {
+            defer imgui.TreePop();
+
+            // Material index
+            // var mat_idx = @as(c_int, @intCast(range.material_index));
+            // if (imgui.InputInt("Material Index", &mat_idx)) {
+            // if (mat_idx >= 0) {
+            //     range.material_index = @intCast(mat_idx);
+            // }
+            // }
+
+            imgui.Separator();
+
+            // Transform editing (better than raw matrix editing)
+            // NOTE: assumes you can derive T/R/S from matrix OR store separately later
+
+            var translation: [3]f32 = .{
+                transform.t.x,
+                transform.t.y,
+                transform.t.z,
+            };
+
+            if (imgui.DragFloat3("Position", &translation)) {
+                transform.t.x = translation[0];
+                transform.t.y = translation[1];
+                transform.t.z = translation[2];
+                mesh_metadatas[0].model_transform = transform;
+                if (std.mem.indexOfScalar(usize, system_data.edited_meshes.items, idx) == null) {
+                    system_data.edited_meshes.append(a, idx) catch @panic("OOM");
                 }
             }
+
+            imgui.Text("Index Offset: %d", range.index.offset);
+            imgui.Text("Index Count: %d", range.index.range);
+            imgui.Text("Vertex Offset: %d", range.vertex.offset);
         }
     }
 }

@@ -25,6 +25,7 @@ pub fn main() void {
     defer if (gpa.deinit() == .leak) {
         @panic("Leaked memory");
     };
+    const a = gpa.allocator();
     var api_version: u32 = undefined;
     _ = vk.EnumerateInstanceVersion(&api_version);
     std.debug.print(
@@ -39,15 +40,41 @@ pub fn main() void {
     const cwd = std.process.getCwd(cwd_buff[0..]) catch @panic("cwd_buff too small");
     std.log.info("Running from: {s}", .{cwd});
 
-    var materials_file = core.mtl_loader.parseFile(gpa.allocator(), "assets/globals.mtl") catch @panic("failed to load materials file");
-    defer materials_file.deinit();
+    const camera = core.Camera{};
+    var global_mat = core.mtl_loader.parseFile(a, "assets/globals.mtl") catch @panic("failed to load materials file");
+    defer global_mat.deinit();
+    var debug_mat = core.mtl_loader.parseFile(a, "assets/debug.mtl") catch @panic("failed to load materials file");
+    defer debug_mat.deinit();
+    const meshes_object_files = core.obj_loader.readObjDirectory(a, "assets/meshes") catch @panic("failed to read objects");
+    const widgets_object_files = core.obj_loader.readObjDirectory(a, "assets/widgets") catch @panic("failed to read objects");
+    defer {
+        for (meshes_object_files) |*obj|
+            obj.deinit();
+        a.free(meshes_object_files);
+        for (widgets_object_files) |*obj|
+            obj.deinit();
+        a.free(widgets_object_files);
+    }
+    const amt_meshes_objects = meshes_object_files.len + widgets_object_files.len;
+
+    const meshes_objects = a.alloc(
+        core.GraphicsPipeline.AllocatedData.CreateData.MeshCreateInfo,
+        amt_meshes_objects,
+    ) catch @panic("failed to alloc meshes_objects");
+    defer a.free(meshes_objects);
+    for (meshes_object_files, 0..) |*obj, i| meshes_objects[i] = .{
+        .obj = obj.*,
+    };
+    for (widgets_object_files, 0..) |*obj, i| meshes_objects[i + meshes_object_files.len] = .{
+        .obj = obj.*,
+    };
 
     var engine = core.VulkanEngine.init(
-        gpa.allocator(),
+        a,
         .{
-            .camera = core.Camera{},
-            .materials_file = materials_file,
-            .meshes_path = "assets/meshes",
+            .camera = camera,
+            .materials_files = &[_]core.mtl_loader.MtlFile{ global_mat, debug_mat },
+            .mesh_objs = meshes_objects,
             .terrain_heightmap_file_name = "assets/terrain_tst.png",
             .terrain_material_name = "statue",
         },
