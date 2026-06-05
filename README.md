@@ -1,10 +1,8 @@
-# zig render
-This project is a rendering library. It provides a set of tools for creating and managing Vulkan pipelines, shaders, and other rendering resources.
+# Untitle zig game engine
+## Main Graphics Pipeline
+The main graphics pipeline can render 'meshes' from .obj files and .mtl files respectively. [This binary](bins/main.zig) has an example of how this is declared. Vertex and Index data are stored in SSBOs rather than using vulkan's builtin vertex and index buffers. 
+One 'mesh' is really just a collection of submesh ranged that describe a range of vertices/indices that are asoociated with a given material. Materials are uploaded one gpu texture per .mtl file; an .mtl file will point at some images and the engine will upload one texture that combines all textures in that .mtl file. 
 
-## PipelineManager
-> Likely deprecated
-
-
-The `PipelineManager` manages the registration of pipelines and manages the memeory of any data associated with them. An `Entry` in this manager can be thought of as an interface. The details of which can be found in the [PipelineManager.zig](./src/PipelineManager.zig) file.
-The `ExpectedFunctions` enum describes which functions are expected on a type passed to `PipelineManager.Entry.create`. The function types returned by `ExpectedFunctions.funcType` are the expected function types for each variant. Variant names denote the name of the expected function on the type.
-Any type passed to `create` must have default values for all of it's fields, even if that means they need to be undefined. An `initialize` function is also expected, which is what should be used to populate any `undefined` fields.
+## Screenshots
+<img width="998" height="753" alt="Screenshot 2026-06-04 at 8 04 48 PM" src="https://github.com/user-attachments/assets/8062d90b-c047-4efa-bf81-4ab7635ee277" />
+<img width="975" height="711" alt="Screenshot 2026-06-04 at 8 04 33 PM" src="https://github.com/user-attachments/assets/981336b9-0b59-4443-a2cd-65888600d6cc" />
