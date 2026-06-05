@@ -260,7 +260,15 @@ const Bindings = struct {
 
 pub const MAX_TEXTURES = 16;
 
-pipeline: vk.Pipeline = undefined,
+const PipelineOptions = enum {
+    solid,
+    line,
+};
+
+current_pipeline: PipelineOptions = .solid,
+solid_pipeline: vk.Pipeline = undefined,
+/// for debugging
+line_pipeline: vk.Pipeline = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 descriptor_pool: vk.DescriptorPool = undefined,
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
@@ -271,7 +279,8 @@ const Self = @This();
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
     vk.DestroyDescriptorSetLayout(device, self.texture_set_layout, alloc_cbs);
-    vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
+    vk.DestroyPipeline(device, self.solid_pipeline, alloc_cbs);
+    vk.DestroyPipeline(device, self.line_pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
     vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
 }
@@ -349,9 +358,16 @@ fn initCommon(
         .pScissors = &scissor,
     };
 
-    const rasterization_ci = vk.PipelineRasterizationStateCreateInfo{
+    const solid_rasterization_ci = vk.PipelineRasterizationStateCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .polygonMode = vk.POLYGON_MODE_FILL,
+        .cullMode = vk.CULL_MODE_BACK_BIT,
+        .frontFace = vk.FRONT_FACE_COUNTER_CLOCKWISE,
+        .lineWidth = 1.0,
+    };
+    const line_rasterization_ci = vk.PipelineRasterizationStateCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = vk.POLYGON_MODE_LINE,
         .cullMode = vk.CULL_MODE_BACK_BIT,
         .frontFace = vk.FRONT_FACE_COUNTER_CLOCKWISE,
         .lineWidth = 1.0,
@@ -419,7 +435,7 @@ fn initCommon(
         .pDynamicStates = &dynamic_states,
     };
 
-    const pipeline_ci = vk.GraphicsPipelineCreateInfo{
+    const solid_pipeline_ci = vk.GraphicsPipelineCreateInfo{
         .sType = vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = null,
         .pDynamicState = &dynamic_state_ci,
@@ -428,7 +444,7 @@ fn initCommon(
         .pVertexInputState = &vertex_input_ci,
         .pInputAssemblyState = &input_assembly_ci,
         .pViewportState = &viewport_ci,
-        .pRasterizationState = &rasterization_ci,
+        .pRasterizationState = &solid_rasterization_ci,
         .pMultisampleState = &multisample_ci,
         .pDepthStencilState = &depth_stencil_ci,
         .pColorBlendState = &blend_ci,
@@ -439,14 +455,38 @@ fn initCommon(
         .basePipelineIndex = -1,
     };
 
+    const line_pipeline_ci = vk.GraphicsPipelineCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = null,
+        .pDynamicState = &dynamic_state_ci,
+        .stageCount = shader_stage_ci.len,
+        .pStages = &shader_stage_ci[0],
+        .pVertexInputState = &vertex_input_ci,
+        .pInputAssemblyState = &input_assembly_ci,
+        .pViewportState = &viewport_ci,
+        .pRasterizationState = &line_rasterization_ci,
+        .pMultisampleState = &multisample_ci,
+        .pDepthStencilState = &depth_stencil_ci,
+        .pColorBlendState = &blend_ci,
+        .layout = self.pipeline_layout,
+        .renderPass = pd.render_pass,
+        .subpass = 0,
+        .basePipelineHandle = null,
+        .basePipelineIndex = -1,
+    };
+    const cis =
+        &[_]vk.GraphicsPipelineCreateInfo{ solid_pipeline_ci, line_pipeline_ci };
+    var pipelines = [2]vk.Pipeline{ undefined, undefined };
     checkVk(vk.CreateGraphicsPipelines(
         pd.device,
         null,
-        1,
-        &pipeline_ci,
+        2,
+        cis,
         null,
-        &self.pipeline,
+        &pipelines,
     )) catch @panic("failed to create graphics pipeline");
+    self.solid_pipeline = pipelines[0];
+    self.line_pipeline = pipelines[1];
 }
 
 pub fn createDescriptorPool(
@@ -756,11 +796,18 @@ fn updateTextureDescriptorSet(
 }
 
 pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
-    vk.CmdBindPipeline(
-        cmd_buf,
-        vk.PIPELINE_BIND_POINT_GRAPHICS,
-        self.pipeline,
-    );
+    switch (self.current_pipeline) {
+        .solid => vk.CmdBindPipeline(
+            cmd_buf,
+            vk.PIPELINE_BIND_POINT_GRAPHICS,
+            self.solid_pipeline,
+        ),
+        .line => vk.CmdBindPipeline(
+            cmd_buf,
+            vk.PIPELINE_BIND_POINT_GRAPHICS,
+            self.line_pipeline,
+        ),
+    }
 }
 
 pub fn recordCommands(
@@ -805,10 +852,8 @@ pub fn recordCommands(
 }
 
 pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) void {
-    _ = self;
-
     var open = true;
-    const shown = imgui.Begin("camera", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    const shown = imgui.Begin("Main Graphics Pipeline", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
 
     if (!shown) return;
@@ -816,10 +861,19 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
     // -------------------------
     // Camera mode
     // -------------------------
+    const current_pipeline_name = @tagName(self.current_pipeline);
+
+    if (imgui.BeginCombo("Selected Pipeline", current_pipeline_name.ptr, 0)) {
+        defer imgui.EndCombo();
+
+        for (std.meta.tags(PipelineOptions)) |tag| {
+            const name = @tagName(tag);
+            if (imgui.Selectable(name))
+                self.current_pipeline = tag;
+        }
+    }
+
     const current_mode_name = @tagName(system_data.camera.mode);
-
-    imgui.Text("Selected mode: %s", current_mode_name.ptr);
-
     if (imgui.BeginCombo("Camera Modes", current_mode_name.ptr, 0)) {
         defer imgui.EndCombo();
 
@@ -832,9 +886,7 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
 
     imgui.Separator();
 
-    // -------------------------
-    // Metadata editing
-    // -------------------------
+    imgui.Text("Meshes");
     for (system_data.mesh_ranges, 0..) |*range, idx| {
         const mesh_metadatas = system_data.mesh_metadatas[range.metadata.offset .. range.metadata.offset + range.metadata.range];
         var transform = mesh_metadatas[0].model_transform;
@@ -879,4 +931,5 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
             imgui.Text("Vertex Offset: %d", range.vertex.offset);
         }
     }
+    imgui.Separator();
 }

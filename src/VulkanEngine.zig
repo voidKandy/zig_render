@@ -230,6 +230,7 @@ fn initVulkan(self: *Self) void {
         .physical_device = self.physical_device,
         .features = vk.PhysicalDeviceFeatures{
             .samplerAnisotropy = vk.TRUE,
+            .fillModeNonSolid = vk.TRUE,
         },
         .alloc_cb = self.alloc_cbs,
         .pnext = &descriptor_indexing_features,
