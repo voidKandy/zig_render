@@ -230,6 +230,7 @@ fn initVulkan(self: *Self) void {
         .physical_device = self.physical_device,
         .features = vk.PhysicalDeviceFeatures{
             .samplerAnisotropy = vk.TRUE,
+            // to allow for the line graphics pipeline
             .fillModeNonSolid = vk.TRUE,
         },
         .alloc_cb = self.alloc_cbs,

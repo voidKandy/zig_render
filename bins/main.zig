@@ -75,8 +75,6 @@ pub fn main() void {
             .camera = camera,
             .materials_files = &[_]core.mtl_loader.MtlFile{ global_mat, debug_mat },
             .mesh_objs = meshes_objects,
-            .terrain_heightmap_file_name = "assets/terrain_tst.png",
-            .terrain_material_name = "statue",
         },
         null,
     );

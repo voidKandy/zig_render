@@ -20,11 +20,6 @@ pub const AllocatedData = struct {
         camera: core.Camera,
         materials_files: []const core.mtl_loader.MtlFile,
         mesh_objs: []const MeshCreateInfo,
-
-        // for now, we support a single terrain file
-        // eventually, we will have both the heightmap file & type file
-        terrain_heightmap_file_name: []const u8,
-        terrain_material_name: []const u8,
     };
 
     const MaterialEntry = struct {
@@ -57,6 +52,7 @@ pub const AllocatedData = struct {
         SystemsData,
     } {
         var all_uploaded_materials = std.StringHashMap(MaterialEntry).init(allocs.std);
+        var material_names = std.ArrayList([:0]u8){};
 
         var current_mtl_offset: u32 = 0;
         for (cd.materials_files) |mtl| {
@@ -70,6 +66,12 @@ pub const AllocatedData = struct {
                 alloc_cbs,
             );
 
+            var iter = uploaded.indices.keyIterator();
+            while (iter.next()) |name| {
+                log.warn("material name: {s}", .{name.*});
+                try material_names.append(allocs.std, try allocs.std.dupeZ(u8, name.*));
+            }
+
             try all_uploaded_materials.put(mtl.name, .{ .alloc_data = uploaded, .offset = current_mtl_offset });
             current_mtl_offset += @as(u32, @intCast(uploaded.textures.len));
         }
@@ -81,25 +83,6 @@ pub const AllocatedData = struct {
         camera_gpu_data.proj.j.y *= -1;
 
         for (cd.mesh_objs) |obj| {
-
-            // BAD
-            // const transform = if (std.mem.eql(u8, obj.obj.objects[0].name, "gizmo")) blk: {
-
-            //     // strip translation from view
-            //     var view_rotation = camera_gpu_data.view;
-            //     view_rotation.t = core.math.Vec4.make(0, 0, -3.0, 1);
-
-            //     // scale + offset to top-right corner in NDC
-            //     const corner = core.math.Mat4{
-            //         .i = core.math.Vec4.make(0.15, 0, 0, 0),
-            //         .j = core.math.Vec4.make(0, 0.15, 0, 0),
-            //         .k = core.math.Vec4.make(0, 0, 0.15, 0),
-            //         .t = core.math.Vec4.make(0.75, -0.75, 0, 1),
-            //     };
-
-            //     break :blk corner.mul(camera_gpu_data.proj).mul(view_rotation);
-            // } else obj.transform;
-
             const this_mat_lib =
                 all_uploaded_materials.get(obj.obj.material_library_name) orelse std.debug.panic(
                     \\ Failed to get material library "{s}"
@@ -143,6 +126,7 @@ pub const AllocatedData = struct {
                 .camera = cd.camera,
                 .mesh_ranges = try meshes.ranges.toOwnedSlice(allocs.std),
                 .mesh_metadatas = try meshes.meta_data.toOwnedSlice(allocs.std),
+                .material_names = try material_names.toOwnedSlice(allocs.std),
             },
         };
     }
@@ -153,10 +137,14 @@ pub const SystemsData = struct {
     mesh_metadatas: []mesh_mod.Meshes.MetaData,
     mesh_ranges: []mesh_mod.Meshes.MeshRanges,
     edited_meshes: std.ArrayListUnmanaged(usize) = .{},
+    material_names: [][:0]u8,
 
     pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators) void {
         allocs.std.free(self.mesh_metadatas);
         allocs.std.free(self.mesh_ranges);
+        for (self.material_names) |name|
+            allocs.std.free(name);
+        allocs.std.free(self.material_names);
         self.edited_meshes.deinit(allocs.std);
     }
 
@@ -897,19 +885,18 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
         if (imgui.TreeNode(label)) {
             defer imgui.TreePop();
 
-            // Material index
-            // var mat_idx = @as(c_int, @intCast(range.material_index));
-            // if (imgui.InputInt("Material Index", &mat_idx)) {
-            // if (mat_idx >= 0) {
-            //     range.material_index = @intCast(mat_idx);
-            // }
-            // }
+            var mat_idx: c_int = @intCast(mesh_metadatas[0].material_index);
+            imgui.Text("Material Name: %s", system_data.material_names[@as(usize, @intCast(mat_idx))].ptr);
 
-            imgui.Separator();
+            if (imgui.InputInt("Material Index", &mat_idx)) {
+                mesh_metadatas[0].material_index = @as(u32, @intCast(mat_idx));
+                if (std.mem.indexOfScalar(usize, system_data.edited_meshes.items, idx) == null) {
+                    system_data.edited_meshes.append(a, idx) catch @panic("OOM");
+                }
+            }
 
             // Transform editing (better than raw matrix editing)
             // NOTE: assumes you can derive T/R/S from matrix OR store separately later
-
             var translation: [3]f32 = .{
                 transform.t.x,
                 transform.t.y,
