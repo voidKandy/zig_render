@@ -154,7 +154,7 @@ pub const Mesh3D = struct {
 };
 
 pub const Meshes = struct {
-    pub const MetaData = struct {
+    pub const MetaData = extern struct {
         material_index: u32,
         index_offset: u32,
         index_count: u32,

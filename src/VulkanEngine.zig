@@ -3,9 +3,9 @@ const core = @import("root.zig");
 const vki = core.vulkan_init;
 const frames_mod = core.frames;
 const c = core.clibs;
-const GraphicsPipeline = core.GraphicsPipeline;
+const MeshPipeline = core.MeshPipeline;
 const DebugPipeline = core.DebugPipeline;
-const ComputePipeline = core.ComputePipeline;
+const BackgroundPipeline = core.BackgroundPipeline;
 const Input = core.Input;
 const vma_usage = core.vma_usage;
 const util = core.vulkan_util;
@@ -41,23 +41,18 @@ upload_context: vki.UploadContext = .{},
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
-main_compute_pipeline: ComputePipeline = undefined,
-main_compute_pipeline_data: ComputePipeline.AllocatedData = undefined,
-main_compute_descriptor_set: vk.DescriptorSet = undefined,
-main_compute_pipeline_description: ComputePipeline.Description = undefined,
+background_pipeline: BackgroundPipeline = undefined,
+background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
+background_descriptor_set: vk.DescriptorSet = undefined,
+background_pipeline_description: BackgroundPipeline.Description = undefined,
 
-// debug_pipeline: DebugPipeline = undefined,
-// debug_pipeline_descriptor_set: vk.DescriptorSet = undefined,
-// debug_texture_set: vk.DescriptorSet = undefined,
-// debug_pipeline_data: DebugPipeline.AllocatedData = undefined,
-
-main_graphics_pipeline_create_data: GraphicsPipeline.AllocatedData.CreateData,
-main_graphics_pipeline: GraphicsPipeline = undefined,
-main_graphics_pipeline_data: GraphicsPipeline.AllocatedData = undefined,
-main_graphics_pipeline_systems_data: GraphicsPipeline.SystemsData = undefined,
-main_graphics_descriptor_set: vk.DescriptorSet = undefined,
-main_graphics_texture_set: vk.DescriptorSet = undefined,
-main_graphics_pipeline_description: GraphicsPipeline.Description = undefined,
+mesh_pipeline_create_data: MeshPipeline.AllocatedData.CreateData,
+mesh_pipeline: MeshPipeline = undefined,
+mesh_pipeline_data: MeshPipeline.AllocatedData = undefined,
+mesh_pipeline_systems_data: MeshPipeline.SystemsData = undefined,
+mesh_descriptor_set: vk.DescriptorSet = undefined,
+mesh_texture_set: vk.DescriptorSet = undefined,
+mesh_pipeline_description: MeshPipeline.Description = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
 
@@ -67,11 +62,11 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
 pub fn init(
     a: std.mem.Allocator,
-    graphics_pipeline_cd: GraphicsPipeline.AllocatedData.CreateData,
+    graphics_pipeline_cd: MeshPipeline.AllocatedData.CreateData,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     return .{
-        .main_graphics_pipeline_create_data = graphics_pipeline_cd,
+        .mesh_pipeline_create_data = graphics_pipeline_cd,
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
     };
@@ -91,21 +86,16 @@ pub fn deinit(self: *Self) void {
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
     log.debug("destroyed imgui descriptor pool", .{});
 
-    // self.debug_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    // log.debug("destroyed debug graphics pipeline", .{});
-    // self.debug_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
-    // log.debug("destroyed debug graphics pipeline data", .{});
-
-    self.main_graphics_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    self.mesh_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline", .{});
-    self.main_graphics_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
+    self.mesh_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main graphics pipeline data", .{});
-    self.main_graphics_pipeline_systems_data.deinit(self.allocs);
+    self.mesh_pipeline_systems_data.deinit(self.allocs);
     log.debug("destroyed main graphics pipeline systems data", .{});
 
-    self.main_compute_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    self.background_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline", .{});
-    self.main_compute_pipeline_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+    self.background_pipeline_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline data", .{});
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -158,8 +148,8 @@ pub fn run(self: *Self) void {
             self.input.update(event);
         }
 
-        self.main_graphics_pipeline_systems_data.update(
-            self.main_graphics_pipeline_data,
+        self.mesh_pipeline_systems_data.update(
+            self.mesh_pipeline_data,
             self.input,
             self.swapchain.extent,
         );
@@ -200,17 +190,8 @@ fn initVulkan(self: *Self) void {
     checkSdl(sdl.Vulkan_CreateSurface(self.window, self.instance.handle, self.alloc_cbs, &self.surface));
 
     // Physical device creation
-    const required_device_extensions: []const [*c]const u8 = &.{
-        vk.KHR_SWAPCHAIN_EXTENSION_NAME,
-        vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-        vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-        vk.KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
-        vk.KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
-        vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
-    };
     const physical_device = vki.PhysicalDevice.select(self.allocs.std, self.instance.handle, .{
         .min_api_version = vk.MAKE_VERSION(1, 1, 0),
-        // .required_extensions = required_device_extensions,
         .surface = self.surface,
         .criteria = .PreferDiscrete,
     }) catch @panic("failed to select physical device");
@@ -226,6 +207,14 @@ fn initVulkan(self: *Self) void {
     var descriptor_indexing_features = vki.LogicalDevice.descriptorIndexingFeatures();
     descriptor_indexing_features.pNext = &shader_draw_parameters_features;
 
+    const required_device_extensions: []const [*c]const u8 = &.{
+        vk.KHR_SWAPCHAIN_EXTENSION_NAME,
+        vk.KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        vk.KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+        vk.KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
+        vk.KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
+        vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
+    };
     const logical_device = vki.LogicalDevice.create(self.allocs.std, .{
         .physical_device = self.physical_device,
         .features = vk.PhysicalDeviceFeatures{
@@ -268,29 +257,21 @@ fn initVulkan(self: *Self) void {
         .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
 
-    self.createComputePipelineData();
-    self.initMainComputePipeline();
+    self.createBackgroundPipelineData();
+    self.initBackgroundPipeline();
 
     self.initMainRenderPass();
-    self.main_graphics_pipeline_data, self.main_graphics_pipeline_systems_data = GraphicsPipeline.AllocatedData.create(
+    self.mesh_pipeline_data, self.mesh_pipeline_systems_data = MeshPipeline.AllocatedData.create(
         self.allocs,
         &self.upload_context,
         self.logical_device,
         self.physical_device,
         self.swapchain.extent,
-        self.main_graphics_pipeline_create_data,
+        self.mesh_pipeline_create_data,
         self.alloc_cbs,
     ) catch @panic("OOM");
 
-    // self.debug_pipeline_data = DebugPipeline.AllocatedData.create(
-    //     self.allocs,
-    //     &self.upload_context,
-    //     self.logical_device,
-    //     self.physical_device,
-    //     self.alloc_cbs,
-    // );
-    self.initMainGraphicsPipeline();
-    // self.initDebugPipeline();
+    self.initMeshPipeline();
 
     self.swapchain.createFramebuffers(
         self.allocs.std,
@@ -302,7 +283,7 @@ fn initVulkan(self: *Self) void {
     self.initImgui();
 }
 
-fn createComputePipelineData(self: *Self) void {
+fn createBackgroundPipelineData(self: *Self) void {
     const usages: vk.ImageUsageFlags =
         vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
         vk.IMAGE_USAGE_TRANSFER_DST_BIT |
@@ -317,31 +298,31 @@ fn createComputePipelineData(self: *Self) void {
 
     checkVk(vk.CreateImageView(self.logical_device.handle, &view_ci, self.alloc_cbs, &image.view)) catch @panic("failed to create image view");
 
-    self.main_compute_pipeline_data = ComputePipeline.AllocatedData{
+    self.background_pipeline_data = BackgroundPipeline.AllocatedData{
         .draw_image = image,
     };
 }
 
-fn initMainComputePipeline(self: *Self) void {
+fn initBackgroundPipeline(self: *Self) void {
     const gradient_shader = core.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, gradient_shader, self.alloc_cbs);
     const sky_shader = core.shaders.createShaderModule("sky.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, sky_shader, self.alloc_cbs);
 
-    const gradient_data = ComputePipeline.EffectData{ .constants = .{
+    const gradient_data = BackgroundPipeline.EffectData{ .constants = .{
         .data1 = core.math.Vec4.make(1.0, 0.0, 0.0, 1.0),
         .data2 = core.math.Vec4.make(0.0, 0.0, 1.0, 1.0),
     } };
-    const sky_data = ComputePipeline.EffectData{ .constants = .{
+    const sky_data = BackgroundPipeline.EffectData{ .constants = .{
         .data1 = core.math.Vec4.make(0.1, 0.2, 0.4, 0.97),
     } };
 
-    self.main_compute_pipeline = ComputePipeline.init(
+    self.background_pipeline = BackgroundPipeline.init(
         self.allocs.std,
         .{
             .device = self.logical_device.handle,
             .window_extent = self.swapchain.extent,
-            .effects_info = &[_]struct { []const u8, ComputePipeline.EffectData, vk.ShaderModule }{
+            .effects_info = &[_]struct { []const u8, BackgroundPipeline.EffectData, vk.ShaderModule }{
                 .{
                     "gradient",
                     gradient_data,
@@ -358,25 +339,25 @@ fn initMainComputePipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.main_compute_pipeline.createDescriptorPool(
+    self.background_pipeline.createDescriptorPool(
         self.logical_device.handle,
         @intCast(self.swapchain.images.len),
         1, // max sets
         self.alloc_cbs,
     );
 
-    self.main_compute_descriptor_set = self.main_compute_pipeline.allocateDescriptorSet(self.logical_device.handle);
+    self.background_descriptor_set = self.background_pipeline.allocateDescriptorSet(self.logical_device.handle);
 
-    ComputePipeline.updateDescriptorSets(
+    BackgroundPipeline.updateDescriptorSets(
         self.logical_device.handle,
-        self.main_compute_pipeline_data,
-        self.main_compute_descriptor_set,
+        self.background_pipeline_data,
+        self.background_descriptor_set,
     ) catch @panic("OOM");
 }
 
-fn initMainGraphicsPipeline(self: *Self) void {
+fn initMeshPipeline(self: *Self) void {
     const vert_shader = core.shaders.createShaderModule(
-        "main_graphics.vert",
+        "mesh.vert",
         self.logical_device.handle,
         self.alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
@@ -387,7 +368,7 @@ fn initMainGraphicsPipeline(self: *Self) void {
     );
 
     const frag_shader = core.shaders.createShaderModule(
-        "main_graphics.frag",
+        "mesh.frag",
         self.logical_device.handle,
         self.alloc_cbs,
     ) orelse @panic("failed to create frag shader module");
@@ -398,7 +379,7 @@ fn initMainGraphicsPipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.main_graphics_pipeline = GraphicsPipeline.init(
+    self.mesh_pipeline = MeshPipeline.init(
         .{
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
@@ -409,27 +390,27 @@ fn initMainGraphicsPipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.main_graphics_pipeline.createDescriptorPool(
+    self.mesh_pipeline.createDescriptorPool(
         self.logical_device.handle,
-        GraphicsPipeline.MAX_TEXTURES, // tex count
+        MeshPipeline.MAX_TEXTURES, // tex count
         1, // uniform buffer count
         3, // storage buffer count
         3, // max sets
         self.alloc_cbs,
     );
 
-    self.main_graphics_descriptor_set = self.main_graphics_pipeline.allocateDescriptorSet(
+    self.mesh_descriptor_set = self.mesh_pipeline.allocateDescriptorSet(
         self.logical_device.handle,
     ) catch @panic("OOM");
 
-    self.main_graphics_texture_set = self.main_graphics_pipeline.allocateTextureDescriptorSet(self.logical_device.handle);
+    self.mesh_texture_set = self.mesh_pipeline.allocateTextureDescriptorSet(self.logical_device.handle);
 
-    GraphicsPipeline.updateDescriptorSets(
+    MeshPipeline.updateDescriptorSets(
         self.logical_device.handle,
         self.allocs.std,
-        self.main_graphics_pipeline_data,
-        self.main_graphics_descriptor_set,
-        self.main_graphics_texture_set,
+        self.mesh_pipeline_data,
+        self.mesh_descriptor_set,
+        self.mesh_texture_set,
     ) catch @panic("OOM");
 }
 
@@ -507,8 +488,8 @@ fn drawImgui(self: *Self) void {
     c.imgui.impl_sdl3.NewFrame();
     c.imgui.NewFrame();
 
-    self.main_compute_pipeline.drawImgui();
-    self.main_graphics_pipeline.drawImgui(self.allocs.std, &self.main_graphics_pipeline_systems_data);
+    self.background_pipeline.drawImgui();
+    self.mesh_pipeline.drawImgui(self.allocs.std, &self.mesh_pipeline_systems_data);
 
     c.imgui.Render();
 }
@@ -608,13 +589,13 @@ fn recordCommandBuffer(
     checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
 
-    self.main_compute_pipeline.bind(frame.main_command_buffer);
+    self.background_pipeline.bind(frame.main_command_buffer);
 
-    self.main_compute_pipeline.recordCommands(
-        self.main_compute_pipeline_data,
+    self.background_pipeline.recordCommands(
+        self.background_pipeline_data,
         self.swapchain,
         image_idx,
-        self.main_compute_descriptor_set,
+        self.background_descriptor_set,
         frame.main_command_buffer,
     );
 
@@ -653,11 +634,11 @@ fn recordCommandBuffer(
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
-    self.main_graphics_pipeline.bind(frame.main_command_buffer);
-    self.main_graphics_pipeline.recordCommands(
-        self.main_graphics_pipeline_systems_data,
-        self.main_graphics_descriptor_set,
-        self.main_graphics_texture_set,
+    self.mesh_pipeline.bind(frame.main_command_buffer);
+    self.mesh_pipeline.recordCommands(
+        self.mesh_pipeline_systems_data,
+        self.mesh_descriptor_set,
+        self.mesh_texture_set,
         frame.main_command_buffer,
     );
 

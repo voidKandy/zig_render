@@ -329,7 +329,7 @@ pub fn recordCommands(
 
 pub fn drawImgui(self: *@This()) void {
     var open = true;
-    const shown = imgui.Begin("background", &open, 0);
+    const shown = imgui.Begin("Background Pipeline", &open, 0);
     defer imgui.End();
 
     if (shown) {

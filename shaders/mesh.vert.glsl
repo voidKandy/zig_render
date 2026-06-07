@@ -1,5 +1,6 @@
 #version 460
 #extension GL_EXT_debug_printf : enable
+// run export DEBUG_PRINTF_TO_STDOUT=true to see
 
 struct VertexData {
     vec4 position;
@@ -51,7 +52,10 @@ void main()
             vtx.uv.x,
             vtx.uv.y
         );
+
     }
+
     gl_Position = camera_Ubo.proj * camera_Ubo.view * md.ModelTransform * vec4(vtx.position.xyz, 1.0);
+
     texCoord = vec2(vtx.uv.x, vtx.uv.y);
 }

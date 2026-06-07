@@ -45,29 +45,43 @@ pub fn main() void {
     defer global_mat.deinit();
     var debug_mat = core.mtl_loader.parseFile(a, "assets/debug.mtl") catch @panic("failed to load materials file");
     defer debug_mat.deinit();
-    const meshes_object_files = core.obj_loader.readObjDirectory(a, "assets/meshes") catch @panic("failed to read objects");
-    const widgets_object_files = core.obj_loader.readObjDirectory(a, "assets/widgets") catch @panic("failed to read objects");
+
+    const all_objects =
+        [_][]core.obj_loader.ObjFile{
+            core.obj_loader.readObjDirectory(a, "assets/meshes") catch @panic("failed to read objects"),
+                // core.obj_loader.readObjDirectory(a, "assets/widgets") catch @panic("failed to read objects"),
+                // core.obj_loader.readObjDirectory(a, "assets/primitives") catch @panic("failed to read objects"),
+        };
+
     defer {
-        for (meshes_object_files) |*obj|
-            obj.deinit();
-        a.free(meshes_object_files);
-        for (widgets_object_files) |*obj|
-            obj.deinit();
-        a.free(widgets_object_files);
+        for (all_objects) |obj_files| {
+            for (obj_files) |*obj|
+                obj.deinit();
+            a.free(obj_files);
+        }
     }
-    const amt_meshes_objects = meshes_object_files.len + widgets_object_files.len;
+
+    const amt_meshes_objects = blk: {
+        var total: usize = 0;
+        for (all_objects) |files| total += files.len;
+        break :blk total;
+    };
 
     const meshes_objects = a.alloc(
-        core.GraphicsPipeline.AllocatedData.CreateData.MeshCreateInfo,
+        core.MeshPipeline.AllocatedData.CreateData.MeshCreateInfo,
         amt_meshes_objects,
     ) catch @panic("failed to alloc meshes_objects");
     defer a.free(meshes_objects);
-    for (meshes_object_files, 0..) |*obj, i| meshes_objects[i] = .{
-        .obj = obj.*,
-    };
-    for (widgets_object_files, 0..) |*obj, i| meshes_objects[i + meshes_object_files.len] = .{
-        .obj = obj.*,
-    };
+
+    var k: usize = 0;
+    for (all_objects) |files| {
+        for (files, 0..) |*obj, i| {
+            meshes_objects[i + k] = .{
+                .obj = obj.*,
+            };
+        }
+        k += files.len;
+    }
 
     var engine = core.VulkanEngine.init(
         a,
