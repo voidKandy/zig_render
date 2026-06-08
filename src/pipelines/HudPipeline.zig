@@ -355,56 +355,43 @@ pub fn allocateDescriptorSet(self: Self, device: vk.Device) vk.DescriptorSet {
 
 pub fn updateDescriptorSet(
     device: vk.Device,
-    a: mem.Allocator,
+    // a: mem.Allocator,
+    /// BAD
+    image_view: vk.ImageView,
+    sampler: vk.Sampler,
     alloc_data: AllocatedData,
     set: vk.DescriptorSet,
 ) std.mem.Allocator.Error!void {
-    const texture_count = alloc_data.materials.textures.len;
-
-    var image_infos = try a.alloc(vk.DescriptorImageInfo, texture_count);
-    defer a.free(image_infos);
-
-    for (alloc_data.materials.textures, 0..) |tx, i| {
-        image_infos[i] = .{
-            .sampler = tx.sampler,
-            .imageView = tx.image_alloc.view,
-            .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-    }
-
+    const image_info = vk.DescriptorImageInfo{
+        .sampler = sampler,
+        .imageView = image_view,
+        .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    };
     const metadata_buffer_info = vk.DescriptorBufferInfo{
         .buffer = alloc_data.meshes.metadata.allocation.buffer,
         .offset = 0,
         .range = vk.WHOLE_SIZE,
     };
-
     const write_sets = [_]vk.WriteDescriptorSet{
         .{
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = null,
             .dstSet = set,
             .dstBinding = Bindings.TEXTURE2D,
             .dstArrayElement = 0,
-            .descriptorCount = @intCast(texture_count),
+            .descriptorCount = 1,
             .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .pImageInfo = image_infos.ptr,
-            .pBufferInfo = null,
-            .pTexelBufferView = null,
+            .pImageInfo = &image_info,
         },
         .{
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = null,
             .dstSet = set,
             .dstBinding = Bindings.METADATA,
             .dstArrayElement = 0,
             .descriptorCount = 1,
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pImageInfo = null,
             .pBufferInfo = &metadata_buffer_info,
-            .pTexelBufferView = null,
         },
     };
-
     vk.UpdateDescriptorSets(device, write_sets.len, &write_sets, 0, null);
 }
 

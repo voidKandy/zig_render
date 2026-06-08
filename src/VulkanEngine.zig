@@ -5,6 +5,7 @@ const frames_mod = core.frames;
 const c = core.clibs;
 const MeshPipeline = core.MeshPipeline;
 const BackgroundPipeline = core.BackgroundPipeline;
+const MainComputePipeline = core.MainComputePipeline;
 const HudPipeline = core.HudPipeline;
 const Input = core.Input;
 const vma_usage = core.vma_usage;
@@ -45,6 +46,11 @@ background_pipeline: BackgroundPipeline = undefined,
 background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
 background_descriptor_set: vk.DescriptorSet = undefined,
 background_pipeline_description: BackgroundPipeline.Description = undefined,
+
+main_compute_pipeline: MainComputePipeline = undefined,
+main_compute_pipeline_data: MainComputePipeline.AllocatedData = undefined,
+main_compute_descriptor_set: vk.DescriptorSet = undefined,
+main_compute_pipeline_description: MainComputePipeline.Description = undefined,
 
 mesh_pipeline_create_data: MeshPipeline.AllocatedData.CreateData,
 mesh_pipeline: MeshPipeline = undefined,
@@ -113,6 +119,11 @@ pub fn deinit(self: *Self) void {
     self.background_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline", .{});
     self.background_pipeline_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed main compute pipeline data", .{});
+
+    self.main_compute_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed main compute pipeline", .{});
+    self.main_compute_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline data", .{});
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -287,6 +298,19 @@ fn initVulkan(self: *Self) void {
     );
     self.initBackgroundPipeline();
 
+    self.main_compute_pipeline_data = MainComputePipeline.AllocatedData.create(
+        self.allocs,
+        &self.upload_context,
+        self.logical_device,
+        self.physical_device,
+        .{
+            .maze_width = 64,
+            .maze_height = 64,
+        },
+        self.alloc_cbs,
+    );
+    self.initMainComputePipeline();
+
     self.initMainRenderPass();
     self.mesh_pipeline_data, self.mesh_pipeline_systems_data = MeshPipeline.AllocatedData.create(
         self.allocs,
@@ -371,6 +395,33 @@ fn initBackgroundPipeline(self: *Self) void {
         self.background_pipeline_data,
         self.background_descriptor_set,
     ) catch @panic("OOM");
+}
+
+fn initMainComputePipeline(self: *Self) void {
+    const maze_shader = core.shaders.createShaderModule(
+        "maze.comp",
+        self.logical_device.handle,
+        self.alloc_cbs,
+    ) orelse @panic("failed to create maze compute shader module");
+    defer vk.DestroyShaderModule(self.logical_device.handle, maze_shader, self.alloc_cbs);
+
+    self.main_compute_pipeline = MainComputePipeline.init(
+        .{
+            .device = self.logical_device.handle,
+            .shader = maze_shader,
+        },
+        self.alloc_cbs,
+    );
+
+    self.main_compute_descriptor_set = self.main_compute_pipeline.allocateDescriptorSet(
+        self.logical_device.handle,
+    );
+
+    MainComputePipeline.updateDescriptorSet(
+        self.logical_device.handle,
+        self.main_compute_pipeline_data,
+        self.main_compute_descriptor_set,
+    );
 }
 
 fn initMeshPipeline(self: *Self) void {
@@ -466,7 +517,8 @@ fn initHudPipeline(self: *Self) void {
     self.hud_descriptor_set = self.hud_pipeline.allocateDescriptorSet(self.logical_device.handle);
     HudPipeline.updateDescriptorSet(
         self.logical_device.handle,
-        self.allocs.std,
+        self.main_compute_pipeline_data.draw_image.view,
+        self.main_compute_pipeline_data.sampler,
         self.hud_pipeline_data,
         self.hud_descriptor_set,
     ) catch @panic("OOM");
@@ -647,8 +699,13 @@ fn recordCommandBuffer(
     checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
 
+    self.main_compute_pipeline.bind(frame.main_command_buffer);
+    self.main_compute_pipeline.recordCommands(
+        self.main_compute_pipeline_data,
+        self.main_compute_descriptor_set,
+        frame.main_command_buffer,
+    );
     self.background_pipeline.bind(frame.main_command_buffer);
-
     self.background_pipeline.recordCommands(
         self.background_pipeline_data,
         self.swapchain,
