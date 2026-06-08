@@ -27,7 +27,7 @@ pub const AllocatedData = struct {
         offset: u32,
     };
     materials: std.StringHashMap(MaterialEntry),
-    meshes: core.mesh.Meshes.AllocatedData,
+    meshes: core.mesh.Meshes3D.AllocatedData,
     camera_uniform: vma_usage.MappedBuffer,
 
     pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
@@ -76,7 +76,7 @@ pub const AllocatedData = struct {
             current_mtl_offset += @as(u32, @intCast(uploaded.textures.len));
         }
 
-        var meshes = try core.mesh.Meshes.init(allocs.std);
+        var meshes = try core.mesh.Meshes3D.init(allocs.std);
         defer meshes.deinit(allocs.std);
 
         var camera_gpu_data = cd.camera.createGPUData(camera_extent);
@@ -134,8 +134,8 @@ pub const AllocatedData = struct {
 
 pub const SystemsData = struct {
     camera: core.Camera,
-    mesh_metadatas: []mesh_mod.Meshes.MetaData,
-    mesh_ranges: []mesh_mod.Meshes.MeshRanges,
+    mesh_metadatas: []mesh_mod.Meshes3D.MetaData,
+    mesh_ranges: []mesh_mod.Meshes3D.MeshRanges,
     edited_meshes: std.ArrayListUnmanaged(usize) = .{},
     material_names: [][:0]u8,
 
@@ -205,13 +205,13 @@ pub const SystemsData = struct {
 
         // metadata system
         if (self.edited_meshes.items.len > 0) {
-            const aligned_metadatas: [*]core.mesh.Meshes.MetaData = @ptrCast(@alignCast(alloc_data.meshes.metadata.mapped));
+            const aligned_metadatas: [*]core.mesh.Meshes3D.MetaData = @ptrCast(@alignCast(alloc_data.meshes.metadata.mapped));
             for (self.edited_meshes.items) |i| {
                 const mesh = self.mesh_ranges[i];
                 const mds = self.mesh_metadatas[mesh.metadata.offset .. mesh.metadata.offset + mesh.metadata.range];
                 for (0..mds.len) |k| {
                     const md = mds[k];
-                    const gpu_md: core.mesh.Meshes.MetaData = .{
+                    const gpu_md: core.mesh.Meshes3D.MetaData = .{
                         .material_index = md.material_index,
                         .index_offset = md.index_offset,
                         .index_count = md.index_count,

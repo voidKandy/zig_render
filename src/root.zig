@@ -15,6 +15,7 @@ pub const vulkan_util = @import("vulkan_util.zig");
 pub const VulkanEngine = @import("VulkanEngine.zig");
 pub const Input = @import("Input.zig");
 pub const MeshPipeline = @import("pipelines/MeshPipeline.zig");
+pub const HudPipeline = @import("pipelines/HudPipeline.zig");
 pub const BackgroundPipeline = @import("pipelines/BackgroundPipeline.zig");
 pub const Materials = @import("Materials.zig");
 pub const Camera = @import("Camera.zig");

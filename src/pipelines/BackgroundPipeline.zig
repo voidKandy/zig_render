@@ -35,6 +35,28 @@ const SKY_EFFECT_NAME = "sky";
 pub const AllocatedData = struct {
     draw_image: core.vma_usage.AllocatedImage,
 
+    pub fn create(
+        allocs: core.VulkanEngine.Allocators,
+        device: vk.Device,
+        extent: vk.Extent3D,
+        image_format: vk.Format,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) @This() {
+        const usages: vk.ImageUsageFlags =
+            vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
+            vk.IMAGE_USAGE_TRANSFER_DST_BIT |
+            vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        var image = core.vma_usage.AllocatedImage.init(allocs.vma, image_format, extent, usages);
+        const view_ci = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
+
+        checkVk(vk.CreateImageView(device, &view_ci, alloc_cbs, &image.view)) catch @panic("failed to create image view");
+
+        return .{
+            .draw_image = image,
+        };
+    }
+
     pub fn deinit(
         self: @This(),
         vma_a: core.clibs.vma.Allocator,

@@ -25,6 +25,11 @@ const Metadata = struct {
 pub const Texture = struct {
     sampler: vk.Sampler,
     image_alloc: vma_usage.AllocatedImage,
+
+    pub fn deinit(self: *@This(), vma_a: vma.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+        self.image_alloc.deinit(vma_a, device, alloc_cbs);
+        vk.DestroySampler(device, self.sampler, alloc_cbs);
+    }
 };
 
 pub const MaterialData = struct {
@@ -235,9 +240,8 @@ pub const AllocatedData = struct {
         device: vk.Device,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) void {
-        for (self.textures) |mat| {
-            mat.image_alloc.deinit(allocs.vma, device, alloc_cbs);
-            vk.DestroySampler(device, mat.sampler, alloc_cbs);
+        for (self.textures) |*tx| {
+            tx.deinit(allocs.vma, device, alloc_cbs);
         }
         allocs.std.free(self.textures);
         self.indices.deinit(allocs.std);

@@ -4,8 +4,8 @@ const vki = core.vulkan_init;
 const frames_mod = core.frames;
 const c = core.clibs;
 const MeshPipeline = core.MeshPipeline;
-const DebugPipeline = core.DebugPipeline;
 const BackgroundPipeline = core.BackgroundPipeline;
+const HudPipeline = core.HudPipeline;
 const Input = core.Input;
 const vma_usage = core.vma_usage;
 const util = core.vulkan_util;
@@ -54,6 +54,14 @@ mesh_descriptor_set: vk.DescriptorSet = undefined,
 mesh_texture_set: vk.DescriptorSet = undefined,
 mesh_pipeline_description: MeshPipeline.Description = undefined,
 
+hud_pipeline_create_data: HudPipeline.AllocatedData.CreateData,
+hud_pipeline: HudPipeline = undefined,
+hud_pipeline_data: HudPipeline.AllocatedData = undefined,
+hud_pipeline_systems_data: HudPipeline.SystemsData = undefined,
+hud_descriptor_set: vk.DescriptorSet = undefined,
+hud_texture_set: vk.DescriptorSet = undefined,
+hud_pipeline_description: HudPipeline.Description = undefined,
+
 main_render_pass: vk.RenderPass = undefined,
 
 swapchain: vki.Swapchain = undefined,
@@ -62,11 +70,13 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
 pub fn init(
     a: std.mem.Allocator,
-    graphics_pipeline_cd: MeshPipeline.AllocatedData.CreateData,
+    mesh_pipeline_cd: MeshPipeline.AllocatedData.CreateData,
+    hud_pipeline_cd: HudPipeline.AllocatedData.CreateData,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     return .{
-        .mesh_pipeline_create_data = graphics_pipeline_cd,
+        .mesh_pipeline_create_data = mesh_pipeline_cd,
+        .hud_pipeline_create_data = hud_pipeline_cd,
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
     };
@@ -87,11 +97,18 @@ pub fn deinit(self: *Self) void {
     log.debug("destroyed imgui descriptor pool", .{});
 
     self.mesh_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed main graphics pipeline", .{});
+    log.debug("destroyed mesh pipeline", .{});
     self.mesh_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed main graphics pipeline data", .{});
+    log.debug("destroyed mesh pipeline data", .{});
     self.mesh_pipeline_systems_data.deinit(self.allocs);
-    log.debug("destroyed main graphics pipeline systems data", .{});
+    log.debug("destroyed mesh pipeline systems data", .{});
+
+    self.hud_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed hud pipeline", .{});
+    self.hud_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
+    log.debug("destroyed hud pipeline data", .{});
+    self.hud_pipeline_systems_data.deinit(self.allocs);
+    log.debug("destroyed hud pipeline systems data", .{});
 
     self.background_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline", .{});
@@ -257,7 +274,17 @@ fn initVulkan(self: *Self) void {
         .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
 
-    self.createBackgroundPipelineData();
+    self.background_pipeline_data = BackgroundPipeline.AllocatedData.create(
+        self.allocs,
+        self.logical_device.handle,
+        vk.Extent3D{
+            .width = self.swapchain.extent.width,
+            .height = self.swapchain.extent.height,
+            .depth = 1,
+        },
+        MAIN_RENDER_PASS_IMAGE_FORMAT,
+        self.alloc_cbs,
+    );
     self.initBackgroundPipeline();
 
     self.initMainRenderPass();
@@ -273,6 +300,17 @@ fn initVulkan(self: *Self) void {
 
     self.initMeshPipeline();
 
+    self.hud_pipeline_data, self.hud_pipeline_systems_data = HudPipeline.AllocatedData.create(
+        self.allocs,
+        &self.upload_context,
+        self.logical_device,
+        self.physical_device,
+        self.hud_pipeline_create_data,
+        self.alloc_cbs,
+    ) catch @panic("OOM");
+
+    self.initHudPipeline();
+
     self.swapchain.createFramebuffers(
         self.allocs.std,
         self.logical_device.handle,
@@ -281,26 +319,6 @@ fn initVulkan(self: *Self) void {
     ) catch @panic("failed to create framebuffers");
 
     self.initImgui();
-}
-
-fn createBackgroundPipelineData(self: *Self) void {
-    const usages: vk.ImageUsageFlags =
-        vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
-        vk.IMAGE_USAGE_TRANSFER_DST_BIT |
-        vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-    var image = vma_usage.AllocatedImage.init(self.allocs.vma, MAIN_RENDER_PASS_IMAGE_FORMAT, vk.Extent3D{
-        .width = self.swapchain.extent.width,
-        .height = self.swapchain.extent.height,
-        .depth = 1,
-    }, usages);
-    const view_ci = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
-
-    checkVk(vk.CreateImageView(self.logical_device.handle, &view_ci, self.alloc_cbs, &image.view)) catch @panic("failed to create image view");
-
-    self.background_pipeline_data = BackgroundPipeline.AllocatedData{
-        .draw_image = image,
-    };
 }
 
 fn initBackgroundPipeline(self: *Self) void {
@@ -411,6 +429,46 @@ fn initMeshPipeline(self: *Self) void {
         self.mesh_pipeline_data,
         self.mesh_descriptor_set,
         self.mesh_texture_set,
+    ) catch @panic("OOM");
+}
+
+fn initHudPipeline(self: *Self) void {
+    const vert_shader = core.shaders.createShaderModule(
+        "hud.vert",
+        self.logical_device.handle,
+        self.alloc_cbs,
+    ) orelse @panic("failed to create hud vert shader module");
+    defer vk.DestroyShaderModule(
+        self.logical_device.handle,
+        vert_shader,
+        self.alloc_cbs,
+    );
+    const frag_shader = core.shaders.createShaderModule(
+        "hud.frag",
+        self.logical_device.handle,
+        self.alloc_cbs,
+    ) orelse @panic("failed to create hud frag shader module");
+    defer vk.DestroyShaderModule(
+        self.logical_device.handle,
+        frag_shader,
+        self.alloc_cbs,
+    );
+    self.hud_pipeline = HudPipeline.init(
+        .{
+            .device = self.logical_device.handle,
+            .render_pass = self.main_render_pass,
+            .window_extent = self.swapchain.extent,
+            .vertex_shader = vert_shader,
+            .fragment_shader = frag_shader,
+        },
+        self.alloc_cbs,
+    );
+    self.hud_descriptor_set = self.hud_pipeline.allocateDescriptorSet(self.logical_device.handle);
+    HudPipeline.updateDescriptorSet(
+        self.logical_device.handle,
+        self.allocs.std,
+        self.hud_pipeline_data,
+        self.hud_descriptor_set,
     ) catch @panic("OOM");
 }
 
@@ -642,13 +700,13 @@ fn recordCommandBuffer(
         frame.main_command_buffer,
     );
 
-    // self.debug_pipeline.bind(frame.main_command_buffer);
-    // self.debug_pipeline.recordCommands(
-    //     self.debug_pipeline_data,
-    //     frame.main_command_buffer,
-    //     self.debug_pipeline_descriptor_set,
-    // );
-
+    self.hud_pipeline.bind(frame.main_command_buffer);
+    self.hud_pipeline.recordCommands(
+        self.hud_pipeline_systems_data,
+        self.hud_pipeline_data,
+        self.hud_descriptor_set,
+        frame.main_command_buffer,
+    );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }
 

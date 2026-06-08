@@ -46,6 +46,9 @@ pub fn main() void {
     var debug_mat = core.mtl_loader.parseFile(a, "assets/debug.mtl") catch @panic("failed to load materials file");
     defer debug_mat.deinit();
 
+    var hud_mat = core.mtl_loader.parseFile(a, "assets/hud.mtl") catch @panic("failed to load materials file");
+    defer hud_mat.deinit();
+
     const all_objects =
         [_][]core.obj_loader.ObjFile{
             core.obj_loader.readObjDirectory(a, "assets/meshes") catch @panic("failed to read objects"),
@@ -83,12 +86,24 @@ pub fn main() void {
         k += files.len;
     }
 
+    // BAD
+    // this should be internal?
+    const hud_quad = core.mesh.Mesh2D.quad(a, 0.6, -1.0, 0.4, 0.4) catch @panic("failed to create hud quad");
+    defer hud_quad.deinit(a);
+
     var engine = core.VulkanEngine.init(
         a,
         .{
             .camera = camera,
             .materials_files = &[_]core.mtl_loader.MtlFile{ global_mat, debug_mat },
             .mesh_objs = meshes_objects,
+        },
+        .{
+            .materials_file = hud_mat,
+            .mesh_objs = &[_]core.HudPipeline.AllocatedData.CreateData.MeshCreateInfo{.{
+                .mesh = hud_quad,
+                .material_index = 0,
+            }},
         },
         null,
     );

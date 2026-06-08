@@ -1,6 +1,7 @@
 #version 460
 #extension GL_EXT_debug_printf : enable
 // run export DEBUG_PRINTF_TO_STDOUT=true to see
+// unset DEBUG_PRINTF_TO_STDOUT to disable
 
 struct VertexData {
     vec4 position;
