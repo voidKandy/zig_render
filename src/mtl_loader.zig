@@ -93,7 +93,7 @@ pub fn parseFile(a: Allocator, filepath: []const u8) !MtlFile {
     };
 }
 
-fn parseString(a: Allocator, content: []const u8, filename: []const u8) Allocator.Error!MtlFile {
+fn parseString(a: Allocator, content: []const u8, filename: []const u8) (error{InvalidCharacter} || Allocator.Error)!MtlFile {
     var arena_state = std.heap.ArenaAllocator.init(a);
     defer arena_state.deinit();
 
@@ -182,10 +182,10 @@ test "mtl parser: basic newmtl and map_Kd" {
     try testing.expectEqual(@as(usize, 2), result.materials.len);
 
     try testing.expectEqualStrings("my_material", result.materials[0].name);
-    try testing.expectEqualStrings("diffuse.png", result.materials[0].map_Kd);
+    try testing.expectEqualStrings("diffuse.png", result.materials[0].map_Kd.?);
 
     try testing.expectEqualStrings("second_material", result.materials[1].name);
-    try testing.expectEqualStrings("other.png", result.materials[1].map_Kd);
+    try testing.expectEqualStrings("other.png", result.materials[1].map_Kd.?);
 }
 
 test "mtl parser: material with no map_Kd defaults to empty string" {
@@ -203,5 +203,5 @@ test "mtl parser: material with no map_Kd defaults to empty string" {
 
     try testing.expectEqual(@as(usize, 1), result.materials.len);
     try testing.expectEqualStrings("bare_material", result.materials[0].name);
-    try testing.expectEqualStrings("", result.materials[0].map_Kd);
+    try testing.expectEqual(null, result.materials[0].map_Kd);
 }
