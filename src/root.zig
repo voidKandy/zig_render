@@ -18,6 +18,7 @@ pub const MeshPipeline = @import("pipelines/MeshPipeline.zig");
 pub const HudPipeline = @import("pipelines/HudPipeline.zig");
 pub const MainComputePipeline = @import("pipelines/MainComputePipeline.zig");
 pub const BackgroundPipeline = @import("pipelines/BackgroundPipeline.zig");
+pub const Maze = @import("Maze.zig");
 pub const Materials = @import("Materials.zig");
 pub const Camera = @import("Camera.zig");
 
