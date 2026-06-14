@@ -71,10 +71,14 @@ pub fn init(
     a: std.mem.Allocator,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
-    return .{
+    var self = @This(){
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
     };
+
+    self.initWindow();
+    self.initVulkan();
+    return self;
 }
 
 pub fn deinit(self: *Self) void {
@@ -167,11 +171,6 @@ pub fn run(self: *Self) void {
     }
 
     _ = vk.DeviceWaitIdle(self.logical_device.handle);
-}
-
-pub fn initEngine(self: *Self) void {
-    self.initWindow();
-    self.initVulkan();
 }
 
 fn initWindow(self: *Self) void {

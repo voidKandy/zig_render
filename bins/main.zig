@@ -92,8 +92,6 @@ pub fn main() void {
     );
     defer engine.deinit();
 
-    engine.initEngine();
-
     var maze = core.Maze.initHallwaySquare(
         a,
         10,
