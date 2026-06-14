@@ -86,29 +86,46 @@ pub fn main() void {
         k += files.len;
     }
 
-    // BAD
-    // this should be internal?
-    const hud_quad = core.mesh.Mesh2D.quad(a, 0.6, -1.0, 0.4, 0.4) catch @panic("failed to create hud quad");
-    defer hud_quad.deinit(a);
-
     var engine = core.VulkanEngine.init(
         a,
+        null,
+    );
+    defer engine.deinit();
+
+    engine.initEngine();
+
+    var maze = core.Maze.initHallwaySquare(
+        a,
+        10,
+    ) catch @panic("failed to create maze");
+    defer maze.deinit(a);
+
+    const window_aspect = @as(f32, @floatFromInt(engine.swapchain.extent.width)) / @as(f32, @floatFromInt(engine.swapchain.extent.height));
+    const maze_aspect = @as(f32, @floatFromInt(maze.width)) / @as(f32, @floatFromInt(maze.height));
+
+    const quad_h: f32 = 0.8;
+    const quad_w: f32 = quad_h * maze_aspect / window_aspect;
+
+    const maze_quad = core.mesh.Mesh2D.quad(a, -quad_w / 2.0, -quad_h / 2.0, quad_w, quad_h) catch @panic("failed to create hud quad");
+    defer maze_quad.deinit(a);
+
+    const mesh_pipeline_create_data: core.MeshPipeline.AllocatedData.CreateData =
         .{
             .camera = camera,
             .materials_files = &[_]core.mtl_loader.MtlFile{ global_mat, debug_mat },
             .mesh_objs = meshes_objects,
-        },
-        .{
-            .materials_file = hud_mat,
-            .mesh_objs = &[_]core.HudPipeline.AllocatedData.CreateData.MeshCreateInfo{.{
-                .mesh = hud_quad,
-                .material_index = 0,
-            }},
-        },
-        null,
-    );
+        };
 
-    defer engine.deinit();
+    const hud_pipeline_create_data: core.HudPipelines.AllocatedData.CreateData =
+        .{
+            .maze_mesh = maze_quad,
+            .maze = maze,
+            .pixels_per_cell = 9,
+        };
+    engine.initData(
+        mesh_pipeline_create_data,
+        hud_pipeline_create_data,
+    );
 
     engine.run();
 }

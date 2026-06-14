@@ -5,8 +5,7 @@ const frames_mod = core.frames;
 const c = core.clibs;
 const MeshPipeline = core.MeshPipeline;
 const BackgroundPipeline = core.BackgroundPipeline;
-const MainComputePipeline = core.MainComputePipeline;
-const HudPipeline = core.HudPipeline;
+const HudPipelines = core.HudPipelines;
 const Input = core.Input;
 const vma_usage = core.vma_usage;
 const util = core.vulkan_util;
@@ -47,26 +46,20 @@ background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
 background_descriptor_set: vk.DescriptorSet = undefined,
 background_pipeline_description: BackgroundPipeline.Description = undefined,
 
-main_compute_pipeline: MainComputePipeline = undefined,
-main_compute_pipeline_data: MainComputePipeline.AllocatedData = undefined,
-main_compute_descriptor_set: vk.DescriptorSet = undefined,
-main_compute_pipeline_description: MainComputePipeline.Description = undefined,
-
-mesh_pipeline_create_data: MeshPipeline.AllocatedData.CreateData,
 mesh_pipeline: MeshPipeline = undefined,
 mesh_pipeline_data: MeshPipeline.AllocatedData = undefined,
 mesh_pipeline_systems_data: MeshPipeline.SystemsData = undefined,
+/// BAD
+/// mimic the sinlge DescriptorSet type that hud pipeline uses
 mesh_descriptor_set: vk.DescriptorSet = undefined,
 mesh_texture_set: vk.DescriptorSet = undefined,
 mesh_pipeline_description: MeshPipeline.Description = undefined,
 
-hud_pipeline_create_data: HudPipeline.AllocatedData.CreateData,
-hud_pipeline: HudPipeline = undefined,
-hud_pipeline_data: HudPipeline.AllocatedData = undefined,
-hud_pipeline_systems_data: HudPipeline.SystemsData = undefined,
-hud_descriptor_set: vk.DescriptorSet = undefined,
-hud_texture_set: vk.DescriptorSet = undefined,
-hud_pipeline_description: HudPipeline.Description = undefined,
+hud_pipeline: HudPipelines = undefined,
+hud_pipeline_data: HudPipelines.AllocatedData = undefined,
+hud_pipeline_systems_data: HudPipelines.SystemsData = undefined,
+hud_descriptor_sets: HudPipelines.DescriptorSets = undefined,
+hud_pipeline_description: HudPipelines.Description = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
 
@@ -76,13 +69,9 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
 pub fn init(
     a: std.mem.Allocator,
-    mesh_pipeline_cd: MeshPipeline.AllocatedData.CreateData,
-    hud_pipeline_cd: HudPipeline.AllocatedData.CreateData,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     return .{
-        .mesh_pipeline_create_data = mesh_pipeline_cd,
-        .hud_pipeline_create_data = hud_pipeline_cd,
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
     };
@@ -119,11 +108,6 @@ pub fn deinit(self: *Self) void {
     self.background_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline", .{});
     self.background_pipeline_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed main compute pipeline data", .{});
-
-    self.main_compute_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed main compute pipeline", .{});
-    self.main_compute_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed main compute pipeline data", .{});
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -163,9 +147,6 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn run(self: *Self) void {
-    self.initWindow();
-    self.initVulkan();
-
     // var quit = false;
     var event: c.sdl.Event = undefined;
 
@@ -186,6 +167,11 @@ pub fn run(self: *Self) void {
     }
 
     _ = vk.DeviceWaitIdle(self.logical_device.handle);
+}
+
+pub fn initEngine(self: *Self) void {
+    self.initWindow();
+    self.initVulkan();
 }
 
 fn initWindow(self: *Self) void {
@@ -284,7 +270,20 @@ fn initVulkan(self: *Self) void {
         .alloc_cb = self.alloc_cbs,
         .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
+    self.initMainRenderPass();
+    self.swapchain.createFramebuffers(
+        self.allocs.std,
+        self.logical_device.handle,
+        self.main_render_pass,
+        self.alloc_cbs,
+    ) catch @panic("failed to create framebuffers");
+}
 
+pub fn initData(
+    self: *Self,
+    mesh_pipeline_cd: MeshPipeline.AllocatedData.CreateData,
+    hud_pipeline_cd: HudPipelines.AllocatedData.CreateData,
+) void {
     self.background_pipeline_data = BackgroundPipeline.AllocatedData.create(
         self.allocs,
         self.logical_device.handle,
@@ -298,49 +297,28 @@ fn initVulkan(self: *Self) void {
     );
     self.initBackgroundPipeline();
 
-    self.main_compute_pipeline_data = MainComputePipeline.AllocatedData.create(
-        self.allocs,
-        &self.upload_context,
-        self.logical_device,
-        self.physical_device,
-        .{
-            .maze_width = 64,
-            .maze_height = 64,
-        },
-        self.alloc_cbs,
-    );
-    self.initMainComputePipeline();
-
-    self.initMainRenderPass();
     self.mesh_pipeline_data, self.mesh_pipeline_systems_data = MeshPipeline.AllocatedData.create(
         self.allocs,
         &self.upload_context,
         self.logical_device,
         self.physical_device,
         self.swapchain.extent,
-        self.mesh_pipeline_create_data,
+        mesh_pipeline_cd,
         self.alloc_cbs,
     ) catch @panic("OOM");
 
     self.initMeshPipeline();
 
-    self.hud_pipeline_data, self.hud_pipeline_systems_data = HudPipeline.AllocatedData.create(
+    self.hud_pipeline_data, self.hud_pipeline_systems_data = HudPipelines.AllocatedData.create(
         self.allocs,
         &self.upload_context,
         self.logical_device,
         self.physical_device,
-        self.hud_pipeline_create_data,
+        hud_pipeline_cd,
         self.alloc_cbs,
     ) catch @panic("OOM");
 
     self.initHudPipeline();
-
-    self.swapchain.createFramebuffers(
-        self.allocs.std,
-        self.logical_device.handle,
-        self.main_render_pass,
-        self.alloc_cbs,
-    ) catch @panic("failed to create framebuffers");
 
     self.initImgui();
 }
@@ -395,33 +373,6 @@ fn initBackgroundPipeline(self: *Self) void {
         self.background_pipeline_data,
         self.background_descriptor_set,
     ) catch @panic("OOM");
-}
-
-fn initMainComputePipeline(self: *Self) void {
-    const maze_shader = core.shaders.createShaderModule(
-        "maze.comp",
-        self.logical_device.handle,
-        self.alloc_cbs,
-    ) orelse @panic("failed to create maze compute shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, maze_shader, self.alloc_cbs);
-
-    self.main_compute_pipeline = MainComputePipeline.init(
-        .{
-            .device = self.logical_device.handle,
-            .shader = maze_shader,
-        },
-        self.alloc_cbs,
-    );
-
-    self.main_compute_descriptor_set = self.main_compute_pipeline.allocateDescriptorSet(
-        self.logical_device.handle,
-    );
-
-    MainComputePipeline.updateDescriptorSet(
-        self.logical_device.handle,
-        self.main_compute_pipeline_data,
-        self.main_compute_descriptor_set,
-    );
 }
 
 fn initMeshPipeline(self: *Self) void {
@@ -504,24 +455,22 @@ fn initHudPipeline(self: *Self) void {
         frag_shader,
         self.alloc_cbs,
     );
-    self.hud_pipeline = HudPipeline.init(
+    self.hud_pipeline = HudPipelines.init(
         .{
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
-            .vertex_shader = vert_shader,
-            .fragment_shader = frag_shader,
+            .vert_shader = vert_shader,
+            .frag_shader = frag_shader,
         },
         self.alloc_cbs,
     );
-    self.hud_descriptor_set = self.hud_pipeline.allocateDescriptorSet(self.logical_device.handle);
-    HudPipeline.updateDescriptorSet(
+    self.hud_descriptor_sets = self.hud_pipeline.allocateDescriptorSets(self.logical_device.handle);
+    HudPipelines.updateDescriptorSets(
         self.logical_device.handle,
-        self.main_compute_pipeline_data.draw_image.view,
-        self.main_compute_pipeline_data.sampler,
         self.hud_pipeline_data,
-        self.hud_descriptor_set,
-    ) catch @panic("OOM");
+        self.hud_descriptor_sets,
+    );
 }
 
 fn initMainRenderPass(self: *Self) void {
@@ -699,10 +648,10 @@ fn recordCommandBuffer(
     checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
 
-    self.main_compute_pipeline.bind(frame.main_command_buffer);
-    self.main_compute_pipeline.recordCommands(
-        self.main_compute_pipeline_data,
-        self.main_compute_descriptor_set,
+    self.hud_pipeline.bindCompute(frame.main_command_buffer);
+    self.hud_pipeline.recordCommandsCompute(
+        self.hud_pipeline_data,
+        self.hud_descriptor_sets.compute,
         frame.main_command_buffer,
     );
     self.background_pipeline.bind(frame.main_command_buffer);
@@ -757,11 +706,11 @@ fn recordCommandBuffer(
         frame.main_command_buffer,
     );
 
-    self.hud_pipeline.bind(frame.main_command_buffer);
-    self.hud_pipeline.recordCommands(
+    self.hud_pipeline.bindGraphics(frame.main_command_buffer);
+    self.hud_pipeline.recordCommandsGraphics(
         self.hud_pipeline_systems_data,
         self.hud_pipeline_data,
-        self.hud_descriptor_set,
+        self.hud_descriptor_sets.graphics,
         frame.main_command_buffer,
     );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);

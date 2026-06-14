@@ -1,38 +1,51 @@
-#version 460
+#version 450
+#extension GL_EXT_debug_printf : enable
+// run export DEBUG_PRINTF_TO_STDOUT=true to see
+// unset DEBUG_PRINTF_TO_STDOUT to disable
 
-layout(local_size_x = 16, local_size_y = 16) in;
+struct MazeCell {
+    uint walls;
+};
 
-layout(set = 0, binding = 0, rgba8) uniform writeonly image2D outImage;
-
-layout(std430, set = 0, binding = 1) readonly buffer MazeState {
-    uint cells[];
-} maze;
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba8) uniform writeonly image2D out_image;
+layout(set = 0, binding = 1) readonly buffer CellBuffer {
+    MazeCell cells[]; // packed wall bits
+};
 
 layout(push_constant) uniform PushConstants {
-    uint width;
-    uint height;
-} pc;
+    uint maze_width;
+    uint maze_height;
+    uint pixels_per_cell;
+};
+
 
 void main() {
-    // ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-    // if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+    uvec2 pixel = gl_GlobalInvocationID.xy;
 
-    // uint idx = coord.y * pc.width + coord.x;
-    // uint state = maze.cells[idx];
+    uint cell_x = pixel.x / pixels_per_cell;
+    uint cell_y = pixel.y / pixels_per_cell;
+    if (cell_x >= maze_width || cell_y >= maze_height) return;
+    uint cellIdx = cell_y * maze_width + cell_x;
+    if (gl_GlobalInvocationID.x == 37 && gl_GlobalInvocationID.y == 7) {
+        debugPrintfEXT("pixel=(%u, %u)\n", pixel.x, pixel.y);
+        debugPrintfEXT("cellIdx=%u\n", cellIdx);
+    }
+    MazeCell cell = cells[cellIdx];
+    bool north = (cell.walls & 1u) != 0u;
+    bool south = (cell.walls & 2u) != 0u;
+    bool east  = (cell.walls & 4u) != 0u;
+    bool west  = (cell.walls & 8u) != 0u;
 
-    // vec4 color;
-    // switch (state) {
-    //     case 0:  color = vec4(0.08, 0.08, 0.08, 1.0); break; // blank
-    //     case 1:  color = vec4(0.78, 0.31, 0.31, 1.0); break; // a
-    //     case 2:  color = vec4(0.31, 0.78, 0.31, 1.0); break; // b
-    //     case 3:  color = vec4(0.31, 0.31, 0.78, 1.0); break; // active
-    //     case 4:  color = vec4(0.94, 0.94, 0.94, 1.0); break; // in
-    //     default: color = vec4(1.0,  0.0,  1.0,  1.0); break; // error — magenta
-    // }
-    // imageStore(outImage, coord, color);
-    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-       if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+    uint local_x = pixel.x % pixels_per_cell;
+    uint local_y = pixel.y % pixels_per_cell;
+    uint wall_thickness = 1;
+    bool is_wall =
+        (south && local_y >= pixels_per_cell - wall_thickness) ||
+        (east  && local_x >= pixels_per_cell - wall_thickness) ||
+        (north && local_y < wall_thickness && cell_y == 0u) ||
+        (west  && local_x < wall_thickness && cell_x == 0u);
 
-       // sanity check — write solid magenta
-       imageStore(outImage, coord, vec4(1.0, 0.0, 1.0, 1.0));
+    vec4 color = is_wall ? vec4(0.0, 0.0, 0.0, 1.0) : vec4(1.0, 1.0, 1.0, 1.0);
+    imageStore(out_image, ivec2(pixel), color);
 }
