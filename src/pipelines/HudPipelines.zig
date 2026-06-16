@@ -17,11 +17,15 @@ const Bindings = struct {
     const METADATA = 1;
 };
 
-const PushConstants = struct {
+const ComputePushConstants = struct {
     width: u32,
     height: u32,
     pixels_per_cell: u32,
     _pad0: u32 = 0,
+};
+
+const GraphicsPushConstants = struct {
+    inverse_window_resolution: core.math.Vec2,
 };
 
 const GPUMazeCell = extern struct {
@@ -42,15 +46,26 @@ const GPUMazeCell = extern struct {
 
 pub const AllocatedData = struct {
     pub const CreateData = struct {
-        maze_mesh: core.mesh.Mesh2D,
+        pub const MeshCreateInfo = struct {
+            mesh: core.mesh.Mesh2D,
+            screen_coordinates: core.math.Vec2,
+        };
+        pub const HudMesh = union(enum) {
+            maze: MeshCreateInfo,
+        };
+
+        meshes: []const HudMesh,
         maze: core.Maze,
         pixels_per_cell: u32,
     };
+
     meshes: core.mesh.Meshes2D.AllocatedData,
 
     maze_image: vma_usage.AllocatedImage,
     maze_sampler: vk.Sampler,
     maze_state: vma_usage.MappedBuffer,
+
+    /// this is not alloc data
     maze_mesh_idx: u32,
     maze_dimensions: vk.Extent2D,
     pixels_per_cell: u32,
@@ -64,16 +79,19 @@ pub const AllocatedData = struct {
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) std.mem.Allocator.Error!struct { @This(), SystemsData } {
         // output image — STORAGE_BIT for compute write, SAMPLED_BIT for HUD read
-        const extent = vk.Extent3D{
+        const maze_extent = vk.Extent3D{
             .width = cd.maze.width * cd.pixels_per_cell,
             .height = cd.maze.height * cd.pixels_per_cell,
             .depth = 1,
         };
 
+        log.warn(
+            \\ creating maze image: width={} height={} pixels_per_cell={}
+        , .{ maze_extent.width, maze_extent.height, cd.pixels_per_cell });
         var image = vma_usage.AllocatedImage.init(
             allocs.vma,
             vk.FORMAT_R8G8B8A8_UNORM,
-            extent,
+            maze_extent,
             vk.IMAGE_USAGE_STORAGE_BIT |
                 vk.IMAGE_USAGE_SAMPLED_BIT |
                 vk.IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -129,20 +147,30 @@ pub const AllocatedData = struct {
             &maze_state.mapped,
         )) catch @panic("failed to map maze state buffer");
 
-        const aligned_metadata: [*]GPUMazeCell = @ptrCast(@alignCast(maze_state.mapped));
+        const aligned_maze: [*]GPUMazeCell = @ptrCast(@alignCast(maze_state.mapped));
         const cells = try GPUMazeCell.arrayFromCellArray(allocs.std, cd.maze.cells);
         defer allocs.std.free(cells);
-
-        @memcpy(aligned_metadata, cells);
+        @memcpy(aligned_maze, cells);
 
         _ = physical_device;
 
         var meshes = try core.mesh.Meshes2D.init(allocs.std);
         defer meshes.deinit(allocs.std);
 
-        // BAD
-        // we have to use a dummy 0 for material index since the material is a sampled image not stored in a materails
-        try meshes.appendMesh(allocs.std, cd.maze_mesh, 0);
+        for (cd.meshes) |mesh| {
+            switch (mesh) {
+                .maze => |maze| {
+                    try meshes.appendMesh(
+                        allocs.std,
+                        maze.mesh,
+                        maze.screen_coordinates,
+                        // BAD
+                        // we have to use a dummy 0 for material index since the material is a sampled image not stored in a materails
+                        0,
+                    );
+                },
+            }
+        }
 
         const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
 
@@ -152,8 +180,8 @@ pub const AllocatedData = struct {
                 .maze_sampler = sampler,
                 .maze_state = maze_state,
                 .maze_dimensions = vk.Extent2D{
-                    .width = cd.maze.width * cd.pixels_per_cell,
-                    .height = cd.maze.height * cd.pixels_per_cell,
+                    .width = cd.maze.width,
+                    .height = cd.maze.height,
                 },
                 .pixels_per_cell = cd.pixels_per_cell,
                 .meshes = uploaded_meshes,
@@ -316,7 +344,7 @@ fn initComputePipeline(
     defer vk.DestroyShaderModule(device, maze_shader, alloc_cbs);
     const push_constant = vk.PushConstantRange{
         .offset = 0,
-        .size = @sizeOf(PushConstants),
+        .size = @sizeOf(ComputePushConstants),
         .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
     };
     const layout_ci = vk.PipelineLayoutCreateInfo{
@@ -476,10 +504,18 @@ fn initGraphicsPipeline(
         .pDynamicStates = &dynamic_states,
     };
 
+    const push_constant = vk.PushConstantRange{
+        .offset = 0,
+        .size = @sizeOf(GraphicsPushConstants),
+        .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+    };
+
     const layout_ci = vk.PipelineLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &self.graphics_descriptor_set_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_constant,
     };
     checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.graphics_pipeline_layout)) catch
         @panic("failed to create hud pipeline layout");
@@ -510,9 +546,10 @@ fn initGraphicsPipeline(
 pub const DescriptorSets = struct {
     compute: vk.DescriptorSet,
     graphics: vk.DescriptorSet,
+    ui: vk.DescriptorSet,
 };
 
-pub fn allocateDescriptorSets(self: Self, device: vk.Device) DescriptorSets {
+pub fn allocateDescriptorSets(self: Self, device: vk.Device, alloc_data: AllocatedData) DescriptorSets {
     var compute_set: vk.DescriptorSet = undefined;
     const cmpt_ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -534,9 +571,11 @@ pub fn allocateDescriptorSets(self: Self, device: vk.Device) DescriptorSets {
     checkVk(vk.AllocateDescriptorSets(device, &grphx_ai, &graphics_set)) catch
         @panic("failed to allocate main compute descriptor set");
 
+    const ui_set = imgui.impl_vulkan.AddTexture(alloc_data.maze_sampler, alloc_data.maze_image.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     return .{
         .compute = compute_set,
         .graphics = graphics_set,
+        .ui = ui_set,
     };
 }
 
@@ -631,7 +670,7 @@ pub fn recordCommandsCompute(
         null,
     );
 
-    const pc = PushConstants{
+    const pc = ComputePushConstants{
         .width = alloc_data.maze_dimensions.width,
         .height = alloc_data.maze_dimensions.height,
         .pixels_per_cell = alloc_data.pixels_per_cell,
@@ -641,7 +680,7 @@ pub fn recordCommandsCompute(
         self.compute_pipeline_layout,
         vk.SHADER_STAGE_COMPUTE_BIT,
         0,
-        @sizeOf(PushConstants),
+        @sizeOf(ComputePushConstants),
         &pc,
     );
 
@@ -675,6 +714,7 @@ pub fn recordCommandsCompute(
 
 pub fn recordCommandsGraphics(
     self: Self,
+    window_extent: vk.Extent2D,
     sys_data: SystemsData,
     alloc_data: AllocatedData,
     set: vk.DescriptorSet,
@@ -690,7 +730,21 @@ pub fn recordCommandsGraphics(
         0,
         null,
     );
+    const pc = GraphicsPushConstants{
+        .inverse_window_resolution = core.math.Vec2.make(
+            1.0 / @as(f32, @floatFromInt(window_extent.width)),
+            1.0 / @as(f32, @floatFromInt(window_extent.height)),
+        ),
+    };
 
+    vk.CmdPushConstants(
+        cmd,
+        self.graphics_pipeline_layout,
+        vk.SHADER_STAGE_VERTEX_BIT,
+        0,
+        @sizeOf(GraphicsPushConstants),
+        &pc,
+    );
     const offsets = [_]vk.DeviceSize{0};
     vk.CmdBindVertexBuffers(cmd, 0, 1, &alloc_data.meshes.vertex_buffer.buffer, &offsets);
     vk.CmdBindIndexBuffer(cmd, alloc_data.meshes.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT32);
@@ -705,4 +759,13 @@ pub fn recordCommandsGraphics(
             @intCast(idx), // first instance — used to look up MetaData in shader
         );
     }
+}
+
+pub fn drawImgui(self: *Self, ui_set: vk.DescriptorSet) void {
+    _ = self;
+    var open = true;
+    const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    defer imgui.End();
+    if (!shown) return;
+    imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });
 }

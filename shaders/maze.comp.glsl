@@ -28,6 +28,8 @@ void main() {
     if (cell_x >= maze_width || cell_y >= maze_height) return;
     uint cellIdx = cell_y * maze_width + cell_x;
     if (gl_GlobalInvocationID.x == 37 && gl_GlobalInvocationID.y == 7) {
+        debugPrintfEXT("maze_width=%u maze_height=%u pixels_per_cell=%u\n",
+              maze_width, maze_height, pixels_per_cell);
         debugPrintfEXT("pixel=(%u, %u)\n", pixel.x, pixel.y);
         debugPrintfEXT("cellIdx=%u\n", cellIdx);
     }
@@ -39,6 +41,9 @@ void main() {
 
     uint local_x = pixel.x % pixels_per_cell;
     uint local_y = pixel.y % pixels_per_cell;
+    if (cell_x == 3u && cell_y == 0u && local_x == 0u && local_y == 0u) {
+        debugPrintfEXT("cell(0,3) walls=%u east=%u\n", cell.walls, uint(east));
+    }
     uint wall_thickness = 1;
     bool is_wall =
         (south && local_y >= pixels_per_cell - wall_thickness) ||

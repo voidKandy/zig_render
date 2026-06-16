@@ -17,6 +17,4 @@ vec4 TextureBindless2D(uint MaterialIndex, vec2 uv)
 void main()
 {
     out_Color = TextureBindless2D(MaterialIndex, texCoord);
-    // out_Color = vec4(1,0,0,1);
-    // out_Color = vec4(texCoord, 0.0, 1.0);
 }

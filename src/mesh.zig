@@ -386,14 +386,15 @@ pub const Mesh2D = struct {
         a.free(self.indices);
     }
 
-    /// Creates a quad in NDC space with the given top-left offset and size.
-    /// x, y, w, h are all in NDC (-1 to 1).
-    pub fn quad(a: std.mem.Allocator, x: f32, y: f32, w: f32, h: f32) std.mem.Allocator.Error!@This() {
+    /// Is NDC coordinates [-1..1]
+    /// it's origin in its leftmost bottom corner
+    /// input width/height are percentages of the viewport size
+    pub fn ndcQuad(a: std.mem.Allocator, w: f32, h: f32) std.mem.Allocator.Error!@This() {
         const vertices = [_]Vertex2D{
-            .{ .position = Vec2.make(x, y), .uv = Vec2.make(0, 0) },
-            .{ .position = Vec2.make(x + w, y), .uv = Vec2.make(1, 0) },
-            .{ .position = Vec2.make(x + w, y + h), .uv = Vec2.make(1, 1) },
-            .{ .position = Vec2.make(x, y + h), .uv = Vec2.make(0, 1) },
+            .{ .position = Vec2.make(0, 0), .uv = Vec2.make(0, 0) },
+            .{ .position = Vec2.make(w, 0), .uv = Vec2.make(1, 0) },
+            .{ .position = Vec2.make(w, h), .uv = Vec2.make(1, 1) },
+            .{ .position = Vec2.make(0, h), .uv = Vec2.make(0, 1) },
         };
         const indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
         return init(a, &vertices, &indices);
@@ -404,8 +405,7 @@ pub const Meshes2D = struct {
     pub const MetaData = extern struct {
         material_index: u32,
         _pad0: u32 = 0,
-        _pad1: u32 = 0,
-        _pad2: u32 = 0,
+        screen_coordinates: core.math.Vec2,
     };
 
     pub const MeshRanges = struct {
@@ -451,6 +451,7 @@ pub const Meshes2D = struct {
         self: *@This(),
         a: std.mem.Allocator,
         mesh: Mesh2D,
+        screen_coordinates: core.math.Vec2,
         material_index: u32,
     ) std.mem.Allocator.Error!void {
         defer self.amt_meshes += 1;
@@ -470,7 +471,10 @@ pub const Meshes2D = struct {
         for (mesh.indices) |idx| {
             try self.indices.append(a, idx + vertex_offset);
         }
-        try self.meta_data.append(a, .{ .material_index = material_index });
+        try self.meta_data.append(a, .{
+            .material_index = material_index,
+            .screen_coordinates = screen_coordinates,
+        });
         try self.ranges.append(a, mesh_range);
     }
 

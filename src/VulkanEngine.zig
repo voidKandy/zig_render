@@ -283,6 +283,7 @@ pub fn initData(
     mesh_pipeline_cd: MeshPipeline.AllocatedData.CreateData,
     hud_pipeline_cd: HudPipelines.AllocatedData.CreateData,
 ) void {
+    self.initImgui();
     self.background_pipeline_data = BackgroundPipeline.AllocatedData.create(
         self.allocs,
         self.logical_device.handle,
@@ -318,8 +319,6 @@ pub fn initData(
     ) catch @panic("OOM");
 
     self.initHudPipeline();
-
-    self.initImgui();
 }
 
 fn initBackgroundPipeline(self: *Self) void {
@@ -464,7 +463,7 @@ fn initHudPipeline(self: *Self) void {
         },
         self.alloc_cbs,
     );
-    self.hud_descriptor_sets = self.hud_pipeline.allocateDescriptorSets(self.logical_device.handle);
+    self.hud_descriptor_sets = self.hud_pipeline.allocateDescriptorSets(self.logical_device.handle, self.hud_pipeline_data);
     HudPipelines.updateDescriptorSets(
         self.logical_device.handle,
         self.hud_pipeline_data,
@@ -547,6 +546,7 @@ fn drawImgui(self: *Self) void {
     c.imgui.NewFrame();
 
     self.background_pipeline.drawImgui();
+    self.hud_pipeline.drawImgui(self.hud_descriptor_sets.ui);
     self.mesh_pipeline.drawImgui(self.allocs.std, &self.mesh_pipeline_systems_data);
 
     c.imgui.Render();
@@ -707,6 +707,7 @@ fn recordCommandBuffer(
 
     self.hud_pipeline.bindGraphics(frame.main_command_buffer);
     self.hud_pipeline.recordCommandsGraphics(
+        self.swapchain.extent,
         self.hud_pipeline_systems_data,
         self.hud_pipeline_data,
         self.hud_descriptor_sets.graphics,

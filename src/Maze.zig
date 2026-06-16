@@ -102,20 +102,44 @@ pub fn initHallwaySquare(
     var midpoint = hw / 2;
     midpoint -= if (hw % 2 == 0) 1 else 0;
     for (0..hw) |row| {
-        const cell = self.cellAt(@intCast(row), midpoint);
+        const row_cell = self.cellAt(@intCast(row), midpoint);
         // in order to remain consistent with the way mazes are generated
         const cell_left = self.cellAt(@intCast(row), midpoint - 1);
         const cell_right = self.cellAt(@intCast(row), midpoint + 1);
         cell_left.walls.east = true;
         cell_right.walls.west = true;
 
-        cell.walls.west = true;
-        cell.walls.east = true;
-        if (row == 0) cell.walls.north = true;
-        if (row == hw) cell.walls.south = true;
+        row_cell.walls.west = true;
+        row_cell.walls.east = true;
+        if (row == 0) row_cell.walls.north = true;
+        if (row == hw) row_cell.walls.south = true;
+
+        for (0..hw) |col| {
+            const col_cell = &self.cells[row * self.width + col];
+            if (row == 0) col_cell.walls.north = true;
+            if (row == self.height - 1) col_cell.walls.south = true;
+            if (col == 0) col_cell.walls.west = true;
+            if (col == self.width - 1) col_cell.walls.east = true;
+        }
     }
 
     return self;
+}
+
+pub fn generate(self: *@This(), a: std.mem.Allocator, threshold: usize, seed: u64) void {
+    var ctx = self.initGenerationContext(a, threshold, seed) catch @panic("failed to init generation context");
+    defer ctx.deinit(a);
+    while (self.step(&ctx)) {}
+
+    for (0..self.height) |row| {
+        for (0..self.width) |col| {
+            const cell = &self.cells[row * self.width + col];
+            if (row == 0) cell.walls.north = true;
+            if (row == self.height - 1) cell.walls.south = true;
+            if (col == 0) cell.walls.west = true;
+            if (col == self.width - 1) cell.walls.east = true;
+        }
+    }
 }
 
 pub const GenerationContext = struct {
@@ -368,19 +392,8 @@ test "maze seeded display" {
     var maze = try Maze.init(a, 20, 10);
     defer maze.deinit(a);
     const seed = 12345;
-    var ctx = try maze.initGenerationContext(a, 16, seed);
-    defer ctx.deinit(a);
-    // run to completion
-    while (maze.step(&ctx)) {}
-    for (0..maze.height) |row| {
-        for (0..maze.width) |col| {
-            const cell = &maze.cells[row * maze.width + col];
-            if (row == 0) cell.walls.north = true;
-            if (row == maze.height - 1) cell.walls.south = true;
-            if (col == 0) cell.walls.west = true;
-            if (col == maze.width - 1) cell.walls.east = true;
-        }
-    }
+
+    maze.generate(a, 16, seed);
 
     print(
         \\ SEEDED MAZE: {}

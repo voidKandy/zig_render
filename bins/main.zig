@@ -92,20 +92,36 @@ pub fn main() void {
     );
     defer engine.deinit();
 
-    var maze = core.Maze.initHallwaySquare(
-        a,
-        10,
-    ) catch @panic("failed to create maze");
+    // var maze = core.Maze.initHallwaySquare(
+    //     a,
+    //     10,
+    // ) catch @panic("failed to create maze");
+    var maze = core.Maze.init(a, 10, 10) catch @panic("OOM");
     defer maze.deinit(a);
+    maze.generate(a, 16, 12345);
 
-    const window_aspect = @as(f32, @floatFromInt(engine.swapchain.extent.width)) / @as(f32, @floatFromInt(engine.swapchain.extent.height));
-    const maze_aspect = @as(f32, @floatFromInt(maze.width)) / @as(f32, @floatFromInt(maze.height));
+    const pixels_per_cell = 9;
+    // const window_aspect = @as(f32, @floatFromInt(engine.swapchain.extent.width)) / @as(f32, @floatFromInt(engine.swapchain.extent.height));
+    // const maze_aspect = @as(f32, @floatFromInt(maze.width)) / @as(f32, @floatFromInt(maze.height));
 
-    const quad_h: f32 = 0.8;
-    const quad_w: f32 = quad_h * maze_aspect / window_aspect;
-
-    const maze_quad = core.mesh.Mesh2D.quad(a, -quad_w / 2.0, -quad_h / 2.0, quad_w, quad_h) catch @panic("failed to create hud quad");
+    // portion of window height to use for the maze quad
+    // const quad_h: f32 = 0.7;
+    // const quad_w: f32 = quad_h * maze_aspect / window_aspect;
+    const margin: f32 = 0.05;
+    const quad_size = 0.2;
+    const maze_quad = core.mesh.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create hud quad");
     defer maze_quad.deinit(a);
+
+    // top-right placement in 0..1 UI space
+    const maze_quad_coords = core.math.Vec2.make(
+        1.0 - quad_size - margin,
+        margin,
+    );
+
+    log.warn(
+        "MAIN: maze_quad_coords x: {}, y: {}",
+        .{ maze_quad_coords.x, maze_quad_coords.y },
+    );
 
     const mesh_pipeline_create_data: core.MeshPipeline.AllocatedData.CreateData =
         .{
@@ -116,9 +132,16 @@ pub fn main() void {
 
     const hud_pipeline_create_data: core.HudPipelines.AllocatedData.CreateData =
         .{
-            .maze_mesh = maze_quad,
+            .meshes = &[_]core.HudPipelines.AllocatedData.CreateData.HudMesh{
+                .{
+                    .maze = .{
+                        .mesh = maze_quad,
+                        .screen_coordinates = maze_quad_coords,
+                    },
+                },
+            },
             .maze = maze,
-            .pixels_per_cell = 9,
+            .pixels_per_cell = pixels_per_cell,
         };
     engine.initData(
         mesh_pipeline_create_data,

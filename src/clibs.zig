@@ -839,6 +839,9 @@ pub const imgui = struct {
     pub const WindowFlags = c.ImGuiWindowFlags;
     pub const WINDOW_ALWAYS_AUTO_RESIZE = c.ImGuiWindowFlags_AlwaysAutoResize;
 
+    pub const Image = c.ImGui_Image;
+    pub const ImVec2 = c.ImVec2;
+
     pub const impl_vulkan = struct {
         pub const Init = c.cImGui_ImplVulkan_Init;
         pub const Shutdown = c.cImGui_ImplVulkan_Shutdown;
@@ -846,6 +849,7 @@ pub const imgui = struct {
         pub const NewFrame = c.cImGui_ImplVulkan_NewFrame;
         pub const InitInfo = c.ImGui_ImplVulkan_InitInfo;
         pub const RenderDrawData = c.cImGui_ImplVulkan_RenderDrawData;
+        pub const AddTexture = c.cImGui_ImplVulkan_AddTexture;
     };
 
     pub const impl_sdl3 = struct {
