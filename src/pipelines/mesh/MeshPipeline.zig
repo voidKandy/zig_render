@@ -1,6 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const core = @import("../root.zig");
+const core = @import("../../root.zig");
 const imgui = core.clibs.imgui;
 const log = std.log.scoped(.MeshPipeline);
 const mesh_mod = core.mesh;
@@ -10,6 +10,11 @@ const vma = core.clibs.vma;
 const vma_usage = core.vma_usage;
 const checkVk = vki.checkVk;
 const Mesh = mesh_mod.Mesh3D;
+/// BAD
+/// these are more like pipeline objects.
+/// Should be outside of mesh pipeline
+pub const Meshes3D = @import("Meshes3D.zig");
+pub const Meshes2D = @import("Meshes2D.zig");
 
 pub const AllocatedData = struct {
     pub const CreateData = struct {
@@ -34,7 +39,7 @@ pub const AllocatedData = struct {
         offset: u32,
     };
     materials: std.StringHashMap(MaterialEntry),
-    meshes: core.mesh.Meshes3D.AllocatedData,
+    meshes: Meshes3D.AllocatedData,
     camera_uniform: vma_usage.MappedBuffer,
 
     pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
@@ -83,7 +88,7 @@ pub const AllocatedData = struct {
             current_mtl_offset += @as(u32, @intCast(uploaded.textures.len));
         }
 
-        var meshes = try core.mesh.Meshes3D.init(allocs.std);
+        var meshes = try Meshes3D.init(allocs.std);
         defer meshes.deinit(allocs.std);
 
         var camera_gpu_data = cd.camera.createGPUData(camera_extent);
@@ -142,8 +147,14 @@ pub const AllocatedData = struct {
                 .camera_uniform = mapped_camera,
             },
             SystemsData{
+                .mesh_scale_factors = blk: {
+                    const scale_factors = try allocs.std.alloc(f32, meshes.meshes.items.len);
+                    for (0..meshes.meshes.items.len) |i|
+                        scale_factors[i] = 1.0;
+                    break :blk scale_factors;
+                },
                 .camera = cd.camera,
-                .mesh_ranges = try meshes.ranges.toOwnedSlice(allocs.std),
+                .meshes = try meshes.meshes.toOwnedSlice(allocs.std),
                 .mesh_metadatas = try meshes.meta_data.toOwnedSlice(allocs.std),
                 .material_names = try material_names.toOwnedSlice(allocs.std),
             },
@@ -153,14 +164,16 @@ pub const AllocatedData = struct {
 
 pub const SystemsData = struct {
     camera: core.Camera,
-    mesh_metadatas: []mesh_mod.Meshes3D.MetaData,
-    mesh_ranges: []mesh_mod.Meshes3D.MeshRanges,
+    meshes: []Meshes3D.MeshHandle,
+    mesh_scale_factors: []f32,
+    mesh_metadatas: []Meshes3D.MetaData,
     edited_meshes: std.ArrayListUnmanaged(usize) = .{},
     material_names: [][:0]u8,
 
     pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators) void {
         allocs.std.free(self.mesh_metadatas);
-        allocs.std.free(self.mesh_ranges);
+        allocs.std.free(self.meshes);
+        allocs.std.free(self.mesh_scale_factors);
         for (self.material_names) |name|
             allocs.std.free(name);
         allocs.std.free(self.material_names);
@@ -224,20 +237,20 @@ pub const SystemsData = struct {
 
         // metadata system
         if (self.edited_meshes.items.len > 0) {
-            const aligned_metadatas: [*]core.mesh.Meshes3D.MetaData = @ptrCast(@alignCast(alloc_data.meshes.metadata.mapped));
+            const aligned_metadatas: [*]Meshes3D.MetaData = @ptrCast(@alignCast(alloc_data.meshes.metadata.mapped));
             for (self.edited_meshes.items) |i| {
-                const mesh = self.mesh_ranges[i];
-                const mds = self.mesh_metadatas[mesh.metadata.offset .. mesh.metadata.offset + mesh.metadata.range];
+                const mesh = self.meshes[i];
+                const mds = self.mesh_metadatas[mesh.ranges.metadata.offset .. mesh.ranges.metadata.offset + mesh.ranges.metadata.range];
                 for (0..mds.len) |k| {
                     const md = mds[k];
-                    const gpu_md: core.mesh.Meshes3D.MetaData = .{
+                    const gpu_md: Meshes3D.MetaData = .{
                         .material_index = md.material_index,
                         .index_offset = md.index_offset,
                         .index_count = md.index_count,
                         .vertex_offset = md.vertex_offset,
                         .model_transform = md.model_transform,
                     };
-                    aligned_metadatas[k + mesh.metadata.offset] = gpu_md;
+                    aligned_metadatas[k + mesh.ranges.metadata.offset] = gpu_md;
                 }
             }
 
@@ -836,7 +849,8 @@ pub fn recordCommands(
         null,
     );
 
-    for (sys_data.mesh_ranges, 0..) |range, idx| {
+    for (sys_data.meshes, 0..) |mesh, idx| {
+        const ranges = mesh.ranges;
         // bind set 0: VB, IB, UBO for this submesh
         vk.CmdBindDescriptorSets(
             cmd,
@@ -850,9 +864,9 @@ pub fn recordCommands(
         );
         vk.CmdDraw(
             cmd,
-            @as(u32, @intCast(range.index.range)),
+            @as(u32, @intCast(ranges.index.range)),
             1, // num instances
-            @as(u32, @intCast(range.index.offset)),
+            @as(u32, @intCast(ranges.index.offset)),
             @as(u32, @intCast(idx)), // first instance
         );
     }
@@ -894,8 +908,9 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
     imgui.Separator();
 
     imgui.Text("Meshes");
-    for (system_data.mesh_ranges, 0..) |*range, idx| {
-        const mesh_metadatas = system_data.mesh_metadatas[range.metadata.offset .. range.metadata.offset + range.metadata.range];
+    for (system_data.meshes, 0..) |*mesh, idx| {
+        const ranges = mesh.ranges;
+        const mesh_metadatas = system_data.mesh_metadatas[ranges.metadata.offset .. ranges.metadata.offset + ranges.metadata.range];
         var transform = mesh_metadatas[0].model_transform;
 
         const label = std.fmt.allocPrintSentinel(std.heap.c_allocator, "Mesh {d}", .{idx}, 0) catch @panic("OOM");
@@ -932,9 +947,19 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
                 }
             }
 
-            imgui.Text("Index Offset: %d", range.index.offset);
-            imgui.Text("Index Count: %d", range.index.range);
-            imgui.Text("Vertex Offset: %d", range.vertex.offset);
+            var scale_factor = system_data.mesh_scale_factors[idx];
+            if (imgui.SliderFloat("Scale", &scale_factor, 0.0, 10.0)) {
+                const s = core.math.Mat4.scale(core.math.Vec3.make(scale_factor, scale_factor, scale_factor));
+                const t = core.math.Mat4.translation(core.math.Vec3.make(translation[0], translation[1], translation[2]));
+                mesh_metadatas[0].model_transform = core.math.Mat4.mul(t, s);
+                if (std.mem.indexOfScalar(usize, system_data.edited_meshes.items, idx) == null) {
+                    system_data.edited_meshes.append(a, idx) catch @panic("OOM");
+                }
+            }
+
+            imgui.Text("Index Offset: %d", ranges.index.offset);
+            imgui.Text("Index Count: %d", ranges.index.range);
+            imgui.Text("Vertex Offset: %d", ranges.vertex.offset);
         }
     }
     imgui.Separator();

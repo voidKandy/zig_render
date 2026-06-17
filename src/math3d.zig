@@ -150,6 +150,10 @@ pub const Vec4 = extern struct {
         );
     }
 
+    pub inline fn mul(self: Self, val: f32) Self {
+        return make(self.x * val, self.y * val, self.z * val, self.w * val);
+    }
+
     pub fn nomalized(self: Self) Self {
         return self.to_vec3().normalized().toVec4(self.w);
     }

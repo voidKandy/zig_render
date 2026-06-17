@@ -59,7 +59,7 @@ pub const AllocatedData = struct {
         pixels_per_cell: u32,
     };
 
-    meshes: core.mesh.Meshes2D.AllocatedData,
+    meshes: core.MeshPipeline.Meshes2D.AllocatedData,
 
     maze_image: vma_usage.AllocatedImage,
     maze_sampler: vk.Sampler,
@@ -154,7 +154,7 @@ pub const AllocatedData = struct {
 
         _ = physical_device;
 
-        var meshes = try core.mesh.Meshes2D.init(allocs.std);
+        var meshes = try core.MeshPipeline.Meshes2D.init(allocs.std);
         defer meshes.deinit(allocs.std);
 
         for (cd.meshes) |mesh| {
@@ -206,7 +206,7 @@ pub const AllocatedData = struct {
 };
 
 pub const SystemsData = struct {
-    mesh_ranges: []core.mesh.Meshes2D.MeshRanges,
+    mesh_ranges: []core.MeshPipeline.Meshes2D.MeshRanges,
 
     pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators) void {
         allocs.std.free(self.mesh_ranges);

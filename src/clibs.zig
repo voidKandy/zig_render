@@ -833,6 +833,7 @@ pub const imgui = struct {
     pub const EndCombo = c.ImGui_EndCombo;
     pub const InputFloat4 = c.ImGui_InputFloat4;
     pub const SliderFloat4 = c.ImGui_SliderFloat4;
+    pub const SliderFloat = c.ImGui_SliderFloat;
     pub const DragFloat3 = c.ImGui_DragFloat3;
     pub const InputInt = c.ImGui_InputInt;
 
