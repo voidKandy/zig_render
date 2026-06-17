@@ -1,11 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.Maze);
 
-pub const CellState = enum {
-    active,
-    finished,
-};
-
 pub const CellRegion = enum {
     none,
     a,
@@ -127,7 +122,7 @@ pub fn initHallwaySquare(
 }
 
 pub fn generate(self: *@This(), a: std.mem.Allocator, threshold: usize, seed: u64) void {
-    var ctx = self.initGenerationContext(a, threshold, seed) catch @panic("failed to init generation context");
+    var ctx = self.createGenerationContext(a, threshold, seed) catch @panic("failed to init generation context");
     defer ctx.deinit(a);
     while (self.step(&ctx)) {}
 
@@ -158,7 +153,7 @@ pub const GenerationContext = struct {
     }
 };
 
-pub fn initGenerationContext(self: Maze, a: std.mem.Allocator, threshold: usize, seed: u64) std.mem.Allocator.Error!GenerationContext {
+pub fn createGenerationContext(self: Maze, a: std.mem.Allocator, threshold: usize, seed: u64) std.mem.Allocator.Error!GenerationContext {
     var stack = try std.ArrayList(Region).initCapacity(a, self.cells.len);
     try stack.append(a, .{ .min = 0, .max = self.cells.len });
     return .{

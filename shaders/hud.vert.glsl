@@ -46,21 +46,3 @@ void main() {
      }
     gl_Position = vec4(ndc, 0.0, 1.0);
 }
-
-void oldMain() {
-    materialIndex = MetaBuf.metas[gl_InstanceIndex].materialIndex;
-    texCoord = inUV;
-    vec2 pos = inPosition;
-
-    // convert 0..1 quad into centered space (-0.5..0.5)
-    pos = pos - 0.5;
-
-    // aspect correction (THIS is the missing fix)
-    float aspect = inverse_window_resolution.y / inverse_window_resolution.x;
-    pos.x /= aspect;
-
-    // scale to desired UI size (optional, 0.7 here if you want)
-    pos *= 2.0;
-
-    gl_Position = vec4(pos, 0.0, 1.0);
-}

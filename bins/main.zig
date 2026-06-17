@@ -72,7 +72,8 @@ pub fn main() void {
 
     const meshes_objects = a.alloc(
         core.MeshPipeline.AllocatedData.CreateData.MeshCreateInfo,
-        amt_meshes_objects,
+        // BAD
+        amt_meshes_objects + 1,
     ) catch @panic("failed to alloc meshes_objects");
     defer a.free(meshes_objects);
 
@@ -80,7 +81,9 @@ pub fn main() void {
     for (all_objects) |files| {
         for (files, 0..) |*obj, i| {
             meshes_objects[i + k] = .{
-                .obj = obj.*,
+                .create_mesh = .{
+                    .obj = obj.*,
+                },
             };
         }
         k += files.len;
@@ -112,22 +115,28 @@ pub fn main() void {
     const maze_quad = core.mesh.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create hud quad");
     defer maze_quad.deinit(a);
 
-    // top-right placement in 0..1 UI space
+    // top-right placement in -1..1 UI space
     const maze_quad_coords = core.math.Vec2.make(
-        1.0 - quad_size - margin,
+        1.0 - (quad_size / 2.0) - margin,
         margin,
     );
 
-    log.warn(
-        "MAIN: maze_quad_coords x: {}, y: {}",
-        .{ maze_quad_coords.x, maze_quad_coords.y },
-    );
+    const maze_mesh3D = core.mesh.Mesh3D.fromMaze(a, maze, 2.0, 2.0) catch @panic("failed to create 3D maze mesh");
+    defer maze_mesh3D.deinit(a);
 
+    meshes_objects[amt_meshes_objects] = .{
+        .create_mesh = .{
+            .info = .{
+                .mesh = maze_mesh3D,
+                .material_idx = 0,
+            },
+        },
+    };
     const mesh_pipeline_create_data: core.MeshPipeline.AllocatedData.CreateData =
         .{
             .camera = camera,
             .materials_files = &[_]core.mtl_loader.MtlFile{ global_mat, debug_mat },
-            .mesh_objs = meshes_objects,
+            .create_meshes = meshes_objects,
         };
 
     const hud_pipeline_create_data: core.HudPipelines.AllocatedData.CreateData =

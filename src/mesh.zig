@@ -47,6 +47,10 @@ pub const Mesh3D = struct {
         };
     }
 
+    pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
+        allocator.free(self.vertices);
+        allocator.free(self.indices);
+    }
     const Vertex3DHash = struct {
         pub fn hash(cx: @This(), vertex: Vertex3D) u64 {
             _ = cx;
@@ -140,9 +144,103 @@ pub const Mesh3D = struct {
         };
     }
 
-    pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
-        allocator.free(self.vertices);
-        allocator.free(self.indices);
+    pub fn fromMaze(a: std.mem.Allocator, maze: core.Maze, cell_size: f32, wall_height: f32) !Self {
+        var vertices = try std.ArrayList(Vertex3D).initCapacity(a, maze.cells.len * 5 * 4);
+        var indices = try std.ArrayList(u32).initCapacity(a, maze.cells.len * 5 * 6);
+        errdefer vertices.deinit(a);
+        errdefer indices.deinit(a);
+
+        for (maze.cells, 0..) |cell, i| {
+            const row: f32 = @floatFromInt(i / maze.width);
+            const col: f32 = @floatFromInt(i % maze.width);
+            const x0 = col * cell_size;
+            const x1 = (col + 1) * cell_size;
+            const z0 = row * cell_size;
+            const z1 = (row + 1) * cell_size;
+
+            const is_last_row = (i / maze.width) == (maze.height - 1);
+            const is_first_col = (i % maze.width) == 0;
+
+            // floor
+            try appendQuad(
+                &vertices,
+                &indices,
+                .{ x0, 0, z0 },
+                .{ x1, 0, z0 },
+                .{ x1, 0, z1 },
+                .{ x0, 0, z1 },
+                .{ 0, 1, 0 },
+            );
+
+            // north wall (z = z0 edge)
+            if (cell.walls.north) try appendQuad(
+                &vertices,
+                &indices,
+                .{ x1, 0, z0 },
+                .{ x0, 0, z0 },
+                .{ x0, wall_height, z0 },
+                .{ x1, wall_height, z0 },
+                .{ 0, 0, 1 },
+            );
+
+            // east wall (x = x1 edge)
+            if (cell.walls.east) try appendQuad(
+                &vertices,
+                &indices,
+                .{ x1, 0, z0 },
+                .{ x1, 0, z1 },
+                .{ x1, wall_height, z1 },
+                .{ x1, wall_height, z0 },
+                .{ 1, 0, 0 },
+            );
+
+            // south wall — only emit on last row to avoid duplicates
+            if (cell.walls.south and is_last_row) try appendQuad(
+                &vertices,
+                &indices,
+                .{ x0, 0, z1 },
+                .{ x1, 0, z1 },
+                .{ x1, wall_height, z1 },
+                .{ x0, wall_height, z1 },
+                .{ 0, 0, -1 },
+            );
+
+            // west wall — only emit on first col to avoid duplicates
+            if (cell.walls.west and is_first_col) try appendQuad(
+                &vertices,
+                &indices,
+                .{ x0, 0, z1 },
+                .{ x0, 0, z0 },
+                .{ x0, wall_height, z0 },
+                .{ x0, wall_height, z1 },
+                .{ -1, 0, 0 },
+            );
+        }
+
+        return .{
+            .vertices = try vertices.toOwnedSlice(a),
+            .indices = try indices.toOwnedSlice(a),
+        };
+    }
+
+    fn appendQuad(
+        vertices: *std.ArrayList(Vertex3D),
+        indices: *std.ArrayList(u32),
+        p0: [3]f32,
+        p1: [3]f32,
+        p2: [3]f32,
+        p3: [3]f32,
+        normal: [3]f32,
+    ) !void {
+        const base: u32 = @intCast(vertices.items.len);
+        const norm = Vec4.make(normal[0], normal[1], normal[2], 0);
+        vertices.appendSliceAssumeCapacity(&.{
+            .{ .position = Vec4.make(p0[0], p0[1], p0[2], 1), .normal = norm, .color = Vec4.ZERO, .uv = Vec2.make(0, 0) },
+            .{ .position = Vec4.make(p1[0], p1[1], p1[2], 1), .normal = norm, .color = Vec4.ZERO, .uv = Vec2.make(1, 0) },
+            .{ .position = Vec4.make(p2[0], p2[1], p2[2], 1), .normal = norm, .color = Vec4.ZERO, .uv = Vec2.make(1, 1) },
+            .{ .position = Vec4.make(p3[0], p3[1], p3[2], 1), .normal = norm, .color = Vec4.ZERO, .uv = Vec2.make(0, 1) },
+        });
+        indices.appendSliceAssumeCapacity(&.{ base, base + 1, base + 2, base, base + 2, base + 3 });
     }
 };
 
@@ -199,7 +297,43 @@ pub const Meshes3D = struct {
         self.meta_data.deinit(a);
     }
 
-    pub fn appendMesh(
+    pub fn appendMeshWithMaterialIndex(
+        self: *@This(),
+        a: std.mem.Allocator,
+        mesh: Mesh3D,
+        transform: core.math.Mat4,
+        material_index: u32,
+    ) std.mem.Allocator.Error!void {
+        defer self.amt_meshes += 1;
+        const mesh_range = MeshRanges{
+            .vertex = .{
+                .offset = @as(u32, @intCast(self.vertices.items.len)),
+                .range = @as(u32, @intCast(mesh.vertices.len)),
+            },
+            .index = .{
+                .offset = @as(u32, @intCast(self.indices.items.len)),
+                .range = @as(u32, @intCast(mesh.indices.len)),
+            },
+            .metadata = .{
+                .offset = @as(u32, @intCast(self.meta_data.items.len)),
+                .range = 1,
+            },
+        };
+
+        try self.vertices.appendSlice(a, mesh.vertices);
+        try self.indices.appendSlice(a, mesh.indices);
+
+        try self.meta_data.append(a, MetaData{
+            .model_transform = transform,
+            .material_index = material_index,
+            .index_count = @as(u32, @intCast(mesh.indices.len)),
+            .index_offset = @intCast(mesh_range.index.offset),
+            .vertex_offset = @intCast(mesh_range.vertex.offset),
+        });
+        try self.ranges.append(a, mesh_range);
+    }
+
+    pub fn appendMeshWithMaterialLookup(
         self: *@This(),
         a: std.mem.Allocator,
         mesh: Mesh3D,
@@ -575,3 +709,12 @@ pub const Meshes2D = struct {
         return alloc_data;
     }
 };
+
+test "meshmaze" {
+    const allocator = std.testing.allocator;
+    var maze = try core.Maze.init(allocator, 10, 10);
+    maze.generate(allocator, 16, 8);
+
+    var mesh = try Mesh3D.fromMaze(allocator, maze, 2.0, 2.0);
+    defer mesh.deinit(allocator);
+}

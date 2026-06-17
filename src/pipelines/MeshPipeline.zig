@@ -13,13 +13,20 @@ const Mesh = mesh_mod.Mesh3D;
 
 pub const AllocatedData = struct {
     pub const CreateData = struct {
-        pub const MeshCreateInfo = struct {
+        const CreateMesh = union(enum) {
             obj: core.obj_loader.ObjFile,
+            info: struct {
+                mesh: Mesh,
+                material_idx: u32,
+            },
+        };
+        pub const MeshCreateInfo = struct {
+            create_mesh: CreateMesh,
             transform: core.math.Mat4 = .IDENTITY,
         };
         camera: core.Camera,
         materials_files: []const core.mtl_loader.MtlFile,
-        mesh_objs: []const MeshCreateInfo,
+        create_meshes: []const MeshCreateInfo,
     };
 
     const MaterialEntry = struct {
@@ -82,22 +89,34 @@ pub const AllocatedData = struct {
         var camera_gpu_data = cd.camera.createGPUData(camera_extent);
         camera_gpu_data.proj.j.y *= -1;
 
-        for (cd.mesh_objs) |obj| {
-            const this_mat_lib =
-                all_uploaded_materials.get(obj.obj.material_library_name) orelse std.debug.panic(
-                    \\ Failed to get material library "{s}"
-                , .{obj.obj.material_library_name});
+        for (cd.create_meshes) |create_mesh| {
+            switch (create_mesh.create_mesh) {
+                .obj => |obj| {
+                    const this_mat_lib =
+                        all_uploaded_materials.get(obj.material_library_name) orelse std.debug.panic(
+                            \\ Failed to get material library "{s}"
+                        , .{obj.material_library_name});
 
-            const mesh = core.mesh.Mesh3D.fromObjFile(allocs.std, obj.obj) catch @panic("failed to load mesh");
-            defer mesh.deinit(allocs.std);
-            meshes.appendMesh(
-                allocs.std,
-                mesh,
-                obj.transform,
-                this_mat_lib.offset,
-                this_mat_lib.alloc_data.indices,
-                obj.obj.objects[0].material_ranges,
-            ) catch @panic("OOM");
+                    const mesh = core.mesh.Mesh3D.fromObjFile(allocs.std, obj) catch @panic("failed to load mesh");
+                    defer mesh.deinit(allocs.std);
+                    meshes.appendMeshWithMaterialLookup(
+                        allocs.std,
+                        mesh,
+                        create_mesh.transform,
+                        this_mat_lib.offset,
+                        this_mat_lib.alloc_data.indices,
+                        obj.objects[0].material_ranges,
+                    ) catch @panic("OOM");
+                },
+                .info => |info| {
+                    meshes.appendMeshWithMaterialIndex(
+                        allocs.std,
+                        info.mesh,
+                        create_mesh.transform,
+                        info.material_idx,
+                    ) catch @panic("OOM");
+                },
+            }
         }
 
         const camera_alloc = vma_usage.AllocatedBuffer.create(
