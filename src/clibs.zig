@@ -30,6 +30,9 @@ pub const sdl = struct {
     pub const Vulkan_GetInstanceExtensions = c.SDL_Vulkan_GetInstanceExtensions;
     pub const Vulkan_GetVkGetInstanceProcAddr = c.SDL_Vulkan_GetVkGetInstanceProcAddr;
 
+    pub const SetWindowRelativeMouseMode = c.SDL_SetWindowRelativeMouseMode;
+    pub const GetWindowRelativeMouseMode = c.SDL_GetWindowRelativeMouseMode;
+
     /// MAKE SURE TO UPDATE EVENTS IN sdl_usage.zig!!!!
     pub const EVENT_FIRST = c.SDL_EVENT_FIRST;
     pub const EVENT_QUIT = c.SDL_EVENT_QUIT;
@@ -204,6 +207,10 @@ pub const sdl = struct {
     pub const K_X = c.SDLK_X;
     pub const K_Y = c.SDLK_Y;
     pub const K_Z = c.SDLK_Z;
+
+    pub const K_ESCAPE = c.SDLK_ESCAPE;
+    pub const K_RSHIFT = c.SDLK_RSHIFT;
+    pub const K_LSHIFT = c.SDLK_LSHIFT;
 };
 
 /// VMA types

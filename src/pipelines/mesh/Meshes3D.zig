@@ -23,7 +23,6 @@ pub const MeshRanges = struct {
 };
 
 pub const MeshHandle = struct {
-    centroid: core.math.Vec4,
     ranges: MeshRanges,
 };
 
@@ -88,14 +87,6 @@ pub fn appendMeshWithMaterialIndex(
         },
     };
 
-    const shitty_slow_centroid = blk: {
-        var centroid: core.math.Vec4 = .ZERO;
-        for (mesh.vertices) |v| {
-            centroid = centroid.add(v.position);
-        }
-        break :blk centroid.mul(1.0 / @as(f32, @floatFromInt(mesh.vertices.len)));
-    };
-
     try self.vertices.appendSlice(a, mesh.vertices);
     try self.indices.appendSlice(a, mesh.indices);
 
@@ -107,7 +98,6 @@ pub fn appendMeshWithMaterialIndex(
         .vertex_offset = @intCast(mesh_range.vertex.offset),
     });
     try self.meshes.append(a, .{
-        .centroid = shitty_slow_centroid,
         .ranges = mesh_range,
     });
 }
@@ -137,14 +127,6 @@ pub fn appendMeshWithMaterialLookup(
         },
     };
 
-    const shitty_slow_centroid = blk: {
-        var centroid: core.math.Vec4 = .ZERO;
-        for (mesh.vertices) |v| {
-            centroid = centroid.add(v.position);
-        }
-        break :blk centroid.mul(1.0 / @as(f32, @floatFromInt(mesh.vertices.len)));
-    };
-
     try self.vertices.appendSlice(a, mesh.vertices);
     try self.indices.appendSlice(a, mesh.indices);
 
@@ -162,7 +144,6 @@ pub fn appendMeshWithMaterialLookup(
         });
     }
     try self.meshes.append(a, .{
-        .centroid = shitty_slow_centroid,
         .ranges = mesh_range,
     });
 }

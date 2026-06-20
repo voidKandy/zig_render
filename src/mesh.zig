@@ -155,8 +155,8 @@ pub const Mesh3D = struct {
             const col: f32 = @floatFromInt(i % maze.width);
             const x0 = col * cell_size;
             const x1 = (col + 1) * cell_size;
-            const z0 = row * cell_size;
-            const z1 = (row + 1) * cell_size;
+            const y0 = row * cell_size;
+            const y1 = (row + 1) * cell_size;
 
             const is_last_row = (i / maze.width) == (maze.height - 1);
             const is_first_col = (i % maze.width) == 0;
@@ -165,10 +165,10 @@ pub const Mesh3D = struct {
             try appendQuad(
                 &vertices,
                 &indices,
-                .{ x0, 0, z0 },
-                .{ x1, 0, z0 },
-                .{ x1, 0, z1 },
-                .{ x0, 0, z1 },
+                .{ x0, y0, 0 },
+                .{ x1, y0, 0 },
+                .{ x1, y1, 0 },
+                .{ x0, y1, 0 },
                 .{ 0, 1, 0 },
             );
 
@@ -176,21 +176,21 @@ pub const Mesh3D = struct {
             if (cell.walls.north) try appendQuad(
                 &vertices,
                 &indices,
-                .{ x1, 0, z0 },
-                .{ x0, 0, z0 },
-                .{ x0, wall_height, z0 },
-                .{ x1, wall_height, z0 },
-                .{ 0, 0, 1 },
+                .{ x1, y0, 0 },
+                .{ x0, y0, 0 },
+                .{ x0, y0, wall_height },
+                .{ x1, y0, wall_height },
+                .{ 0, 1, 0 },
             );
 
             // east wall (x = x1 edge)
             if (cell.walls.east) try appendQuad(
                 &vertices,
                 &indices,
-                .{ x1, 0, z0 },
-                .{ x1, 0, z1 },
-                .{ x1, wall_height, z1 },
-                .{ x1, wall_height, z0 },
+                .{ x1, y0, 0 },
+                .{ x1, y1, 0 },
+                .{ x1, y1, wall_height },
+                .{ x1, y0, wall_height },
                 .{ 1, 0, 0 },
             );
 
@@ -198,21 +198,21 @@ pub const Mesh3D = struct {
             if (cell.walls.south and is_last_row) try appendQuad(
                 &vertices,
                 &indices,
-                .{ x0, 0, z1 },
-                .{ x1, 0, z1 },
-                .{ x1, wall_height, z1 },
-                .{ x0, wall_height, z1 },
-                .{ 0, 0, -1 },
+                .{ x0, y1, 0 },
+                .{ x1, y1, 0 },
+                .{ x1, y1, wall_height },
+                .{ x0, y1, wall_height },
+                .{ 0, -1, 0 },
             );
 
             // west wall — only emit on first col to avoid duplicates
             if (cell.walls.west and is_first_col) try appendQuad(
                 &vertices,
                 &indices,
-                .{ x0, 0, z1 },
-                .{ x0, 0, z0 },
-                .{ x0, wall_height, z0 },
-                .{ x0, wall_height, z1 },
+                .{ x0, y1, 0 },
+                .{ x0, y0, 0 },
+                .{ x0, y0, wall_height },
+                .{ x0, y1, wall_height },
                 .{ -1, 0, 0 },
             );
         }
@@ -283,6 +283,7 @@ pub const Mesh2D = struct {
 test "meshmaze" {
     const allocator = std.testing.allocator;
     var maze = try core.Maze.init(allocator, 10, 10);
+    defer maze.deinit(allocator);
     maze.generate(allocator, 16, 8);
 
     var mesh = try Mesh3D.fromMaze(allocator, maze, 2.0, 2.0);

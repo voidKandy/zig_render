@@ -27,6 +27,10 @@ pub fn update(self: *@This(), event: sdl.Event) void {
             const key = sdl_usage.KeyCode.from(event.key.key) catch return;
             self.keys.unset(@intFromEnum(key));
         },
+        .MouseMotion => {
+            self.mouse_delta.x += event.motion.xrel;
+            self.mouse_delta.y += event.motion.yrel;
+        },
 
         else => {},
     }

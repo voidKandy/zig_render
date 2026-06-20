@@ -186,54 +186,7 @@ pub const SystemsData = struct {
         input: core.Input,
         screen_extent: vk.Extent2D,
     ) void {
-        // Camera system
-        const State = struct {
-            var start: i128 = 0;
-            var yaw: f32 = 0.0;
-        };
-        if (State.start == 0)
-            State.start = std.time.nanoTimestamp();
-
-        const zoom_speed = 0.1;
-        const min_distance = 0.2;
-        const max_distance = 10.0;
-
-        self.camera.distance = std.math.clamp(self.camera.distance - input.scroll * zoom_speed, min_distance, max_distance);
-
-        // this could also be computed with a yaw/pitch if those should be added to camera
-        const dir = self.camera.target.sub(self.camera.eye).normalized();
-        self.camera.eye = self.camera.target.sub(dir.mul(self.camera.distance));
-
-        const now = std.time.nanoTimestamp();
-        const delta_ns = now - State.start;
-        const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
-        State.yaw = time * 1.0;
-
-        const aspect =
-            @as(f32, @floatFromInt(screen_extent.width)) /
-            @as(f32, @floatFromInt(screen_extent.height));
-
-        const eye = core.math.Vec3.make(
-            self.camera.target.x + self.camera.distance * @sin(State.yaw),
-            self.camera.target.y + self.camera.distance * @cos(State.yaw),
-            self.camera.target.z,
-        );
-
-        var ubo = switch (self.camera.mode) {
-            .rotate_around => core.Camera.GPUData{
-                .view = core.math.Mat4.lookAt(eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
-                .proj = core.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
-            },
-            .user_input => core.Camera.GPUData{
-                .view = core.math.Mat4.lookAt(self.camera.eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
-                .proj = core.math.Mat4.perspective(self.camera.fov, aspect, self.camera.near_plane, self.camera.far_plane),
-            },
-        };
-
-        ubo.proj.j.y *= -1;
-
-        const aligned_camera: *core.Camera.GPUData = @ptrCast(@alignCast(alloc_data.camera_uniform.mapped));
-        aligned_camera.* = ubo;
+        core.Camera.control(&self.camera, alloc_data.camera_uniform, input, screen_extent);
 
         // metadata system
         if (self.edited_meshes.items.len > 0) {
@@ -879,9 +832,6 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
 
     if (!shown) return;
 
-    // -------------------------
-    // Camera mode
-    // -------------------------
     const current_pipeline_name = @tagName(self.current_pipeline);
 
     if (imgui.BeginCombo("Selected Pipeline", current_pipeline_name.ptr, 0)) {

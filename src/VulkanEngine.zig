@@ -161,6 +161,12 @@ pub fn run(self: *Self) void {
             self.input.update(event);
         }
 
+        // should be abstracted to a function later
+        if (self.input.isDown(.Escape)) {
+            const is_relative_mouse = sdl.GetWindowRelativeMouseMode(self.window) == true;
+            _ = sdl.SetWindowRelativeMouseMode(self.window, !is_relative_mouse);
+        }
+
         self.mesh_pipeline_systems_data.update(
             self.mesh_pipeline_data,
             self.input,
@@ -176,6 +182,8 @@ pub fn run(self: *Self) void {
 fn initWindow(self: *Self) void {
     checkSdl(sdl.Init(sdl.INIT_VIDEO));
     const window = sdl.CreateWindow("Vulkan", INITIAL_WINDOW_EXTENT.width, INITIAL_WINDOW_EXTENT.height, sdl.WINDOW_VULKAN | sdl.WINDOW_RESIZABLE) orelse @panic("Failed to create SDL window");
+    _ = sdl.SetWindowRelativeMouseMode(window, true);
+
     self.window = window;
 }
 
@@ -544,6 +552,10 @@ fn drawImgui(self: *Self) void {
     c.imgui.impl_vulkan.NewFrame();
     c.imgui.impl_sdl3.NewFrame();
     c.imgui.NewFrame();
+
+    const is_relative_mouse = c.sdl.GetWindowRelativeMouseMode(self.window) == true;
+    c.imgui.Text(if (is_relative_mouse) "Mouse: Relative" else "Mouse: Absolute");
+    c.imgui.Text("Press escape to toggle mouse mode");
 
     self.background_pipeline.drawImgui();
     self.hud_pipeline.drawImgui(self.hud_descriptor_sets.ui);
