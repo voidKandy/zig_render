@@ -47,16 +47,16 @@ pub const Object = struct {
     }
 };
 
-pub fn readObjDirectory(a: std.mem.Allocator, dir_path: []const u8) ![]ObjFile {
-    var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+pub fn readObjDirectory(a: std.mem.Allocator, io: std.Io, dir_path: []const u8) ![]ObjFile {
+    var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
     var iter = try dir.walk(a);
     defer iter.deinit();
     var obj_files = try std.ArrayList(ObjFile).initCapacity(a, 3);
 
-    while (try iter.next()) |entry| {
+    while (try iter.next(io)) |entry| {
         const path = std.fmt.allocPrint(a, "{s}/{s}", .{ dir_path, entry.basename }) catch @panic("failed to alloc path");
         defer a.free(path);
-        const obj = try parseFile(a, path);
+        const obj = try parseFile(a, io, path);
         try obj_files.append(a, obj);
     }
 
@@ -102,20 +102,20 @@ const ParseContext = struct {
     line_content: []const u8,
     filename: []const u8,
 
-    objects: std.ArrayList(Object) = .{},
+    objects: std.ArrayList(Object) = .empty,
 
     material_library_name: []const u8 = "",
     current_material_name: []const u8 = "",
 
-    material_ranges: std.ArrayList(MaterialInfo) = .{},
+    material_ranges: std.ArrayList(MaterialInfo) = .empty,
     current_range_first_index: u32 = 0,
 
     object_name: []const u8 = "",
-    vertices: std.ArrayList([3]f32) = .{},
-    normals: std.ArrayList([3]f32) = .{},
-    uvs: std.ArrayList([2]f32) = .{},
-    face_vertices: std.ArrayList(u32) = .{},
-    indices: std.ArrayList(Index) = .{},
+    vertices: std.ArrayList([3]f32) = .empty,
+    normals: std.ArrayList([3]f32) = .empty,
+    uvs: std.ArrayList([2]f32) = .empty,
+    face_vertices: std.ArrayList(u32) = .empty,
+    indices: std.ArrayList(Index) = .empty,
     face_parsing_state: FaceParsingState = .undefined,
 
     fn deinit(self: *ParseContext) void {
@@ -134,11 +134,9 @@ const FaceParsingState = enum {
     no_uvs,
 };
 
-pub fn parseFile(a: std.mem.Allocator, filepath: []const u8) !ObjFile {
-    const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
-    defer file.close();
-
-    const file_size = try file.getEndPos();
+pub fn parseFile(a: std.mem.Allocator, io: std.Io, filepath: []const u8) !ObjFile {
+    const file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
+    defer file.close(io);
 
     var arena_state = std.heap.ArenaAllocator.init(a);
     defer arena_state.deinit();
@@ -156,8 +154,11 @@ pub fn parseFile(a: std.mem.Allocator, filepath: []const u8) !ObjFile {
     try ctx.normals.append(ctx.allocator, .{ 0, 0, 0 });
     try ctx.uvs.append(ctx.allocator, .{ 0, 0 });
 
-    const file_content = try file.readToEndAlloc(ctx.temp_alloc, file_size);
-    defer ctx.temp_alloc.free(file_content);
+    var file_reader = file.reader(io, &.{});
+    // const file_size = try file_reader.getSize();
+
+    const file_content = try file_reader.interface.allocRemaining(a, .unlimited);
+    defer a.free(file_content);
 
     try parseContent(&ctx, file_content);
 

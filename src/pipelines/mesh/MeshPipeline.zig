@@ -64,7 +64,7 @@ pub const AllocatedData = struct {
         SystemsData,
     } {
         var all_uploaded_materials = std.StringHashMap(MaterialEntry).init(allocs.std);
-        var material_names = std.ArrayList([:0]u8){};
+        var material_names = std.ArrayList([:0]u8).empty;
 
         var current_mtl_offset: u32 = 0;
         for (cd.materials_files) |mtl| {
@@ -167,7 +167,7 @@ pub const SystemsData = struct {
     meshes: []Meshes3D.MeshHandle,
     mesh_scale_factors: []f32,
     mesh_metadatas: []Meshes3D.MetaData,
-    edited_meshes: std.ArrayListUnmanaged(usize) = .{},
+    edited_meshes: std.ArrayListUnmanaged(usize) = .empty,
     material_names: [][:0]u8,
 
     pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators) void {
@@ -182,11 +182,12 @@ pub const SystemsData = struct {
 
     pub fn update(
         self: *@This(),
+        io: std.Io,
         alloc_data: AllocatedData,
         input: core.Input,
         screen_extent: vk.Extent2D,
     ) void {
-        core.Camera.control(&self.camera, alloc_data.camera_uniform, input, screen_extent);
+        self.camera.control(io, alloc_data.camera_uniform, input, screen_extent);
 
         // metadata system
         if (self.edited_meshes.items.len > 0) {

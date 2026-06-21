@@ -66,20 +66,20 @@ const ParseError = error{
     MissingMaterialName,
 };
 
-pub fn parseFile(a: Allocator, filepath: []const u8) !MtlFile {
-    const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
-    defer file.close();
+pub fn parseFile(a: Allocator, io: std.Io, filepath: []const u8) !MtlFile {
+    const file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
+    defer file.close(io);
 
     const last_slash_idx = if (std.mem.indexOfScalar(u8, filepath, '/')) |i| i + 1 else 0;
     const name = try a.dupe(u8, filepath[last_slash_idx..]);
-    const file_size = try file.getEndPos();
 
     var arena_state = std.heap.ArenaAllocator.init(a);
     defer arena_state.deinit();
 
     var ctx = try ParseContext.init(a, arena_state.allocator(), filepath);
 
-    const file_content = try file.readToEndAlloc(ctx.temp_alloc, file_size);
+    var file_reader = file.reader(io, &.{});
+    const file_content = try file_reader.interface.allocRemaining(a, .limited(1024));
 
     try parseContent(&ctx, file_content);
 

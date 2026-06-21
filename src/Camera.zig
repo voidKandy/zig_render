@@ -78,6 +78,7 @@ pub fn createGPUData(self: @This(), extent: vk.Extent2D) GPUData {
 
 pub fn control(
     self: *@This(),
+    io: std.Io,
     camera_uniform: core.vma_usage.MappedBuffer,
     input: core.Input,
     screen_extent: vk.Extent2D,
@@ -88,7 +89,7 @@ pub fn control(
         var last_time: i128 = 0;
     };
     if (State.start == 0) {
-        State.start = std.time.nanoTimestamp();
+        State.start = std.Io.Timestamp.now(io, .real).toNanoseconds();
         State.last_time = State.start;
     }
 
@@ -102,7 +103,7 @@ pub fn control(
         self.eye = self.target.sub(dir.mul(self.distance));
     }
 
-    const now = std.time.nanoTimestamp();
+    const now = std.Io.Timestamp.now(io, .real).toNanoseconds();
     const dt: f32 = @as(f32, @floatFromInt(now - State.last_time)) / @as(f32, @floatFromInt(std.time.ns_per_s));
     State.last_time = now;
 

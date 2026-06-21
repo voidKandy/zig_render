@@ -271,7 +271,7 @@ pub fn initFromMaterialFile(
     a: std.mem.Allocator,
     mtl: core.mtl_loader.MtlFile,
 ) anyerror!@This() {
-    var materials = std.ArrayList(u8){};
+    var materials = std.ArrayList(u8).empty;
     var metadatas = std.StringHashMapUnmanaged(Metadata){};
 
     for (mtl.materials) |mat| {

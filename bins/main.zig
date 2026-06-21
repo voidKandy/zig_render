@@ -20,12 +20,9 @@ pub const std_options = std.Options{
     .log_level = .debug,
 };
 
-pub fn main() void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer if (gpa.deinit() == .leak) {
-        @panic("Leaked memory");
-    };
-    const a = gpa.allocator();
+pub fn main(init: std.process.Init) void {
+    var a = init.arena.allocator();
+
     var api_version: u32 = undefined;
     _ = vk.EnumerateInstanceVersion(&api_version);
     std.debug.print(
@@ -36,24 +33,25 @@ pub fn main() void {
             vk.API_VERSION_PATCH(api_version),
         },
     );
-    var cwd_buff: [1024]u8 = undefined;
-    const cwd = std.process.getCwd(cwd_buff[0..]) catch @panic("cwd_buff too small");
-    std.log.info("Running from: {s}", .{cwd});
+    // var cwd_buff: [1024]u8 = undefined;
+    // const cwd = std.process.getCwd(cwd_buff[0..]) catch @panic("cwd_buff too small");
+    // const cwd = std.Io.Dir.cwd();
+    // std.log.info("Running from: {s}", .{cwd});
 
     const camera = core.Camera{};
-    var global_mat = core.mtl_loader.parseFile(a, "assets/globals.mtl") catch @panic("failed to load materials file");
+    var global_mat = core.mtl_loader.parseFile(a, init.io, "assets/globals.mtl") catch @panic("failed to load materials file");
     defer global_mat.deinit();
-    var debug_mat = core.mtl_loader.parseFile(a, "assets/debug.mtl") catch @panic("failed to load materials file");
+    var debug_mat = core.mtl_loader.parseFile(a, init.io, "assets/debug.mtl") catch @panic("failed to load materials file");
     defer debug_mat.deinit();
 
-    var hud_mat = core.mtl_loader.parseFile(a, "assets/hud.mtl") catch @panic("failed to load materials file");
+    var hud_mat = core.mtl_loader.parseFile(a, init.io, "assets/hud.mtl") catch @panic("failed to load materials file");
     defer hud_mat.deinit();
 
     const all_objects =
         [_][]core.obj_loader.ObjFile{
-            core.obj_loader.readObjDirectory(a, "assets/meshes") catch @panic("failed to read objects"),
-                // core.obj_loader.readObjDirectory(a, "assets/widgets") catch @panic("failed to read objects"),
-                // core.obj_loader.readObjDirectory(a, "assets/primitives") catch @panic("failed to read objects"),
+            core.obj_loader.readObjDirectory(a, init.io, "assets/meshes") catch @panic("failed to read objects"),
+            // core.obj_loader.readObjDirectory(a, "assets/widgets") catch @panic("failed to read objects"),
+            // core.obj_loader.readObjDirectory(a, "assets/primitives") catch @panic("failed to read objects"),
         };
 
     defer {
@@ -91,6 +89,7 @@ pub fn main() void {
 
     var engine = core.VulkanEngine.init(
         a,
+        init.io,
         null,
     );
     defer engine.deinit();

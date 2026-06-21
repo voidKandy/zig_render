@@ -3,19 +3,46 @@ const std = @import("std");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    var threaded: std.Io.Threaded = .init(b.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const env_map = std.process.Environ.Map.init(b.allocator);
+    // const env_map = try std.process.getEnvMap(b.allocator);
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    translate_c.linkSystemLibrary("SDL3", .{});
+    translate_c.linkSystemLibrary("vulkan", .{});
+    translate_c.addIncludePath(b.path("libs/vma"));
+    translate_c.addIncludePath(b.path("libs/stb"));
+    translate_c.addIncludePath(b.path("libs/imgui"));
+    // translate_c.linkSystemLibrary("vk_mem_alloc", .{});
+    // translate_c.linkSystemLibrary("stb_image", .{});
+    // translate_c.linkSystemLibrary("cimgui", .{});
+
+    const c_module = translate_c.createModule();
+
     const core_lib = b.addModule("core", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "c",
+                .module = c_module,
+            },
+        },
     });
-
-    core_lib.linkSystemLibrary("SDL3", .{});
-    core_lib.linkSystemLibrary("vulkan", .{});
-    const env_map = try std.process.getEnvMap(b.allocator);
     if (env_map.get("VK_SDK_PATH")) |path| {
         core_lib.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/lib", .{path}) catch @panic("OOM") });
         core_lib.addIncludePath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/include", .{path}) catch @panic("OOM") });
     }
+
+    core_lib.linkSystemLibrary("SDL3", .{});
+    core_lib.linkSystemLibrary("vulkan", .{});
     core_lib.addCSourceFile(.{ .file = b.path("src/vk_mem_alloc.cpp"), .flags = &.{""} });
     core_lib.addIncludePath(b.path("libs/vma/"));
     core_lib.addIncludePath(b.path("libs/stb/"));
@@ -23,7 +50,7 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/tinyobjloader/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/stb_image.c"), .flags = &.{""} });
 
-    addAllShaders(b, core_lib);
+    addAllShaders(b, io, core_lib);
 
     const imgui_lib = b.addLibrary(.{
         .linkage = .static,
@@ -37,7 +64,7 @@ pub fn build(b: *std.Build) !void {
     imgui_lib.root_module.addIncludePath(b.path("libs/imgui/"));
     imgui_lib.root_module.addIncludePath(b.path("libs/sdl3/include/"));
     imgui_lib.root_module.linkSystemLibrary("vulkan", .{});
-    imgui_lib.linkLibCpp();
+    imgui_lib.root_module.link_libcpp = true;
     imgui_lib.root_module.addCSourceFiles(.{
         .files = &.{
             "libs/imgui/imgui.cpp",
@@ -65,24 +92,31 @@ pub fn build(b: *std.Build) !void {
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
-    buildBinaries(b, target, optimize, &[_]struct { []const u8, *std.Build.Module }{
-        .{ "core", core_lib },
-    });
+    buildBinaries(
+        b,
+        io,
+        target,
+        optimize,
+        &[_]struct { []const u8, *std.Build.Module }{
+            .{ "core", core_lib },
+        },
+    );
 }
 
 const BINARIES_PATH = "bins";
 fn buildBinaries(
     b: *std.Build,
+    io: std.Io,
     target: std.Build.ResolvedTarget,
     opt: std.builtin.OptimizeMode,
     imports: []const struct { []const u8, *std.Build.Module },
 ) void {
-    const dir = std.fs.cwd().openDir(BINARIES_PATH, .{}) catch @panic("Failed to get directory");
+    const dir = std.Io.Dir.cwd().openDir(io, BINARIES_PATH, .{}) catch @panic("Failed to get directory");
     var buffer: [256]u8 = undefined;
     @memset(&buffer, 0);
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     var iter = dir.iterate();
-    while (iter.next() catch |e| std.debug.panic("Dir iterator failure: {}\n", .{e})) |f| {
+    while (iter.next(io) catch |e| std.debug.panic("Dir iterator failure: {}\n", .{e})) |f| {
         const name = name: {
             var split = std.mem.splitBackwardsScalar(u8, f.name, '.');
             _ = split.first();
@@ -98,8 +132,8 @@ fn buildBinaries(
                 .optimize = opt,
             }),
         });
-
-        exe.linkLibCpp();
+        exe.root_module.link_libcpp = true;
+        // exe.linkLibCpp();
         for (imports) |import|
             exe.root_module.addImport(import.@"0", import.@"1");
 
@@ -118,15 +152,16 @@ const SHADERS_PATH = "shaders";
 
 fn addAllShaders(
     b: *std.Build,
+    io: std.Io,
     lib: *std.Build.Module,
 ) void {
     const shaders_dir = if (@hasDecl(@TypeOf(b.build_root.handle), "openIterableDir"))
-        b.build_root.handle.openIterableDir(SHADERS_PATH, .{}) catch @panic("Failed to open shaders directory")
+        b.build_root.handle.openIterableDir(io, SHADERS_PATH, .{}) catch @panic("Failed to open shaders directory")
     else
-        b.build_root.handle.openDir(SHADERS_PATH, .{ .iterate = true }) catch @panic("Failed to open shaders directory");
+        b.build_root.handle.openDir(io, SHADERS_PATH, .{ .iterate = true }) catch @panic("Failed to open shaders directory");
 
     var file_it = shaders_dir.iterate();
-    while (file_it.next() catch @panic("Failed to iterate shader directory")) |entry| {
+    while (file_it.next(io) catch @panic("Failed to iterate shader directory")) |entry| {
         if (entry.kind == .file) {
             if (entry.name[0] == '.') continue;
             const ext = std.fs.path.extension(entry.name);

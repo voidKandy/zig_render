@@ -466,17 +466,17 @@ pub fn Ecs(
         }
 
         /// Returns the signature associated with the given components
-        pub inline fn signatureComponents(signature: Signature) []ComponentTag {
-            var all: [N_COMPONENTS]ComponentTag = undefined;
-            var amt: usize = 0;
-            for (0..Signature.bit_length, &all) |i, *tag| {
-                if (signature.isSet(i)) {
-                    tag.* = @intFromEnum(i);
-                    amt += 1;
-                }
-            }
-            return &all;
-        }
+        // pub inline fn signatureComponents(signature: Signature) []ComponentTag {
+        //     var all: [N_COMPONENTS]ComponentTag = undefined;
+        //     var amt: usize = 0;
+        //     for (0..Signature.bit_length, &all) |i, *tag| {
+        //         if (signature.isSet(i)) {
+        //             tag.* = @intFromEnum(i);
+        //             amt += 1;
+        //         }
+        //     }
+        //     return &all;
+        // }
         pub inline fn componentType(variant: ComponentTag) type {
             const idx = @intFromEnum(variant);
             return @typeInfo(Options.components).@"struct".fields[idx].type;
@@ -597,41 +597,61 @@ pub fn Ecs(
 
         pub const QueryResult = union(QueryType) { id: ThisEcs.EntityHandle, query: []ThisEcs.EntityHandle };
 
-        const meta_structure: struct { [N_COMPONENTS]Type.EnumField, [N_COMPONENTS]Type.StructField, [N_COMPONENTS]type } = blk: {
-            var en_fields: [N_COMPONENTS]Type.EnumField = undefined;
-            var st_fields: [N_COMPONENTS]Type.StructField = undefined;
-            var types: [N_COMPONENTS]type = undefined;
-
-            for (0.., @typeInfo(Options.components).@"struct".fields, &types, &en_fields, &st_fields) |i, field, *t, *enfld, *stfld| {
-                enfld.* = Type.EnumField{
-                    .name = field.name,
-                    .value = i,
-                };
-                stfld.* = Type.StructField{
-                    .name = field.name,
-                    .type = field.type,
-                    .default_value_ptr = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(field.type),
-                };
-                t.* = field.type;
+        const en_info = blk: {
+            var fnms: [N_COMPONENTS][]const u8 = undefined;
+            var fvls: [N_COMPONENTS]u32 = undefined;
+            for (0.., @typeInfo(Options.components).@"struct".fields, &fnms, &fvls) |i, field, *fnm, *fvl| {
+                fnm.* = field.name;
+                fvl.* = i;
             }
-            break :blk .{ en_fields, st_fields, types };
+            break :blk .{ fnms, fvls };
         };
 
+        const strct_info = blk: {
+            var fnms: [N_COMPONENTS][]const u8 = undefined;
+            var ftyps: [N_COMPONENTS]Type = undefined;
+            var fattrs: [N_COMPONENTS]std.builtin.Type.StructField.Attributes = undefined;
+            for (@typeInfo(Options.components).@"struct".fields, &fnms, &ftyps, &fattrs) |field, *fnm, *ftp, *attr| {
+                fnm.* = field.name;
+                ftp.* = field.type;
+                attr.* = .{};
+            }
+            break :blk .{ fnms, ftyps, fattrs };
+        };
+        // const meta_structure: struct { [N_COMPONENTS]Type.EnumField, [N_COMPONENTS]Type.StructField, [N_COMPONENTS]type } = blk: {
+        //     var en_fields: [N_COMPONENTS]Type.EnumField = undefined;
+        //     var st_fields: [N_COMPONENTS]Type.StructField = undefined;
+        //     var types: [N_COMPONENTS]type = undefined;
+
+        //     for (0.., @typeInfo(Options.components).@"struct".fields, &types, &en_fields, &st_fields) |i, field, *t, *enfld, *stfld| {
+        //         enfld.* = Type.EnumField{
+        //             .name = field.name,
+        //             .value = i,
+        //         };
+        //         stfld.* = Type.StructField{
+        //             .name = field.name,
+        //             .type = field.type,
+        //             .default_value_ptr = null,
+        //             .is_comptime = false,
+        //             .alignment = @alignOf(field.type),
+        //         };
+        //         t.* = field.type;
+        //     }
+        //     break :blk .{ en_fields, st_fields, types };
+        // };
+
         pub const ComponentTag =
-            @Type(Type{ .@"enum" = .{
-                .tag_type = u32,
-                .fields = &meta_structure.@"0",
-                .decls = &[_]Type.Declaration{},
-                .is_exhaustive = true,
-            } });
+            @Enum(u32, .exhaustive, en_info.@"0", en_info.@"1");
+        // @Enum(comptime TagInt: type, comptime mode: Type.Enum.Mode, comptime field_names: []const []const u8, comptime field_values: *const [field_names.len]TagInt)
+        // @Type(Type{ .@"enum" = .{
+        //     .tag_type = u32,
+        //     .fields = &meta_structure.@"0",
+        //     .decls = &[_]Type.Declaration{},
+        //     .is_exhaustive = true,
+        // } });
         pub const ComponentPlexe =
-            @Type(Type{ .@"struct" = .{
-                .fields = &meta_structure.@"1",
-                .decls = &[_]Type.Declaration{},
-            } });
-        pub const TypeArr = meta_structure.@"2";
+            @Struct(.auto, null, strct_info.@"0", strct_info.@"1", strct_info.@"2");
+        pub const TypeArr = strct_info.@"1";
 
         const ComponentsManager = struct {
             arrays: [N_COMPONENTS][Options.max_entities]?*anyopaque,

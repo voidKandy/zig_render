@@ -288,14 +288,14 @@ pub const Instance = struct {
         const extension_props = try arena.alloc(vk.ExtensionProperties, extension_count);
         try checkVk(vk.EnumerateInstanceExtensionProperties(null, &extension_count, extension_props.ptr));
 
-        var layers = std.ArrayListUnmanaged([*c]const u8){};
+        var layers = std.ArrayListUnmanaged([*c]const u8).empty;
         if (debug) {
             const validation_layer_name: [*c]const u8 = "VK_LAYER_KHRONOS_validation";
             try layers.append(arena, validation_layer_name);
         }
 
         // Check if the required extensions are supported
-        var extensions = std.ArrayListUnmanaged([*c]const u8){};
+        var extensions = std.ArrayListUnmanaged([*c]const u8).empty;
 
         const ExtensionFinder = struct {
             fn find(name: [*c]const u8, props: []vk.ExtensionProperties) bool {
@@ -694,7 +694,7 @@ pub const LogicalDevice = struct {
         defer arena_state.deinit();
         const arena = arena_state.allocator();
 
-        var queue_create_infos = std.ArrayListUnmanaged(vk.DeviceQueueCreateInfo){};
+        var queue_create_infos = std.ArrayListUnmanaged(vk.DeviceQueueCreateInfo).empty;
         const queue_priorities: f32 = 1.0;
 
         var queue_family_set = std.AutoArrayHashMapUnmanaged(u32, void){};

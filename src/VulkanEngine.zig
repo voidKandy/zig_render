@@ -29,6 +29,7 @@ pub const Allocators = struct {
 
 allocs: Allocators,
 alloc_cbs: ?*vk.AllocationCallbacks,
+io: std.Io,
 
 input: Input = .{},
 window: *sdl.Window = undefined,
@@ -69,11 +70,13 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
 pub fn init(
     a: std.mem.Allocator,
+    io: std.Io,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     var self = @This(){
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
+        .io = io,
     };
 
     self.initWindow();
@@ -168,6 +171,7 @@ pub fn run(self: *Self) void {
         }
 
         self.mesh_pipeline_systems_data.update(
+            self.io,
             self.mesh_pipeline_data,
             self.input,
             self.swapchain.extent,
