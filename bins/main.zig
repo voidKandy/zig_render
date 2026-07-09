@@ -120,7 +120,18 @@ pub fn main(init: std.process.Init) void {
         margin,
     );
 
-    const maze_mesh3D = core.mesh.Mesh3D.fromMaze(a, maze, 2.0, 2.0) catch @panic("failed to create 3D maze mesh");
+    const maze_mesh_options = core.Maze.MeshOptions{
+        .cell_size = 2.0,
+        .wall_height = 2.0,
+        .margin = .{
+            .x = 0.5,
+            .y = 0.5,
+            .z = 0.0,
+        },
+    };
+
+    const maze_mesh3D = maze_mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
+
     defer maze_mesh3D.deinit(a);
 
     meshes_objects[amt_meshes_objects] = .{

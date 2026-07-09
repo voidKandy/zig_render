@@ -1,3 +1,8 @@
+// It would be more efficient to implement
+// this shader as a fragment shader
+// however, this shader and the way it is used in the
+// engine is a good example of using a fragment shader
+
 #version 450
 #extension GL_EXT_debug_printf : enable
 // run export DEBUG_PRINTF_TO_STDOUT=true to see

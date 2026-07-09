@@ -137,6 +137,210 @@ pub fn generate(self: *@This(), a: std.mem.Allocator, threshold: usize, seed: u6
     }
 }
 
+const mesh = @import("root.zig").mesh;
+const math = @import("root.zig").math;
+pub const MeshOptions = struct {
+    cell_size: f32,
+    wall_height: f32,
+    wall_thickness: math.Vec2 = .{
+        .x = 0.5,
+        .y = 0.5,
+    },
+    margin: math.Vec3 = .ZERO,
+
+    fn appendQuad(
+        a: std.mem.Allocator,
+        vertices: *std.ArrayList(mesh.Vertex3D),
+        indices: *std.ArrayList(u32),
+        p0: [3]f32,
+        p1: [3]f32,
+        p2: [3]f32,
+        p3: [3]f32,
+        normal: [3]f32,
+    ) !void {
+        const base: u32 = @intCast(vertices.items.len);
+        const norm = math.Vec4.make(normal[0], normal[1], normal[2], 0);
+        try vertices.appendSlice(a, &.{
+            .{
+                .position = math.Vec4.make(p0[0], p0[1], p0[2], 1),
+                .normal = norm,
+                .color = math.Vec4.ZERO,
+                .uv = math.Vec2.make(0, 0),
+            },
+            .{
+                .position = math.Vec4.make(p1[0], p1[1], p1[2], 1),
+                .normal = norm,
+                .color = math.Vec4.ZERO,
+                .uv = math.Vec2.make(1, 0),
+            },
+            .{
+                .position = math.Vec4.make(p2[0], p2[1], p2[2], 1),
+                .normal = norm,
+                .color = math.Vec4.ZERO,
+                .uv = math.Vec2.make(1, 1),
+            },
+            .{
+                .position = math.Vec4.make(p3[0], p3[1], p3[2], 1),
+                .normal = norm,
+                .color = math.Vec4.ZERO,
+                .uv = math.Vec2.make(0, 1),
+            },
+        });
+        try indices.appendSlice(a, &.{ base, base + 1, base + 2, base, base + 2, base + 3 });
+    }
+
+    fn point(
+        self: @This(),
+        x: f32,
+        y: f32,
+        z: f32,
+        row: f32,
+        col: f32,
+    ) [3]f32 {
+        return .{
+            x + self.margin.x * col,
+            y + self.margin.y * row,
+            z - self.margin.z,
+        };
+    }
+
+    fn appendBox(
+        a: std.mem.Allocator,
+        vertices: *std.ArrayList(mesh.Vertex3D),
+        indices: *std.ArrayList(u32),
+        min: [3]f32,
+        max: [3]f32,
+    ) !void {
+        // -y
+        try appendQuad(
+            a,
+            vertices,
+            indices,
+            .{ min[0], min[1], min[2] },
+            .{ max[0], min[1], min[2] },
+            .{ max[0], min[1], max[2] },
+            .{ min[0], min[1], max[2] },
+            .{ 0, -1, 0 },
+        );
+        // +y
+        try appendQuad(
+            a,
+            vertices,
+            indices,
+            .{ max[0], max[1], min[2] },
+            .{ min[0], max[1], min[2] },
+            .{ min[0], max[1], max[2] },
+            .{ max[0], max[1], max[2] },
+            .{ 0, 1, 0 },
+        );
+        // -x
+        try appendQuad(
+            a,
+            vertices,
+            indices,
+            .{ min[0], max[1], min[2] },
+            .{ min[0], min[1], min[2] },
+            .{ min[0], min[1], max[2] },
+            .{ min[0], max[1], max[2] },
+            .{ -1, 0, 0 },
+        );
+        // +x
+        try appendQuad(
+            a,
+            vertices,
+            indices,
+            .{ max[0], min[1], min[2] },
+            .{ max[0], max[1], min[2] },
+            .{ max[0], max[1], max[2] },
+            .{ max[0], min[1], max[2] },
+            .{ 1, 0, 0 },
+        );
+        // top
+        try appendQuad(
+            a,
+            vertices,
+            indices,
+            .{ min[0], min[1], max[2] },
+            .{ max[0], min[1], max[2] },
+            .{ max[0], max[1], max[2] },
+            .{ min[0], max[1], max[2] },
+            .{ 0, 0, 1 },
+        );
+        // bottom omitted — it sits on the floor, no need to render it
+    }
+
+    pub fn createMesh(
+        self: @This(),
+        a: std.mem.Allocator,
+        maze: Maze,
+    ) !mesh.Mesh3D {
+        var vertices = try std.ArrayList(mesh.Vertex3D).initCapacity(a, 256);
+        var indices = try std.ArrayList(u32).initCapacity(a, 256);
+        errdefer vertices.deinit(a);
+
+        const th = self.wall_thickness;
+        errdefer indices.deinit(a);
+
+        for (maze.cells, 0..) |cell, i| {
+            const row: f32 = @floatFromInt(i / maze.width);
+            const col: f32 = @floatFromInt(i % maze.width);
+            const x0 = col * self.cell_size;
+            const x1 = (col + 1) * self.cell_size;
+            const y0 = row * self.cell_size;
+            const y1 = (row + 1) * self.cell_size;
+
+            // floor
+            try appendQuad(
+                a,
+                &vertices,
+                &indices,
+                .{ x0, y0, 0 },
+                .{ x1, y0, 0 },
+                .{ x1, y1, 0 },
+                .{ x0, y1, 0 },
+                .{ 0, 0, 1 },
+            );
+
+            if (cell.walls.north) try appendBox(
+                a,
+                &vertices,
+                &indices,
+                .{ x0 - th.x / 2, y0 - th.y / 2, 0 },
+                .{ x1 + th.x / 2, y0 + th.y / 2, self.wall_height },
+            );
+
+            if (cell.walls.south) try appendBox(
+                a,
+                &vertices,
+                &indices,
+                .{ x0 - th.x / 2, y1 - th.y / 2, 0 },
+                .{ x1 + th.x / 2, y1 + th.y / 2, self.wall_height },
+            );
+
+            if (cell.walls.east) try appendBox(
+                a,
+                &vertices,
+                &indices,
+                .{ x1 - th.x / 2, y0 - th.y / 2, 0 },
+                .{ x1 + th.x / 2, y1 + th.y / 2, self.wall_height },
+            );
+
+            if (cell.walls.west) try appendBox(
+                a,
+                &vertices,
+                &indices,
+                .{ x0 - th.x / 2, y0 - th.y / 2, 0 },
+                .{ x0 + th.x / 2, y1 + th.y / 2, self.wall_height },
+            );
+        }
+
+        return .{
+            .vertices = try vertices.toOwnedSlice(a),
+            .indices = try indices.toOwnedSlice(a),
+        };
+    }
+};
+
 pub const GenerationContext = struct {
     threshold: usize,
     seed: u64,
