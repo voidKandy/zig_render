@@ -42,6 +42,8 @@ upload_context: vki.UploadContext = .{},
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
+global_data: core.GlobalAllocatedData = undefined,
+
 background_pipeline: BackgroundPipeline = undefined,
 background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
 background_descriptor_set: vk.DescriptorSet = undefined,
@@ -50,8 +52,7 @@ background_pipeline_description: BackgroundPipeline.Description = undefined,
 mesh_pipeline: MeshPipeline = undefined,
 mesh_pipeline_data: MeshPipeline.AllocatedData = undefined,
 mesh_pipeline_systems_data: MeshPipeline.SystemsData = undefined,
-/// BAD
-/// mimic the sinlge DescriptorSet type that hud pipeline uses
+
 mesh_descriptor_set: vk.DescriptorSet = undefined,
 mesh_texture_set: vk.DescriptorSet = undefined,
 mesh_pipeline_description: MeshPipeline.Description = undefined,
@@ -81,6 +82,8 @@ pub fn init(
 
     self.initWindow();
     self.initVulkan();
+
+    self.initGlobalData();
     return self;
 }
 
@@ -97,6 +100,8 @@ pub fn deinit(self: *Self) void {
 
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
     log.debug("destroyed imgui descriptor pool", .{});
+
+    self.global_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
 
     self.mesh_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed mesh pipeline", .{});
@@ -170,11 +175,15 @@ pub fn run(self: *Self) void {
             _ = sdl.SetWindowRelativeMouseMode(self.window, !is_relative_mouse);
         }
 
-        self.mesh_pipeline_systems_data.update(
+        self.global_data.camera.control(
             self.io,
-            self.mesh_pipeline_data,
+            self.global_data.camera_alloc_data.uniform,
             self.input,
             self.swapchain.extent,
+        );
+
+        self.mesh_pipeline_systems_data.update(
+            self.mesh_pipeline_data,
         );
         self.drawImgui();
         self.drawFrame();
@@ -290,12 +299,26 @@ fn initVulkan(self: *Self) void {
     ) catch @panic("failed to create framebuffers");
 }
 
-pub fn initData(
+fn initGlobalData(
+    self: *Self,
+) void {
+    self.global_data = core.GlobalAllocatedData.initAndCreateData(self.allocs, .{
+        .camera = .{},
+        .swapchain_extent = self.swapchain.extent,
+    }, self.logical_device.handle, self.alloc_cbs);
+
+    self.global_data.createLayout(self.logical_device.handle, self.alloc_cbs);
+    self.global_data.allocateSets(self.logical_device.handle);
+    self.global_data.updateSets(self.logical_device.handle);
+}
+
+pub fn initPipelines(
     self: *Self,
     mesh_pipeline_cd: MeshPipeline.AllocatedData.CreateData,
     hud_pipeline_cd: HudPipelines.AllocatedData.CreateData,
 ) void {
     self.initImgui();
+
     self.background_pipeline_data = BackgroundPipeline.AllocatedData.create(
         self.allocs,
         self.logical_device.handle,
@@ -314,7 +337,6 @@ pub fn initData(
         &self.upload_context,
         self.logical_device,
         self.physical_device,
-        self.swapchain.extent,
         mesh_pipeline_cd,
         self.alloc_cbs,
     ) catch @panic("OOM");
@@ -411,6 +433,7 @@ fn initMeshPipeline(self: *Self) void {
 
     self.mesh_pipeline = MeshPipeline.init(
         .{
+            .global_descriptor_set_layout = self.global_data.layout,
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
@@ -561,6 +584,7 @@ fn drawImgui(self: *Self) void {
     c.imgui.Text(if (is_relative_mouse) "Mouse: Relative" else "Mouse: Absolute");
     c.imgui.Text("Press escape to toggle mouse mode");
 
+    self.global_data.drawImgui();
     self.background_pipeline.drawImgui();
     self.hud_pipeline.drawImgui(self.hud_descriptor_sets.ui);
     self.mesh_pipeline.drawImgui(self.allocs.std, &self.mesh_pipeline_systems_data);
@@ -716,6 +740,7 @@ fn recordCommandBuffer(
     self.mesh_pipeline.bind(frame.main_command_buffer);
     self.mesh_pipeline.recordCommands(
         self.mesh_pipeline_systems_data,
+        self.global_data.set,
         self.mesh_descriptor_set,
         self.mesh_texture_set,
         frame.main_command_buffer,

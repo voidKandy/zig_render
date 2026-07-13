@@ -38,7 +38,6 @@ pub fn main(init: std.process.Init) void {
     // const cwd = std.Io.Dir.cwd();
     // std.log.info("Running from: {s}", .{cwd});
 
-    const camera = core.Camera{};
     var global_mat = core.mtl_loader.parseFile(a, init.io, "assets/globals.mtl") catch @panic("failed to load materials file");
     defer global_mat.deinit();
     var debug_mat = core.mtl_loader.parseFile(a, init.io, "assets/debug.mtl") catch @panic("failed to load materials file");
@@ -144,7 +143,6 @@ pub fn main(init: std.process.Init) void {
     };
     const mesh_pipeline_create_data: core.MeshPipeline.AllocatedData.CreateData =
         .{
-            .camera = camera,
             .materials_files = &[_]core.mtl_loader.MtlFile{ global_mat, debug_mat },
             .create_meshes = meshes_objects,
         };
@@ -162,7 +160,8 @@ pub fn main(init: std.process.Init) void {
             .maze = maze,
             .pixels_per_cell = pixels_per_cell,
         };
-    engine.initData(
+
+    engine.initPipelines(
         mesh_pipeline_create_data,
         hud_pipeline_create_data,
     );

@@ -29,7 +29,6 @@ pub const AllocatedData = struct {
             create_mesh: CreateMesh,
             transform: core.math.Mat4 = .IDENTITY,
         };
-        camera: core.Camera,
         materials_files: []const core.mtl_loader.MtlFile,
         create_meshes: []const MeshCreateInfo,
     };
@@ -40,11 +39,9 @@ pub const AllocatedData = struct {
     };
     materials: std.StringHashMap(MaterialEntry),
     meshes: Meshes3D.AllocatedData,
-    camera_uniform: vma_usage.MappedBuffer,
 
     pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
         self.meshes.deinit(allocs);
-        self.camera_uniform.deinit(allocs.vma);
         var iter = self.materials.valueIterator();
         while (iter.next()) |mt|
             mt.alloc_data.deinit(allocs, device, alloc_cbs);
@@ -56,7 +53,6 @@ pub const AllocatedData = struct {
         upload_ctx: *core.vulkan_init.UploadContext,
         logical_device: core.vulkan_init.LogicalDevice,
         physical_device: core.vulkan_init.PhysicalDevice,
-        camera_extent: vk.Extent2D,
         cd: CreateData,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) std.mem.Allocator.Error!struct {
@@ -91,9 +87,6 @@ pub const AllocatedData = struct {
         var meshes = try Meshes3D.init(allocs.std);
         defer meshes.deinit(allocs.std);
 
-        var camera_gpu_data = cd.camera.createGPUData(camera_extent);
-        camera_gpu_data.proj.j.y *= -1;
-
         for (cd.create_meshes) |create_mesh| {
             switch (create_mesh.create_mesh) {
                 .obj => |obj| {
@@ -124,27 +117,12 @@ pub const AllocatedData = struct {
             }
         }
 
-        const camera_alloc = vma_usage.AllocatedBuffer.create(
-            allocs.vma,
-            @sizeOf(core.Camera.GPUData),
-            vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
-            0,
-        );
-        var mapped_camera: vma_usage.MappedBuffer = .{ .allocation = camera_alloc };
-        checkVk(core.clibs.vma.MapMemory(allocs.vma, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
-
-        const aligned_camera: *core.Camera.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
-
-        aligned_camera.* = camera_gpu_data;
-
         const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
 
         return .{
             @This(){
                 .materials = all_uploaded_materials,
                 .meshes = uploaded_meshes,
-                .camera_uniform = mapped_camera,
             },
             SystemsData{
                 .mesh_scale_factors = blk: {
@@ -153,7 +131,6 @@ pub const AllocatedData = struct {
                         scale_factors[i] = 1.0;
                     break :blk scale_factors;
                 },
-                .camera = cd.camera,
                 .meshes = try meshes.meshes.toOwnedSlice(allocs.std),
                 .mesh_metadatas = try meshes.meta_data.toOwnedSlice(allocs.std),
                 .material_names = try material_names.toOwnedSlice(allocs.std),
@@ -163,7 +140,6 @@ pub const AllocatedData = struct {
 };
 
 pub const SystemsData = struct {
-    camera: core.Camera,
     meshes: []Meshes3D.MeshHandle,
     mesh_scale_factors: []f32,
     mesh_metadatas: []Meshes3D.MetaData,
@@ -182,12 +158,8 @@ pub const SystemsData = struct {
 
     pub fn update(
         self: *@This(),
-        io: std.Io,
         alloc_data: AllocatedData,
-        input: core.Input,
-        screen_extent: vk.Extent2D,
     ) void {
-        self.camera.control(io, alloc_data.camera_uniform, input, screen_extent);
 
         // metadata system
         if (self.edited_meshes.items.len > 0) {
@@ -214,6 +186,7 @@ pub const SystemsData = struct {
 };
 
 pub const Description = struct {
+    global_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
     device: vk.Device = undefined,
     render_pass: vk.RenderPass = undefined,
     window_extent: vk.Extent2D,
@@ -226,7 +199,6 @@ const Bindings = struct {
     /// Set 0
     const VERTEX = 0;
     const INDEX = 1;
-    const CAMERA = 2;
     /// Set 1
     const TEXTURE2D = 0;
     const METADATA = 1;
@@ -385,6 +357,7 @@ fn initCommon(
     };
 
     const set_layouts = [_]vk.DescriptorSetLayout{
+        pd.global_descriptor_set_layout,
         self.descriptor_set_layout,
         self.texture_set_layout,
     };
@@ -531,13 +504,6 @@ fn createDescriptorSetLayout(
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
-
-        .{
-            .binding = Bindings.CAMERA,
-            .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-        },
     };
 
     const ci = vk.DescriptorSetLayoutCreateInfo{
@@ -645,11 +611,6 @@ pub fn updateDescriptorSets(
         .offset = 0,
         .range = alloc_data.meshes.index_buffer.size,
     };
-    const camera_uniform_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.camera_uniform.allocation.buffer,
-        .offset = 0,
-        .range = @as(u64, @intCast(alloc_data.camera_uniform.allocation.size)),
-    };
 
     const write_sets =
         &[_]vk.WriteDescriptorSet{
@@ -671,16 +632,6 @@ pub fn updateDescriptorSets(
                 .descriptorCount = 1,
                 .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .pBufferInfo = &index_info,
-            },
-
-            .{
-                .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = set,
-                .dstBinding = Bindings.CAMERA,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .pBufferInfo = &camera_uniform_info,
             },
         };
     vk.UpdateDescriptorSets(
@@ -787,16 +738,27 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 pub fn recordCommands(
     self: Self,
     sys_data: SystemsData,
+    global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     tx_set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
+    vk.CmdBindDescriptorSets(
+        cmd,
+        vk.PIPELINE_BIND_POINT_GRAPHICS,
+        self.pipeline_layout,
+        0,
+        1,
+        &global_descriptor_set,
+        0,
+        null,
+    );
     // bind set 1: textures + metadata (global, same for all submeshes)
     vk.CmdBindDescriptorSets(
         cmd,
         vk.PIPELINE_BIND_POINT_GRAPHICS,
         self.pipeline_layout,
-        1, // set index 1
+        2, // set index 1
         1,
         &tx_set,
         0,
@@ -810,7 +772,7 @@ pub fn recordCommands(
             cmd,
             vk.PIPELINE_BIND_POINT_GRAPHICS,
             self.pipeline_layout,
-            0, // set index 0
+            1, // set index 0
             1,
             &set,
             0,
@@ -844,19 +806,6 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
                 self.current_pipeline = tag;
         }
     }
-
-    const current_mode_name = @tagName(system_data.camera.mode);
-    if (imgui.BeginCombo("Camera Modes", current_mode_name.ptr, 0)) {
-        defer imgui.EndCombo();
-
-        for (std.meta.tags(core.Camera.Mode)) |tag| {
-            const name = @tagName(tag);
-            if (imgui.Selectable(name))
-                system_data.camera.mode = tag;
-        }
-    }
-
-    imgui.Separator();
 
     imgui.Text("Meshes");
     for (system_data.meshes, 0..) |*mesh, idx| {

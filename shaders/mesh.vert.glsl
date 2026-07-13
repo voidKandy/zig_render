@@ -11,12 +11,13 @@ struct VertexData {
     vec2 _;
 };
 
-layout (std430, set = 0, binding = 0) readonly buffer Vertices { VertexData v[]; } in_Vertices;
-layout (set = 0, binding = 1) readonly buffer Indices { int i[]; } in_Indices;
-layout (set = 0, binding = 2) readonly uniform CameraData {
+layout (set = 0, binding = 0) readonly uniform CameraData {
     mat4 view;
     mat4 proj;
 } camera_Ubo;
+
+layout (std430, set = 1, binding = 0) readonly buffer Vertices { VertexData v[]; } in_Vertices;
+layout (set = 1, binding = 1) readonly buffer Indices { int i[]; } in_Indices;
 
 struct MetaData {
     uint MaterialIndex;
@@ -25,7 +26,7 @@ struct MetaData {
     uint VertexOffset;
     mat4 ModelTransform;
 };
-layout(std430, set = 1, binding = 1) readonly buffer MetaSSBO { MetaData metas[]; } MetaBuf;
+layout(std430, set = 2, binding = 1) readonly buffer MetaSSBO { MetaData metas[]; } MetaBuf;
 layout(location = 0) out vec2 texCoord;
 layout(location = 1) flat out uint MaterialIndex;
 

@@ -15,6 +15,7 @@ pub const ecs = @import("ecs.zig");
 pub const vulkan_init = @import("vulkan_init.zig");
 pub const vulkan_util = @import("vulkan_util.zig");
 pub const VulkanEngine = @import("VulkanEngine.zig");
+pub const GlobalAllocatedData = @import("GlobalAllocatedData.zig");
 pub const Input = @import("Input.zig");
 pub const MeshPipeline = @import("pipelines/mesh/MeshPipeline.zig");
 pub const HudPipelines = @import("pipelines/HudPipelines.zig");

@@ -3,13 +3,93 @@ const core = @import("root.zig");
 const c = core.clibs;
 const vk = c.vk;
 const vki = core.vulkan_init;
+const vma_usage = core.vma_usage;
 const checkVk = vki.checkVk;
 const Vec3 = core.math.Vec3;
 const Mat4 = core.math.Mat4;
 
-pub const GPUData = struct {
-    view: Mat4,
-    proj: Mat4,
+pub const AllocatedData = struct {
+    uniform: vma_usage.MappedBuffer,
+
+    pub fn deinit(self: *@This(), vma_a: c.vma.Allocator) void {
+        self.uniform.deinit(vma_a);
+    }
+
+    pub const GPUData = struct {
+        view: Mat4,
+        proj: Mat4,
+
+        fn fromCamera(camera: Camera, extent: vk.Extent2D) @This() {
+            const aspect =
+                @as(f32, @floatFromInt(extent.width)) /
+                @as(f32, @floatFromInt(extent.height));
+            var proj = core.math.Mat4.perspective(
+                camera.fov,
+                aspect,
+                camera.near_plane,
+                camera.far_plane,
+            );
+            proj.j.y *= -1;
+
+            return .{
+                .view = core.math.Mat4.lookAt(
+                    camera.eye,
+                    camera.target,
+                    core.math.Vec3.UP,
+                ),
+                .proj = proj,
+            };
+        }
+    };
+
+    pub fn createFromCamera(vma_a: c.vma.Allocator, camera: Camera, camera_extent: vk.Extent2D) @This() {
+        const camera_alloc = vma_usage.AllocatedBuffer.create(
+            vma_a,
+            @sizeOf(@This()),
+            vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            c.vma.MEMORY_USAGE_CPU_TO_GPU,
+            0,
+        );
+        var mapped_camera: vma_usage.MappedBuffer = .{ .allocation = camera_alloc };
+        checkVk(core.clibs.vma.MapMemory(vma_a, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
+
+        const camera_gpu_data = GPUData.fromCamera(camera, camera_extent);
+        const aligned_camera: *AllocatedData.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
+        aligned_camera.* = camera_gpu_data;
+
+        return .{
+            .uniform = mapped_camera,
+        };
+    }
+
+    pub fn descriptorSetLayoutBinding(
+        binding: u32,
+    ) vk.DescriptorSetLayoutBinding {
+        return vk.DescriptorSetLayoutBinding{
+            .binding = binding,
+            .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        };
+    }
+
+    pub fn allocateDescriptorSet(
+        set: *vk.DescriptorSet,
+        set_layout: vk.DescriptorSetLayout,
+        pool: vk.DescriptorPool,
+        device: vk.Device,
+    ) void {
+        const ai = vk.DescriptorSetAllocateInfo{
+            .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .pNext = null,
+            .descriptorPool = pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &set_layout,
+        };
+
+        checkVk(vk.AllocateDescriptorSets(device, &ai, set)) catch
+            @panic("failed to allocate descriptor sets");
+    }
 };
 
 near_plane: f32 = 0.1,
@@ -25,6 +105,8 @@ player_controller: PlayerController = .{},
 
 const DEFAULT_EYE: Vec3 = Vec3.make(4.0, 4.0, 4.0);
 const DEFAULT_TARGET: Vec3 = Vec3.make(0.0, 0.0, 1.0);
+
+const Camera = @This();
 
 pub const PlayerController = struct {
     yaw: f32 = 0.0,
@@ -54,27 +136,6 @@ pub const Mode = enum {
     user_input,
     player,
 };
-
-pub fn createGPUData(self: @This(), extent: vk.Extent2D) GPUData {
-    const aspect =
-        @as(f32, @floatFromInt(extent.width)) /
-        @as(f32, @floatFromInt(extent.height));
-
-    return core.Camera.GPUData{
-        .view = core.math.Mat4.lookAt(
-            self.eye,
-            self.target,
-            // core.math.Vec3.ZERO,
-            core.math.Vec3.UP,
-        ),
-        .proj = core.math.Mat4.perspective(
-            self.fov,
-            aspect,
-            self.near_plane,
-            self.far_plane,
-        ),
-    };
-}
 
 pub fn control(
     self: *@This(),
@@ -146,15 +207,15 @@ pub fn control(
     }
 
     var ubo = switch (self.mode) {
-        .rotate_around => core.Camera.GPUData{
+        .rotate_around => AllocatedData.GPUData{
             .view = core.math.Mat4.lookAt(eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
             .proj = core.math.Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
-        .user_input => core.Camera.GPUData{
+        .user_input => AllocatedData.GPUData{
             .view = core.math.Mat4.lookAt(self.eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
             .proj = core.math.Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
-        .player => core.Camera.GPUData{
+        .player => AllocatedData.GPUData{
             .view = core.math.Mat4.lookAt(self.eye, self.target, core.math.Vec3.UP),
             .proj = core.math.Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
@@ -162,6 +223,6 @@ pub fn control(
 
     ubo.proj.j.y *= -1;
 
-    const aligned_camera: *core.Camera.GPUData = @ptrCast(@alignCast(camera_uniform.mapped));
+    const aligned_camera: *AllocatedData.GPUData = @ptrCast(@alignCast(camera_uniform.mapped));
     aligned_camera.* = ubo;
 }
