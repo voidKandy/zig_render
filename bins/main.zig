@@ -1,20 +1,20 @@
 const std = @import("std");
 const log = std.log;
 const core = @import("core");
-const vki = core.vulkan_init;
-const vma_usage = core.vma_usage;
-const mesh_mod = core.mesh;
-const math_mod = core.math;
+const vki = core.bindings.vulkan_init;
+const vma_usage = core.bindings.vma_usage;
+const mesh_mod = core.lib.mesh;
+const math_mod = core.lib.math;
 const c = core.clibs;
 const vk = c.vk;
 const vma = c.vma;
 const checkVk = vki.checkVk;
 const sdl = c.sdl;
-const VkError = core.vulkan_init.VkError;
-const Vec2 = core.math.Vec2;
-const Vec3 = core.math.Vec3;
-const Vec4 = core.math.Vec4;
-const Mat4 = core.math.Mat4;
+const VkError = vki.VkError;
+const Vec2 = math_mod.Vec2;
+const Vec3 = math_mod.Vec3;
+const Vec4 = math_mod.Vec4;
+const Mat4 = math_mod.Mat4;
 
 pub const std_options = std.Options{
     .log_level = .debug,
@@ -38,17 +38,17 @@ pub fn main(init: std.process.Init) void {
     // const cwd = std.Io.Dir.cwd();
     // std.log.info("Running from: {s}", .{cwd});
 
-    var global_mat = core.mtl_loader.parseFile(a, init.io, "assets/globals.mtl") catch @panic("failed to load materials file");
+    var global_mat = core.loaders.mtl.parseFile(a, init.io, "assets/globals.mtl") catch @panic("failed to load materials file");
     defer global_mat.deinit();
-    var debug_mat = core.mtl_loader.parseFile(a, init.io, "assets/debug.mtl") catch @panic("failed to load materials file");
+    var debug_mat = core.loaders.mtl.parseFile(a, init.io, "assets/debug.mtl") catch @panic("failed to load materials file");
     defer debug_mat.deinit();
 
-    var hud_mat = core.mtl_loader.parseFile(a, init.io, "assets/hud.mtl") catch @panic("failed to load materials file");
+    var hud_mat = core.loaders.mtl.parseFile(a, init.io, "assets/hud.mtl") catch @panic("failed to load materials file");
     defer hud_mat.deinit();
 
     const all_objects =
-        [_][]core.obj_loader.ObjFile{
-            core.obj_loader.readObjDirectory(a, init.io, "assets/meshes") catch @panic("failed to read objects"),
+        [_][]core.loaders.obj.ObjFile{
+            core.loaders.obj.readObjDirectory(a, init.io, "assets/meshes") catch @panic("failed to read objects"),
             // core.obj_loader.readObjDirectory(a, "assets/widgets") catch @panic("failed to read objects"),
             // core.obj_loader.readObjDirectory(a, "assets/primitives") catch @panic("failed to read objects"),
         };
@@ -68,7 +68,7 @@ pub fn main(init: std.process.Init) void {
     };
 
     const meshes_objects = a.alloc(
-        core.MeshPipeline.AllocatedData.CreateData.MeshCreateInfo,
+        core.pipelines.MeshPipeline.AllocatedData.CreateData.MeshCreateInfo,
         // BAD
         amt_meshes_objects + 1,
     ) catch @panic("failed to alloc meshes_objects");
@@ -86,7 +86,7 @@ pub fn main(init: std.process.Init) void {
         k += files.len;
     }
 
-    var engine = core.VulkanEngine.init(
+    var engine = core.engine.Engine.init(
         a,
         init.io,
         null,
@@ -97,7 +97,7 @@ pub fn main(init: std.process.Init) void {
     //     a,
     //     10,
     // ) catch @panic("failed to create maze");
-    var maze = core.Maze.init(a, 10, 10) catch @panic("OOM");
+    var maze = core.lib.Maze.init(a, 10, 10) catch @panic("OOM");
     defer maze.deinit(a);
     maze.generate(a, 16, 12345);
 
@@ -110,16 +110,16 @@ pub fn main(init: std.process.Init) void {
     // const quad_w: f32 = quad_h * maze_aspect / window_aspect;
     const margin: f32 = 0.05;
     const quad_size = 0.2;
-    const maze_quad = core.mesh.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create hud quad");
+    const maze_quad = mesh_mod.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create hud quad");
     defer maze_quad.deinit(a);
 
     // top-right placement in -1..1 UI space
-    const maze_quad_coords = core.math.Vec2.make(
+    const maze_quad_coords = Vec2.make(
         1.0 - (quad_size / 2.0) - margin,
         margin,
     );
 
-    const maze_mesh_options = core.Maze.MeshOptions{
+    const maze_mesh_options = core.lib.Maze.MeshOptions{
         .cell_size = 2.0,
         .wall_height = 2.0,
         .margin = .{
@@ -141,15 +141,15 @@ pub fn main(init: std.process.Init) void {
             },
         },
     };
-    const mesh_pipeline_create_data: core.MeshPipeline.AllocatedData.CreateData =
+    const mesh_pipeline_create_data: core.pipelines.MeshPipeline.AllocatedData.CreateData =
         .{
-            .materials_files = &[_]core.mtl_loader.MtlFile{ global_mat, debug_mat },
+            .materials_files = &[_]core.loaders.mtl.MtlFile{ global_mat, debug_mat },
             .create_meshes = meshes_objects,
         };
 
-    const hud_pipeline_create_data: core.HudPipelines.AllocatedData.CreateData =
+    const hud_pipeline_create_data: core.pipelines.HudPipelines.AllocatedData.CreateData =
         .{
-            .meshes = &[_]core.HudPipelines.AllocatedData.CreateData.HudMesh{
+            .meshes = &[_]core.pipelines.HudPipelines.AllocatedData.CreateData.HudMesh{
                 .{
                     .maze = .{
                         .mesh = maze_quad,

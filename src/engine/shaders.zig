@@ -1,15 +1,9 @@
 const std = @import("std");
-const vk = @import("clibs.zig").vk;
-const checkVk = @import("vulkan_init.zig").checkVk;
+const core = @import("../root.zig");
+const vk = core.clibs.vk;
+const checkVk = core.bindings.vulkan_init.checkVk;
 
-/// Shaders are compiled into the library, so we need to access them from within the library
-// pub fn loadShader(comptime path: []const u8) []const u8 {
-//     const bytes = @embedFile(path);
-//     const slice: []const u8 = bytes[0..]; // convert to slice
-//     std.debug.assert(slice.len % 4 == 0); // must be multiple of 4
-//     return @ptrCast(slice);
-// }
-
+/// Shaders are compiled into the library, this is how we access them from within the library
 pub fn createShaderModule(comptime path: []const u8, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) ?vk.ShaderModule {
     const bytes align(4) = @embedFile(path);
     std.debug.assert(bytes.len % 4 == 0);

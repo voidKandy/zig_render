@@ -15,8 +15,7 @@
 // For simple use and triangulation, check src/mesh.zig in the same repo.
 //
 const std = @import("std");
-const core = @import("root.zig");
-
+const core = @import("../root.zig");
 const log = std.log.scoped(.obj_loader);
 
 pub const Index = struct {
@@ -27,7 +26,7 @@ pub const Index = struct {
 
 pub const MaterialInfo = struct {
     material_name: []u8,
-    range: core.mesh.RangeDesc,
+    range: core.lib.mesh.RangeDesc,
 };
 
 pub const Object = struct {

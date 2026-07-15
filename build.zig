@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) !void {
     const env_map = std.process.Environ.Map.init(b.allocator);
     // const env_map = try std.process.getEnvMap(b.allocator);
     const translate_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/c.h"),
+        .root_source_file = b.path("src/clibs/c.h"),
         .target = target,
         .optimize = optimize,
     });
@@ -43,12 +43,12 @@ pub fn build(b: *std.Build) !void {
 
     core_lib.linkSystemLibrary("SDL3", .{});
     core_lib.linkSystemLibrary("vulkan", .{});
-    core_lib.addCSourceFile(.{ .file = b.path("src/vk_mem_alloc.cpp"), .flags = &.{""} });
+    core_lib.addCSourceFile(.{ .file = b.path("src/clibs/vk_mem_alloc.cpp"), .flags = &.{""} });
     core_lib.addIncludePath(b.path("libs/vma/"));
     core_lib.addIncludePath(b.path("libs/stb/"));
     core_lib.addIncludePath(b.path("libs/imgui/"));
     core_lib.addIncludePath(b.path("libs/tinyobjloader/"));
-    core_lib.addCSourceFile(.{ .file = b.path("src/stb_image.c"), .flags = &.{""} });
+    core_lib.addCSourceFile(.{ .file = b.path("src/clibs/stb_image.c"), .flags = &.{""} });
 
     addAllShaders(b, io, core_lib);
 

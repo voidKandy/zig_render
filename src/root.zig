@@ -1,36 +1,47 @@
 //! core Library for zig render
 const std = @import("std");
-const sdl = clibs.sdl;
-pub const shaders = @import("shaders.zig");
-pub const terrain = @import("terrain.zig");
-pub const mesh = @import("mesh.zig");
-pub const frames = @import("frames.zig");
-pub const math = @import("math3d.zig");
-pub const obj_loader = @import("obj_loader.zig");
-pub const mtl_loader = @import("mtl_loader.zig");
-pub const clibs = @import("clibs.zig");
-pub const vma_usage = @import("vma_usage.zig");
-pub const sdl_usage = @import("sdl_usage.zig");
-pub const ecs = @import("ecs.zig");
-pub const vulkan_init = @import("vulkan_init.zig");
-pub const vulkan_util = @import("vulkan_util.zig");
-pub const VulkanEngine = @import("VulkanEngine.zig");
-pub const GlobalAllocatedData = @import("GlobalAllocatedData.zig");
-pub const Input = @import("Input.zig");
-pub const MeshPipeline = @import("pipelines/mesh/MeshPipeline.zig");
-pub const HudPipelines = @import("pipelines/HudPipelines.zig");
-pub const BackgroundPipeline = @import("pipelines/BackgroundPipeline.zig");
-pub const Maze = @import("Maze.zig");
-pub const Materials = @import("Materials.zig");
-pub const Camera = @import("Camera.zig");
+pub const clibs = @import("clibs/root.zig");
 
-/// Panics if returned bool == false
-pub fn checkSdl(res: bool) void {
-    if (!res) {
-        std.log.err("Detected SDL error: {s}", .{sdl.GetError()});
-        @panic("SDL error");
-    }
-}
+pub const bindings = struct {
+    pub const vma_usage = @import("bindings/vma_usage.zig");
+    pub const sdl_usage = @import("bindings/sdl_usage.zig");
+    pub const vulkan_init = @import("bindings/vulkan_init.zig");
+    pub const vulkan_util = @import("bindings/vulkan_util.zig");
+};
+
+pub const engine = struct {
+    pub const Camera = @import("engine/Camera.zig");
+    pub const Engine = @import("engine/Engine.zig");
+    pub const frames = @import("engine/frames.zig");
+    pub const GlobalAllocatedData = @import("engine/GlobalAllocatedData.zig");
+    pub const Input = @import("engine/Input.zig");
+    pub const shaders = @import("engine/shaders.zig");
+};
+
+pub const lib = struct {
+    pub const ecs = @import("lib/ecs.zig");
+    pub const math = @import("lib/math.zig");
+    pub const Maze = @import("lib/Maze.zig");
+    pub const mesh = @import("lib/mesh.zig");
+    pub const terrain = @import("lib/terrain.zig");
+};
+
+pub const loaders = struct {
+    pub const obj = @import("loaders/obj.zig");
+    pub const mtl = @import("loaders/mtl.zig");
+};
+
+pub const pipelines = struct {
+    pub const MeshPipeline = @import("pipelines/MeshPipeline.zig");
+    pub const HudPipelines = @import("pipelines/HudPipelines.zig");
+    pub const BackgroundPipeline = @import("pipelines/BackgroundPipeline.zig");
+};
+
+pub const resources = struct {
+    pub const Materials = @import("resources/Materials.zig");
+    pub const Meshes2D = @import("resources/Meshes2D.zig");
+    pub const Meshes3D = @import("resources/Meshes3D.zig");
+};
 
 test {
     std.testing.refAllDecls(@This());

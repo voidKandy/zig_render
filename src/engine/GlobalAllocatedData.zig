@@ -1,11 +1,12 @@
 const std = @import("std");
-const core = @import("root.zig");
+const core = @import("../root.zig");
 const imgui = core.clibs.imgui;
 const vk = core.clibs.vk;
-const checkVk = core.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_init.checkVk;
+const Camera = core.engine.Camera;
 
-camera: core.Camera,
-camera_alloc_data: core.Camera.AllocatedData,
+camera: Camera,
+camera_alloc_data: Camera.AllocatedData,
 
 pool: vk.DescriptorPool,
 layout: vk.DescriptorSetLayout = undefined,
@@ -13,11 +14,11 @@ set: vk.DescriptorSet = undefined,
 
 pub const CreateData = struct {
     swapchain_extent: vk.Extent2D,
-    camera: core.Camera,
+    camera: Camera,
 };
 
 pub fn initAndCreateData(
-    allocs: core.VulkanEngine.Allocators,
+    allocs: core.engine.Engine.Allocators,
     cd: CreateData,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
@@ -42,7 +43,7 @@ pub fn initAndCreateData(
     return .{
         .pool = pool,
         .camera = cd.camera,
-        .camera_alloc_data = core.Camera.AllocatedData.createFromCamera(
+        .camera_alloc_data = Camera.AllocatedData.createFromCamera(
             allocs.vma,
             cd.camera,
             cd.swapchain_extent,
@@ -67,7 +68,7 @@ pub fn createLayout(
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     const bindings = [_]vk.DescriptorSetLayoutBinding{
-        core.Camera.AllocatedData.descriptorSetLayoutBinding(0),
+        Camera.AllocatedData.descriptorSetLayoutBinding(0),
     };
 
     const ci = vk.DescriptorSetLayoutCreateInfo{
@@ -81,7 +82,7 @@ pub fn createLayout(
 }
 
 pub fn allocateSets(self: *@This(), device: vk.Device) void {
-    core.Camera.AllocatedData.allocateDescriptorSet(
+    Camera.AllocatedData.allocateDescriptorSet(
         &self.set,
         self.layout,
         self.pool,
@@ -126,7 +127,7 @@ pub fn drawImgui(self: *@This()) void {
     if (imgui.BeginCombo("Camera Modes", current_mode_name.ptr, 0)) {
         defer imgui.EndCombo();
 
-        for (std.meta.tags(core.Camera.Mode)) |tag| {
+        for (std.meta.tags(Camera.Mode)) |tag| {
             const name = @tagName(tag);
             if (imgui.Selectable(name))
                 self.camera.mode = tag;

@@ -3,12 +3,11 @@ const mem = std.mem;
 const core = @import("../root.zig");
 const imgui = core.clibs.imgui;
 const log = std.log.scoped(.DescriptorIndexing);
-const mesh_mod = core.mesh;
-const vki = core.vulkan_init;
+const mesh_mod = core.lib.mesh;
+const math_mod = core.lib.math;
+const vki = core.bindings.vulkan_init;
 const vk = core.clibs.vk;
 const checkVk = vki.checkVk;
-
-// pipeline: vk.Pipeline = undefined,
 
 current_effect: []const u8 = undefined,
 all_effects: std.StringHashMap(EffectData) = undefined,
@@ -18,10 +17,10 @@ descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 
 /// potentially bad that this is managed externally
 const ComputePushConstants = struct {
-    data1: core.math.Vec4 = core.math.Vec4.ZERO,
-    data2: core.math.Vec4 = core.math.Vec4.ZERO,
-    data3: core.math.Vec4 = core.math.Vec4.ZERO,
-    data4: core.math.Vec4 = core.math.Vec4.ZERO,
+    data1: math_mod.Vec4 = .ZERO,
+    data2: math_mod.Vec4 = .ZERO,
+    data3: math_mod.Vec4 = .ZERO,
+    data4: math_mod.Vec4 = .ZERO,
 };
 
 pub const EffectData = struct {
@@ -33,10 +32,10 @@ const GRADIENT_EFFECT_NAME = "gradient";
 const SKY_EFFECT_NAME = "sky";
 
 pub const AllocatedData = struct {
-    draw_image: core.vma_usage.AllocatedImage,
+    draw_image: core.bindings.vma_usage.AllocatedImage,
 
     pub fn create(
-        allocs: core.VulkanEngine.Allocators,
+        allocs: core.engine.Engine.Allocators,
         device: vk.Device,
         extent: vk.Extent3D,
         image_format: vk.Format,
@@ -47,7 +46,7 @@ pub const AllocatedData = struct {
             vk.IMAGE_USAGE_TRANSFER_DST_BIT |
             vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-        var image = core.vma_usage.AllocatedImage.init(allocs.vma, image_format, extent, usages);
+        var image = core.bindings.vma_usage.AllocatedImage.init(allocs.vma, image_format, extent, usages);
         const view_ci = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
 
         checkVk(vk.CreateImageView(device, &view_ci, alloc_cbs, &image.view)) catch @panic("failed to create image view");
@@ -253,14 +252,14 @@ pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
 pub fn recordCommands(
     self: Self,
     alloc_data: AllocatedData,
-    swapchain: core.vulkan_init.Swapchain,
+    swapchain: core.bindings.vulkan_init.Swapchain,
     img_idx: usize,
     set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
     const draw_image = alloc_data.draw_image;
 
-    core.vulkan_util.transitionImageLayout(
+    core.bindings.vulkan_util.transitionImageLayout(
         cmd,
         draw_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -301,7 +300,7 @@ pub fn recordCommands(
         vk.CmdDispatch(cmd, w, h, 1);
     }
 
-    core.vulkan_util.transitionImageLayout(
+    core.bindings.vulkan_util.transitionImageLayout(
         cmd,
         draw_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
@@ -313,7 +312,7 @@ pub fn recordCommands(
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
-    core.vulkan_util.transitionImageLayout(
+    core.bindings.vulkan_util.transitionImageLayout(
         cmd,
         swapchain.images[img_idx],
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -325,7 +324,7 @@ pub fn recordCommands(
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
-    core.vulkan_util.copyImageToImage(
+    core.bindings.vulkan_util.copyImageToImage(
         cmd,
         draw_image.image,
         swapchain.images[img_idx],
@@ -336,7 +335,7 @@ pub fn recordCommands(
         swapchain.extent,
     );
 
-    core.vulkan_util.transitionImageLayout(
+    core.bindings.vulkan_util.transitionImageLayout(
         cmd,
         swapchain.images[img_idx],
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,

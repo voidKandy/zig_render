@@ -3,9 +3,9 @@ const mem = std.mem;
 const core = @import("../root.zig");
 const imgui = core.clibs.imgui;
 const log = std.log.scoped(.MainComputePipeline);
-const vki = core.vulkan_init;
+const vki = core.bindings.vulkan_init;
 const vk = core.clibs.vk;
-const vma_usage = core.vma_usage;
+const vma_usage = core.bindings.vma_usage;
 const checkVk = vki.checkVk;
 
 const Bindings = struct {
@@ -25,13 +25,13 @@ const ComputePushConstants = struct {
 };
 
 const GraphicsPushConstants = struct {
-    inverse_window_resolution: core.math.Vec2,
+    inverse_window_resolution: core.lib.math.Vec2,
 };
 
 const GPUMazeCell = extern struct {
     walls: u32,
 
-    fn arrayFromCellArray(a: std.mem.Allocator, arr: []core.Maze.Cell) std.mem.Allocator.Error![]GPUMazeCell {
+    fn arrayFromCellArray(a: std.mem.Allocator, arr: []core.lib.Maze.Cell) std.mem.Allocator.Error![]GPUMazeCell {
         var all = try a.alloc(GPUMazeCell, arr.len);
         for (arr, 0..) |item, i| {
             all[i].walls =
@@ -47,19 +47,19 @@ const GPUMazeCell = extern struct {
 pub const AllocatedData = struct {
     pub const CreateData = struct {
         pub const MeshCreateInfo = struct {
-            mesh: core.mesh.Mesh2D,
-            screen_coordinates: core.math.Vec2,
+            mesh: core.lib.mesh.Mesh2D,
+            screen_coordinates: core.lib.math.Vec2,
         };
         pub const HudMesh = union(enum) {
             maze: MeshCreateInfo,
         };
 
         meshes: []const HudMesh,
-        maze: core.Maze,
+        maze: core.lib.Maze,
         pixels_per_cell: u32,
     };
 
-    meshes: core.MeshPipeline.Meshes2D.AllocatedData,
+    meshes: core.resources.Meshes2D.AllocatedData,
 
     maze_image: vma_usage.AllocatedImage,
     maze_sampler: vk.Sampler,
@@ -71,7 +71,7 @@ pub const AllocatedData = struct {
     pixels_per_cell: u32,
 
     pub fn create(
-        allocs: core.VulkanEngine.Allocators,
+        allocs: core.engine.Engine.Allocators,
         upload_ctx: *vki.UploadContext,
         logical_device: vki.LogicalDevice,
         physical_device: vki.PhysicalDevice,
@@ -104,7 +104,7 @@ pub const AllocatedData = struct {
         upload_ctx.immediateSubmit(logical_device, struct {
             img: vk.Image,
             pub fn submit(self: @This(), cmd: vk.CommandBuffer) void {
-                core.vulkan_util.transitionImageLayout(
+                core.bindings.vulkan_util.transitionImageLayout(
                     cmd,
                     self.img,
                     vk.IMAGE_LAYOUT_UNDEFINED,
@@ -154,7 +154,7 @@ pub const AllocatedData = struct {
 
         _ = physical_device;
 
-        var meshes = try core.MeshPipeline.Meshes2D.init(allocs.std);
+        var meshes = try core.resources.Meshes2D.init(allocs.std);
         defer meshes.deinit(allocs.std);
 
         for (cd.meshes) |mesh| {
@@ -194,7 +194,7 @@ pub const AllocatedData = struct {
 
     pub fn deinit(
         self: *@This(),
-        allocs: core.VulkanEngine.Allocators,
+        allocs: core.engine.Engine.Allocators,
         device: vk.Device,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) void {
@@ -206,9 +206,9 @@ pub const AllocatedData = struct {
 };
 
 pub const SystemsData = struct {
-    mesh_ranges: []core.MeshPipeline.Meshes2D.MeshRanges,
+    mesh_ranges: []core.resources.Meshes2D.MeshRanges,
 
-    pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators) void {
+    pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
         allocs.std.free(self.mesh_ranges);
     }
 };
@@ -336,7 +336,7 @@ fn initComputePipeline(
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    const maze_shader = core.shaders.createShaderModule(
+    const maze_shader = core.engine.shaders.createShaderModule(
         "maze.comp",
         device,
         alloc_cbs,
@@ -395,7 +395,7 @@ fn initGraphicsPipeline(
     // Vertex2D: vec2 position at offset 0, vec2 uv at offset 8
     const binding_desc = vk.VertexInputBindingDescription{
         .binding = 0,
-        .stride = @sizeOf(core.mesh.Vertex2D),
+        .stride = @sizeOf(core.lib.mesh.Vertex2D),
         .inputRate = vk.VERTEX_INPUT_RATE_VERTEX,
     };
     const attr_descs = [_]vk.VertexInputAttributeDescription{
@@ -403,13 +403,13 @@ fn initGraphicsPipeline(
             .binding = 0,
             .location = 0,
             .format = vk.FORMAT_R32G32_SFLOAT,
-            .offset = @offsetOf(core.mesh.Vertex2D, "position"),
+            .offset = @offsetOf(core.lib.mesh.Vertex2D, "position"),
         },
         .{
             .binding = 0,
             .location = 1,
             .format = vk.FORMAT_R32G32_SFLOAT,
-            .offset = @offsetOf(core.mesh.Vertex2D, "uv"),
+            .offset = @offsetOf(core.lib.mesh.Vertex2D, "uv"),
         },
     };
     const vertex_input_ci = vk.PipelineVertexInputStateCreateInfo{
@@ -685,7 +685,7 @@ pub fn recordCommandsCompute(
     );
 
     // transition to GENERAL for compute write
-    core.vulkan_util.transitionImageLayout(
+    core.bindings.vulkan_util.transitionImageLayout(
         cmd,
         alloc_data.maze_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -700,7 +700,7 @@ pub fn recordCommandsCompute(
     vk.CmdDispatch(cmd, w, h, 1);
 
     // transition to SHADER_READ_ONLY so HUD can sample it
-    core.vulkan_util.transitionImageLayout(
+    core.bindings.vulkan_util.transitionImageLayout(
         cmd,
         alloc_data.maze_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
@@ -731,7 +731,7 @@ pub fn recordCommandsGraphics(
         null,
     );
     const pc = GraphicsPushConstants{
-        .inverse_window_resolution = core.math.Vec2.make(
+        .inverse_window_resolution = core.lib.math.Vec2.make(
             1.0 / @as(f32, @floatFromInt(window_extent.width)),
             1.0 / @as(f32, @floatFromInt(window_extent.height)),
         ),

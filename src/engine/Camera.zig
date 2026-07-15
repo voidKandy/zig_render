@@ -1,12 +1,13 @@
 const std = @import("std");
-const core = @import("root.zig");
+const core = @import("../root.zig");
 const c = core.clibs;
 const vk = c.vk;
-const vki = core.vulkan_init;
-const vma_usage = core.vma_usage;
+const vki = core.bindings.vulkan_init;
+const vma_usage = core.bindings.vma_usage;
 const checkVk = vki.checkVk;
-const Vec3 = core.math.Vec3;
-const Mat4 = core.math.Mat4;
+const math_mod = core.lib.math;
+const Vec3 = math_mod.Vec3;
+const Mat4 = math_mod.Mat4;
 
 pub const AllocatedData = struct {
     uniform: vma_usage.MappedBuffer,
@@ -23,7 +24,7 @@ pub const AllocatedData = struct {
             const aspect =
                 @as(f32, @floatFromInt(extent.width)) /
                 @as(f32, @floatFromInt(extent.height));
-            var proj = core.math.Mat4.perspective(
+            var proj = Mat4.perspective(
                 camera.fov,
                 aspect,
                 camera.near_plane,
@@ -32,10 +33,10 @@ pub const AllocatedData = struct {
             proj.j.y *= -1;
 
             return .{
-                .view = core.math.Mat4.lookAt(
+                .view = Mat4.lookAt(
                     camera.eye,
                     camera.target,
-                    core.math.Vec3.UP,
+                    Vec3.UP,
                 ),
                 .proj = proj,
             };
@@ -140,8 +141,8 @@ pub const Mode = enum {
 pub fn control(
     self: *@This(),
     io: std.Io,
-    camera_uniform: core.vma_usage.MappedBuffer,
-    input: core.Input,
+    camera_uniform: core.bindings.vma_usage.MappedBuffer,
+    input: core.engine.Input,
     screen_extent: vk.Extent2D,
 ) void {
     const State = struct {
@@ -176,7 +177,7 @@ pub fn control(
         @as(f32, @floatFromInt(screen_extent.width)) /
         @as(f32, @floatFromInt(screen_extent.height));
 
-    const eye = core.math.Vec3.make(
+    const eye = Vec3.make(
         self.target.x + self.distance * @sin(State.yaw),
         self.target.y + self.distance * @cos(State.yaw),
         self.target.z,
@@ -198,26 +199,26 @@ pub fn control(
         const rgt = self.player_controller.right();
         const spd = self.player_controller.speed * dt;
 
-        if (input.isDown(core.sdl_usage.KeyCode.W)) self.eye = self.eye.add(fwd.mul(spd));
-        if (input.isDown(core.sdl_usage.KeyCode.S)) self.eye = self.eye.sub(fwd.mul(spd));
-        if (input.isDown(core.sdl_usage.KeyCode.A)) self.eye = self.eye.sub(rgt.mul(spd));
-        if (input.isDown(core.sdl_usage.KeyCode.D)) self.eye = self.eye.add(rgt.mul(spd));
+        if (input.isDown(core.bindings.sdl_usage.KeyCode.W)) self.eye = self.eye.add(fwd.mul(spd));
+        if (input.isDown(core.bindings.sdl_usage.KeyCode.S)) self.eye = self.eye.sub(fwd.mul(spd));
+        if (input.isDown(core.bindings.sdl_usage.KeyCode.A)) self.eye = self.eye.sub(rgt.mul(spd));
+        if (input.isDown(core.bindings.sdl_usage.KeyCode.D)) self.eye = self.eye.add(rgt.mul(spd));
 
         self.target = self.eye.add(fwd);
     }
 
     var ubo = switch (self.mode) {
         .rotate_around => AllocatedData.GPUData{
-            .view = core.math.Mat4.lookAt(eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
-            .proj = core.math.Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
+            .view = Mat4.lookAt(eye, Vec3.ZERO, Vec3.UP),
+            .proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
         .user_input => AllocatedData.GPUData{
-            .view = core.math.Mat4.lookAt(self.eye, core.math.Vec3.ZERO, core.math.Vec3.UP),
-            .proj = core.math.Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
+            .view = Mat4.lookAt(self.eye, Vec3.ZERO, Vec3.UP),
+            .proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
         .player => AllocatedData.GPUData{
-            .view = core.math.Mat4.lookAt(self.eye, self.target, core.math.Vec3.UP),
-            .proj = core.math.Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
+            .view = Mat4.lookAt(self.eye, self.target, Vec3.UP),
+            .proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
     };
 

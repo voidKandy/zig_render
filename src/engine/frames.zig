@@ -1,13 +1,13 @@
 const std = @import("std");
-const core = @import("root.zig");
-const vki = @import("vulkan_init.zig");
-const c = @import("clibs.zig");
-const vma_usage = @import("vma_usage.zig");
-const vk = c.vk;
 const Allocator = std.mem.Allocator;
+const core = @import("../root.zig");
+const vki = core.bindings.vulkan_init;
+const c = core.clibs;
+const vma_usage = core.bindings.vma_usage;
+const vk = c.vk;
 const log = std.log.scoped(.frames);
-const Mat4 = @import("math3d.zig").Mat4;
-const Vec4 = @import("math3d.zig").Vec4;
+const Mat4 = core.lib.math.Mat4;
+const Vec4 = core.lib.math.Vec4;
 const checkVk = vki.checkVk;
 
 pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {

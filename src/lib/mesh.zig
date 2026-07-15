@@ -1,16 +1,16 @@
 const std = @import("std");
-const core = @import("root.zig");
-const vma_usage = core.vma_usage;
+const core = @import("../root.zig");
+const vma_usage = core.bindings.vma_usage;
 const AllocatedBuffer = vma_usage.AllocatedBuffer;
-const checkVk = core.vulkan_init.checkVk;
-const m3d = @import("math3d.zig");
-const c = @import("clibs.zig");
+const checkVk = core.bindings.vulkan_init.checkVk;
+const math_mod = core.lib.math;
+const c = core.clibs;
 const vk = c.vk;
 const log = std.log.scoped(.mesh);
 
-const Vec2 = m3d.Vec2;
-const Vec3 = m3d.Vec3;
-const Vec4 = m3d.Vec4;
+const Vec2 = math_mod.Vec2;
+const Vec3 = math_mod.Vec3;
+const Vec4 = math_mod.Vec4;
 
 pub const Vertex3D = extern struct {
     position: Vec4,
@@ -67,7 +67,7 @@ pub const Mesh3D = struct {
         }
     };
 
-    pub fn fromObjFile(a: std.mem.Allocator, obj_file: core.obj_loader.ObjFile) std.mem.Allocator.Error!Self {
+    pub fn fromObjFile(a: std.mem.Allocator, obj_file: core.loaders.obj.ObjFile) std.mem.Allocator.Error!Self {
         if (obj_file.objects.len == 0) @panic("tried to turn an empty object into a mesh");
         if (obj_file.objects.len > 1) for (obj_file.objects) |object| {
             log.warn("multiple objects in obj file not implemented!: {s}", .{object.name});

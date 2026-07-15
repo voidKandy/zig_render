@@ -1,8 +1,8 @@
 const std = @import("std");
-const core = @import("root.zig");
-const vki = core.vulkan_init;
+const core = @import("../root.zig");
+const c = core.clibs;
+const vki = core.bindings.vulkan_init;
 const checkVk = vki.checkVk;
-const c = @import("clibs.zig");
 const vk = c.vk;
 
 pub const MappedBuffer = struct {

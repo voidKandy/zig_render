@@ -1,12 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.Materials);
-const core = @import("root.zig");
+const core = @import("../root.zig");
 const vma = core.clibs.vma;
 const vk = core.clibs.vk;
-const vk_init = core.vulkan_init;
-const checkVk = vk_init.checkVk;
-const vma_usage = core.vma_usage;
+const vki = core.bindings.vulkan_init;
+const checkVk = vki.checkVk;
+const vma_usage = core.bindings.vma_usage;
 
 /// Instead of writing the methods for managing materials in ResourceManager,
 /// I decided to use this struct directly. Mostly for clear separation of concerns,
@@ -42,11 +42,11 @@ pub const MaterialData = struct {
     pub fn upload(
         self: @This(),
         vma_a: vma.Allocator,
-        upload_ctx: *vk_init.UploadContext,
-        log_device: vk_init.LogicalDevice,
-        phys_device: vk_init.PhysicalDevice,
+        upload_ctx: *vki.UploadContext,
+        log_device: vki.LogicalDevice,
+        phys_device: vki.PhysicalDevice,
         alloc_cbs: ?*vk.AllocationCallbacks,
-    ) core.vulkan_init.VkError!Texture {
+    ) core.bindings.vulkan_init.VkError!Texture {
         const image_size = @as(vk.DeviceSize, @intCast(self.width * self.height * 4));
 
         const staging_buffer = vma_usage.AllocatedBuffer.create(
@@ -236,7 +236,7 @@ pub const AllocatedData = struct {
 
     pub fn deinit(
         self: *@This(),
-        allocs: core.VulkanEngine.Allocators,
+        allocs: core.engine.Engine.Allocators,
         device: vk.Device,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) void {
@@ -269,7 +269,7 @@ pub fn getMaterialData(self: Self, name: []const u8) ?MaterialData {
 
 pub fn initFromMaterialFile(
     a: std.mem.Allocator,
-    mtl: core.mtl_loader.MtlFile,
+    mtl: core.loaders.mtl.MtlFile,
 ) anyerror!@This() {
     var materials = std.ArrayList(u8).empty;
     var metadatas = std.StringHashMapUnmanaged(Metadata){};
@@ -343,15 +343,15 @@ pub fn initFromMaterialFile(
 
 pub fn upload(
     self: @This(),
-    allocs: core.VulkanEngine.Allocators,
-    upload_ctx: *core.vulkan_init.UploadContext,
-    logical_device: vk_init.LogicalDevice,
-    physical_device: vk_init.PhysicalDevice,
+    allocs: core.engine.Engine.Allocators,
+    upload_ctx: *core.bindings.vulkan_init.UploadContext,
+    logical_device: vki.LogicalDevice,
+    physical_device: vki.PhysicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) AllocatedData {
     var iter = self.metadata.keyIterator();
     var material_indices = std.StringHashMapUnmanaged(u32){};
-    const textures = allocs.std.alloc(core.Materials.Texture, self.metadata.size) catch @panic("OOM");
+    const textures = allocs.std.alloc(core.resources.Materials.Texture, self.metadata.size) catch @panic("OOM");
     var i: u32 = 0;
     while (iter.next()) |key| : (i += 1) {
         const mat = self.getMaterialData(key.*) orelse @panic("No material found?");

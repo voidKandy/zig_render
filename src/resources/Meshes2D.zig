@@ -1,22 +1,22 @@
 const std = @import("std");
-const core = @import("../../root.zig");
-const vma_usage = core.vma_usage;
+const core = @import("../root.zig");
+const vma_usage = core.bindings.vma_usage;
 const AllocatedBuffer = vma_usage.AllocatedBuffer;
-const checkVk = core.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_init.checkVk;
 const c = core.clibs;
-const m3d = core.math;
+const math_mod = core.lib.math;
 const vk = c.vk;
 const log = std.log.scoped(.Meshes2D);
 
 pub const MetaData = extern struct {
     material_index: u32,
     _pad0: u32 = 0,
-    screen_coordinates: core.math.Vec2,
+    screen_coordinates: core.lib.math.Vec2,
 };
 
 pub const MeshRanges = struct {
-    vertex: core.mesh.RangeDesc,
-    index: core.mesh.RangeDesc,
+    vertex: core.lib.mesh.RangeDesc,
+    index: core.lib.mesh.RangeDesc,
 };
 
 pub const AllocatedData = struct {
@@ -24,14 +24,14 @@ pub const AllocatedData = struct {
     index_buffer: vma_usage.AllocatedBuffer = undefined,
     metadata: vma_usage.MappedBuffer = undefined,
 
-    pub fn deinit(self: @This(), allocs: core.VulkanEngine.Allocators) void {
+    pub fn deinit(self: @This(), allocs: core.engine.Engine.Allocators) void {
         self.vertex_buffer.deinit(allocs.vma);
         self.index_buffer.deinit(allocs.vma);
         self.metadata.deinit(allocs.vma);
     }
 };
 
-vertices: std.ArrayList(core.mesh.Vertex2D),
+vertices: std.ArrayList(core.lib.mesh.Vertex2D),
 indices: std.ArrayList(u32),
 meta_data: std.ArrayList(MetaData),
 ranges: std.ArrayList(MeshRanges),
@@ -39,7 +39,7 @@ amt_meshes: usize = 0,
 
 pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
     return .{
-        .vertices = try std.ArrayList(core.mesh.Vertex2D).initCapacity(a, 64),
+        .vertices = try std.ArrayList(core.lib.mesh.Vertex2D).initCapacity(a, 64),
         .indices = try std.ArrayList(u32).initCapacity(a, 64),
         .meta_data = try std.ArrayList(MetaData).initCapacity(a, 16),
         .ranges = try std.ArrayList(MeshRanges).initCapacity(a, 16),
@@ -56,8 +56,8 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
 pub fn appendMesh(
     self: *@This(),
     a: std.mem.Allocator,
-    mesh: core.mesh.Mesh2D,
-    screen_coordinates: core.math.Vec2,
+    mesh: core.lib.mesh.Mesh2D,
+    screen_coordinates: core.lib.math.Vec2,
     material_index: u32,
 ) std.mem.Allocator.Error!void {
     defer self.amt_meshes += 1;
@@ -86,12 +86,12 @@ pub fn appendMesh(
 
 pub fn upload(
     self: *@This(),
-    allocs: core.VulkanEngine.Allocators,
-    upload_ctx: *core.vulkan_init.UploadContext,
-    device: core.vulkan_init.LogicalDevice,
+    allocs: core.engine.Engine.Allocators,
+    upload_ctx: *core.bindings.vulkan_init.UploadContext,
+    device: core.bindings.vulkan_init.LogicalDevice,
 ) AllocatedData {
     var alloc_data = AllocatedData{};
-    const vert_alloc_size = self.vertices.items.len * @sizeOf(core.mesh.Vertex2D);
+    const vert_alloc_size = self.vertices.items.len * @sizeOf(core.lib.mesh.Vertex2D);
     const idx_alloc_size = self.indices.items.len * @sizeOf(u32);
 
     var vert_staging = vma_usage.AllocatedBuffer.create(
@@ -116,7 +116,7 @@ pub fn upload(
     {
         var data: ?*anyopaque = undefined;
         checkVk(core.clibs.vma.MapMemory(allocs.vma, vert_staging.allocation, &data)) catch @panic("failed to map memory");
-        const dst: [*]core.mesh.Vertex2D = @ptrCast(@alignCast(data));
+        const dst: [*]core.lib.mesh.Vertex2D = @ptrCast(@alignCast(data));
         @memcpy(dst, self.vertices.items);
         core.clibs.vma.UnmapMemory(allocs.vma, vert_staging.allocation);
 

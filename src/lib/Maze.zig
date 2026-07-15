@@ -137,8 +137,8 @@ pub fn generate(self: *@This(), a: std.mem.Allocator, threshold: usize, seed: u6
     }
 }
 
-const mesh = @import("root.zig").mesh;
-const math = @import("root.zig").math;
+const mesh = @import("../root.zig").lib.mesh;
+const math = @import("../root.zig").lib.math;
 pub const MeshOptions = struct {
     cell_size: f32,
     wall_height: f32,

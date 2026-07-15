@@ -1,20 +1,21 @@
 const std = @import("std");
-const core = @import("root.zig");
-const vki = core.vulkan_init;
-const frames_mod = core.frames;
+const core = @import("../root.zig");
 const c = core.clibs;
-const MeshPipeline = core.MeshPipeline;
-const BackgroundPipeline = core.BackgroundPipeline;
-const HudPipelines = core.HudPipelines;
-const Input = core.Input;
-const vma_usage = core.vma_usage;
-const util = core.vulkan_util;
+const vki = core.bindings.vulkan_init;
+const frames_mod = core.engine.frames;
+const MeshPipeline = core.pipelines.MeshPipeline;
+const BackgroundPipeline = core.pipelines.BackgroundPipeline;
+const HudPipelines = core.pipelines.HudPipelines;
+const Input = core.engine.Input;
+const vma_usage = core.bindings.vma_usage;
+const math_mod = core.lib.math;
+const util = core.bindings.vulkan_util;
 const vk = c.vk;
 const checkVk = vki.checkVk;
 const sdl = c.sdl;
-const checkSdl = core.checkSdl;
+const checkSdl = core.bindings.sdl_usage.checkSdl;
 const VkError = vki.VkError;
-const log = std.log.scoped(.VulkanEngine);
+const log = std.log.scoped(.Engine);
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 pub const MAIN_RENDER_PASS_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
@@ -42,7 +43,7 @@ upload_context: vki.UploadContext = .{},
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
-global_data: core.GlobalAllocatedData = undefined,
+global_data: core.engine.GlobalAllocatedData = undefined,
 
 background_pipeline: BackgroundPipeline = undefined,
 background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
@@ -302,7 +303,7 @@ fn initVulkan(self: *Self) void {
 fn initGlobalData(
     self: *Self,
 ) void {
-    self.global_data = core.GlobalAllocatedData.initAndCreateData(self.allocs, .{
+    self.global_data = core.engine.GlobalAllocatedData.initAndCreateData(self.allocs, .{
         .camera = .{},
         .swapchain_extent = self.swapchain.extent,
     }, self.logical_device.handle, self.alloc_cbs);
@@ -356,17 +357,17 @@ pub fn initPipelines(
 }
 
 fn initBackgroundPipeline(self: *Self) void {
-    const gradient_shader = core.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
+    const gradient_shader = core.engine.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, gradient_shader, self.alloc_cbs);
-    const sky_shader = core.shaders.createShaderModule("sky.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
+    const sky_shader = core.engine.shaders.createShaderModule("sky.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
     defer vk.DestroyShaderModule(self.logical_device.handle, sky_shader, self.alloc_cbs);
 
     const gradient_data = BackgroundPipeline.EffectData{ .constants = .{
-        .data1 = core.math.Vec4.make(1.0, 0.0, 0.0, 1.0),
-        .data2 = core.math.Vec4.make(0.0, 0.0, 1.0, 1.0),
+        .data1 = math_mod.Vec4.make(1.0, 0.0, 0.0, 1.0),
+        .data2 = math_mod.Vec4.make(0.0, 0.0, 1.0, 1.0),
     } };
     const sky_data = BackgroundPipeline.EffectData{ .constants = .{
-        .data1 = core.math.Vec4.make(0.1, 0.2, 0.4, 0.97),
+        .data1 = math_mod.Vec4.make(0.1, 0.2, 0.4, 0.97),
     } };
 
     self.background_pipeline = BackgroundPipeline.init(
@@ -408,7 +409,7 @@ fn initBackgroundPipeline(self: *Self) void {
 }
 
 fn initMeshPipeline(self: *Self) void {
-    const vert_shader = core.shaders.createShaderModule(
+    const vert_shader = core.engine.shaders.createShaderModule(
         "mesh.vert",
         self.logical_device.handle,
         self.alloc_cbs,
@@ -419,7 +420,7 @@ fn initMeshPipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    const frag_shader = core.shaders.createShaderModule(
+    const frag_shader = core.engine.shaders.createShaderModule(
         "mesh.frag",
         self.logical_device.handle,
         self.alloc_cbs,
@@ -468,7 +469,7 @@ fn initMeshPipeline(self: *Self) void {
 }
 
 fn initHudPipeline(self: *Self) void {
-    const vert_shader = core.shaders.createShaderModule(
+    const vert_shader = core.engine.shaders.createShaderModule(
         "hud.vert",
         self.logical_device.handle,
         self.alloc_cbs,
@@ -478,7 +479,7 @@ fn initHudPipeline(self: *Self) void {
         vert_shader,
         self.alloc_cbs,
     );
-    const frag_shader = core.shaders.createShaderModule(
+    const frag_shader = core.engine.shaders.createShaderModule(
         "hud.frag",
         self.logical_device.handle,
         self.alloc_cbs,

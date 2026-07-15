@@ -1,10 +1,10 @@
 const std = @import("std");
-const core = @import("../../root.zig");
-const vma_usage = core.vma_usage;
+const core = @import("../root.zig");
+const vma_usage = core.bindings.vma_usage;
 const AllocatedBuffer = vma_usage.AllocatedBuffer;
-const checkVk = core.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_init.checkVk;
 const c = core.clibs;
-const m3d = core.math;
+const math_mod = core.lib.math;
 const vk = c.vk;
 const log = std.log.scoped(.Meshes3D);
 
@@ -13,13 +13,13 @@ pub const MetaData = extern struct {
     index_offset: u32,
     index_count: u32,
     vertex_offset: u32,
-    model_transform: core.math.Mat4,
+    model_transform: math_mod.Mat4,
 };
 
 pub const MeshRanges = struct {
-    vertex: core.mesh.RangeDesc,
-    index: core.mesh.RangeDesc,
-    metadata: core.mesh.RangeDesc,
+    vertex: core.lib.mesh.RangeDesc,
+    index: core.lib.mesh.RangeDesc,
+    metadata: core.lib.mesh.RangeDesc,
 };
 
 pub const MeshHandle = struct {
@@ -33,7 +33,7 @@ pub const AllocatedData = struct {
 
     pub fn deinit(
         self: @This(),
-        allocs: core.VulkanEngine.Allocators,
+        allocs: core.engine.Engine.Allocators,
     ) void {
         self.vertex_buffer.deinit(allocs.vma);
         self.index_buffer.deinit(allocs.vma);
@@ -41,7 +41,7 @@ pub const AllocatedData = struct {
     }
 };
 
-vertices: std.ArrayList(core.mesh.Vertex3D),
+vertices: std.ArrayList(core.lib.mesh.Vertex3D),
 indices: std.ArrayList(u32),
 meta_data: std.ArrayList(MetaData),
 meshes: std.ArrayList(MeshHandle),
@@ -49,7 +49,7 @@ amt_meshes: usize = 0,
 
 pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
     return .{
-        .vertices = try std.ArrayList(core.mesh.Vertex3D).initCapacity(a, 64),
+        .vertices = try std.ArrayList(core.lib.mesh.Vertex3D).initCapacity(a, 64),
         .indices = try std.ArrayList(u32).initCapacity(a, 64),
         .meta_data = try std.ArrayList(MetaData).initCapacity(a, 16),
         .meshes = try std.ArrayList(MeshHandle).initCapacity(a, 16),
@@ -67,8 +67,8 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
 pub fn appendMeshWithMaterialIndex(
     self: *@This(),
     a: std.mem.Allocator,
-    mesh: core.mesh.Mesh3D,
-    transform: core.math.Mat4,
+    mesh: core.lib.mesh.Mesh3D,
+    transform: core.lib.math.Mat4,
     material_index: u32,
 ) std.mem.Allocator.Error!void {
     defer self.amt_meshes += 1;
@@ -105,11 +105,11 @@ pub fn appendMeshWithMaterialIndex(
 pub fn appendMeshWithMaterialLookup(
     self: *@This(),
     a: std.mem.Allocator,
-    mesh: core.mesh.Mesh3D,
-    transform: core.math.Mat4,
+    mesh: core.lib.mesh.Mesh3D,
+    transform: core.lib.math.Mat4,
     material_lookup_offset: u32,
     material_lookup: std.StringHashMapUnmanaged(u32),
-    material_infos: []core.obj_loader.MaterialInfo,
+    material_infos: []core.loaders.obj.MaterialInfo,
 ) std.mem.Allocator.Error!void {
     defer self.amt_meshes += 1;
     const mesh_range = MeshRanges{
@@ -150,13 +150,13 @@ pub fn appendMeshWithMaterialLookup(
 
 pub fn upload(
     self: *@This(),
-    allocs: core.VulkanEngine.Allocators,
-    upload_ctx: *core.vulkan_init.UploadContext,
-    device: core.vulkan_init.LogicalDevice,
+    allocs: core.engine.Engine.Allocators,
+    upload_ctx: *core.bindings.vulkan_init.UploadContext,
+    device: core.bindings.vulkan_init.LogicalDevice,
 ) AllocatedData {
     var alloc_data = AllocatedData{};
     const vert_alloc_size, const idx_alloc_size = .{
-        self.vertices.items.len * @sizeOf(core.mesh.Vertex3D),
+        self.vertices.items.len * @sizeOf(core.lib.mesh.Vertex3D),
         self.indices.items.len * @sizeOf(u32),
     };
 
@@ -186,7 +186,7 @@ pub fn upload(
         checkVk(core.clibs.vma.MapMemory(allocs.vma, vert_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
         defer core.clibs.vma.UnmapMemory(allocs.vma, vert_staging_buffer.allocation);
 
-        const vert_aligned_data: [*]core.mesh.Vertex3D = @ptrCast(@alignCast(data));
+        const vert_aligned_data: [*]core.lib.mesh.Vertex3D = @ptrCast(@alignCast(data));
         @memcpy(vert_aligned_data, self.vertices.items);
 
         data = undefined;

@@ -1,25 +1,22 @@
 const std = @import("std");
 const mem = std.mem;
-const core = @import("../../root.zig");
+const core = @import("../root.zig");
 const imgui = core.clibs.imgui;
 const log = std.log.scoped(.MeshPipeline);
-const mesh_mod = core.mesh;
-const vki = core.vulkan_init;
+const mesh_mod = core.lib.mesh;
+const vki = core.bindings.vulkan_init;
 const vk = core.clibs.vk;
 const vma = core.clibs.vma;
-const vma_usage = core.vma_usage;
+const vma_usage = core.bindings.vma_usage;
 const checkVk = vki.checkVk;
 const Mesh = mesh_mod.Mesh3D;
-/// BAD
-/// these are more like pipeline objects.
-/// Should be outside of mesh pipeline
-pub const Meshes3D = @import("Meshes3D.zig");
-pub const Meshes2D = @import("Meshes2D.zig");
+const Meshes3D = core.resources.Meshes3D;
+const Meshes2D = core.resources.Meshes2D;
 
 pub const AllocatedData = struct {
     pub const CreateData = struct {
         const CreateMesh = union(enum) {
-            obj: core.obj_loader.ObjFile,
+            obj: core.loaders.obj.ObjFile,
             info: struct {
                 mesh: Mesh,
                 material_idx: u32,
@@ -27,20 +24,20 @@ pub const AllocatedData = struct {
         };
         pub const MeshCreateInfo = struct {
             create_mesh: CreateMesh,
-            transform: core.math.Mat4 = .IDENTITY,
+            transform: core.lib.math.Mat4 = .IDENTITY,
         };
-        materials_files: []const core.mtl_loader.MtlFile,
+        materials_files: []const core.loaders.mtl.MtlFile,
         create_meshes: []const MeshCreateInfo,
     };
 
     const MaterialEntry = struct {
-        alloc_data: core.Materials.AllocatedData,
+        alloc_data: core.resources.Materials.AllocatedData,
         offset: u32,
     };
     materials: std.StringHashMap(MaterialEntry),
     meshes: Meshes3D.AllocatedData,
 
-    pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+    pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
         self.meshes.deinit(allocs);
         var iter = self.materials.valueIterator();
         while (iter.next()) |mt|
@@ -49,10 +46,10 @@ pub const AllocatedData = struct {
     }
 
     pub fn create(
-        allocs: core.VulkanEngine.Allocators,
-        upload_ctx: *core.vulkan_init.UploadContext,
-        logical_device: core.vulkan_init.LogicalDevice,
-        physical_device: core.vulkan_init.PhysicalDevice,
+        allocs: core.engine.Engine.Allocators,
+        upload_ctx: *core.bindings.vulkan_init.UploadContext,
+        logical_device: core.bindings.vulkan_init.LogicalDevice,
+        physical_device: core.bindings.vulkan_init.PhysicalDevice,
         cd: CreateData,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) std.mem.Allocator.Error!struct {
@@ -64,7 +61,7 @@ pub const AllocatedData = struct {
 
         var current_mtl_offset: u32 = 0;
         for (cd.materials_files) |mtl| {
-            var materials = core.Materials.initFromMaterialFile(allocs.std, mtl) catch @panic("failed to create MTL");
+            var materials = core.resources.Materials.initFromMaterialFile(allocs.std, mtl) catch @panic("failed to create MTL");
             defer materials.deinit(allocs.std);
             const uploaded = materials.upload(
                 allocs,
@@ -95,7 +92,7 @@ pub const AllocatedData = struct {
                             \\ Failed to get material library "{s}"
                         , .{obj.material_library_name});
 
-                    const mesh = core.mesh.Mesh3D.fromObjFile(allocs.std, obj) catch @panic("failed to load mesh");
+                    const mesh = core.lib.mesh.Mesh3D.fromObjFile(allocs.std, obj) catch @panic("failed to load mesh");
                     defer mesh.deinit(allocs.std);
                     meshes.appendMeshWithMaterialLookup(
                         allocs.std,
@@ -146,7 +143,7 @@ pub const SystemsData = struct {
     edited_meshes: std.ArrayListUnmanaged(usize) = .empty,
     material_names: [][:0]u8,
 
-    pub fn deinit(self: *@This(), allocs: core.VulkanEngine.Allocators) void {
+    pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
         allocs.std.free(self.mesh_metadatas);
         allocs.std.free(self.meshes);
         allocs.std.free(self.mesh_scale_factors);
@@ -849,9 +846,9 @@ pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) v
 
             var scale_factor = system_data.mesh_scale_factors[idx];
             if (imgui.SliderFloat("Scale", &scale_factor, 0.0, 10.0)) {
-                const s = core.math.Mat4.scale(core.math.Vec3.make(scale_factor, scale_factor, scale_factor));
-                const t = core.math.Mat4.translation(core.math.Vec3.make(translation[0], translation[1], translation[2]));
-                mesh_metadatas[0].model_transform = core.math.Mat4.mul(t, s);
+                const s = core.lib.math.Mat4.scale(core.lib.math.Vec3.make(scale_factor, scale_factor, scale_factor));
+                const t = core.lib.math.Mat4.translation(core.lib.math.Vec3.make(translation[0], translation[1], translation[2]));
+                mesh_metadatas[0].model_transform = core.lib.math.Mat4.mul(t, s);
                 if (std.mem.indexOfScalar(usize, system_data.edited_meshes.items, idx) == null) {
                     system_data.edited_meshes.append(a, idx) catch @panic("OOM");
                 }

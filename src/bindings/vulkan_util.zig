@@ -1,10 +1,10 @@
 const std = @import("std");
-const c = @import("clibs.zig");
+const core = @import("../root.zig");
+const c = core.clibs;
 const vk = c.vk;
-const vma_usage = @import("vma_usage.zig");
-const vki = @import("vulkan_init.zig");
+const vma_usage = core.bindings.vma_usage;
+const vki = core.bindings.vulkan_init;
 const checkVk = vki.checkVk;
-
 const log = std.log.scoped(.vulkan_util);
 
 fn hasStencilComponent(format: vk.Format) bool {

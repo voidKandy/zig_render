@@ -1,9 +1,9 @@
 const std = @import("std");
-const core = @import("root.zig");
-const Mesh3D = core.mesh.Mesh3D;
-const Vertex3D = core.mesh.Vertex3D;
-const Vec4 = core.math.Vec4;
-const Vec2 = core.math.Vec2;
+const core = @import("../root.zig");
+const Mesh3D = core.lib.mesh.Mesh3D;
+const Vertex3D = core.lib.mesh.Vertex3D;
+const Vec4 = core.lib.math.Vec4;
+const Vec2 = core.lib.math.Vec2;
 
 fn sampleHeight(px: [*c]u8, iw: u32, ih: u32, u: f32, v: f32) f32 {
     const x: u32 = @intFromFloat(

@@ -1,11 +1,11 @@
 const std = @import("std");
-const core = @import("root.zig");
-pub const c = @import("clibs.zig");
-const vma_usage = @import("vma_usage.zig");
-const vk = c.vk;
 const Allocator = std.mem.Allocator;
+const core = @import("../root.zig");
+const c = core.clibs;
+const vma_usage = core.bindings.vma_usage;
+const vk = c.vk;
 const log = std.log.scoped(.vulkan_init);
-const Mat4 = @import("math3d.zig").Mat4;
+const Mat4 = core.lib.math.Mat4;
 
 pub fn defaultColorBlendAttachmentState() vk.PipelineColorBlendAttachmentState {
     return .{
@@ -986,9 +986,9 @@ pub const Swapchain = struct {
 
     pub fn recreate(self: *@This(), a: Allocator, vma_a: c.vma.Allocator, opts: SwapchainCreateOpts, window: *c.sdl.Window, render_pass: vk.RenderPass, vk_alloc_cbs: ?*vk.AllocationCallbacks) void {
         var width: c_int, var height: c_int = .{ undefined, undefined };
-        core.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
+        core.bindings.sdl_usage.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
         while (width == 0 or height == 0) {
-            core.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
+            core.bindings.sdl_usage.checkSdl(c.sdl.GetWindowSize(window, &width, &height));
         }
         _ = vk.DeviceWaitIdle(opts.logical_device);
 

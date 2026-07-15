@@ -1,5 +1,13 @@
 const std = @import("std");
-const sdl = @import("clibs.zig").sdl;
+const sdl = @import("../clibs/root.zig").sdl;
+
+/// Panics if returned bool == false
+pub fn checkSdl(res: bool) void {
+    if (!res) {
+        std.log.err("Detected SDL error: {s}", .{sdl.GetError()});
+        @panic("SDL error");
+    }
+}
 
 pub const Event = enum {
     KeyDown,
