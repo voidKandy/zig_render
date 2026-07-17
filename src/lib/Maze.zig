@@ -147,6 +147,7 @@ pub const MeshOptions = struct {
         .y = 0.5,
     },
     margin: math.Vec3 = .ZERO,
+    origin: math.Vec3 = .ZERO,
 
     fn appendQuad(
         a: std.mem.Allocator,
@@ -284,10 +285,10 @@ pub const MeshOptions = struct {
         for (maze.cells, 0..) |cell, i| {
             const row: f32 = @floatFromInt(i / maze.width);
             const col: f32 = @floatFromInt(i % maze.width);
-            const x0 = col * self.cell_size;
-            const x1 = (col + 1) * self.cell_size;
-            const y0 = row * self.cell_size;
-            const y1 = (row + 1) * self.cell_size;
+            const x0 = self.origin.x + col * self.cell_size;
+            const x1 = x0 + self.cell_size;
+            const y0 = self.origin.y + row * self.cell_size;
+            const y1 = y0 + self.cell_size;
 
             // floor
             try appendQuad(

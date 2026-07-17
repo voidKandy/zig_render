@@ -70,7 +70,7 @@ pub const AllocatedData = struct {
             .binding = binding,
             .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             .descriptorCount = 1,
-            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_COMPUTE_BIT,
         };
     }
 

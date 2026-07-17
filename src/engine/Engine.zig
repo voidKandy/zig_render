@@ -492,6 +492,7 @@ fn initHudPipeline(self: *Self) void {
     self.hud_pipeline = HudPipelines.init(
         .{
             .device = self.logical_device.handle,
+            .global_descriptor_set_layout = self.global_data.layout,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
             .vert_shader = vert_shader,
@@ -691,6 +692,7 @@ fn recordCommandBuffer(
     self.hud_pipeline.bindCompute(frame.main_command_buffer);
     self.hud_pipeline.recordCommandsCompute(
         self.hud_pipeline_data,
+        self.global_data.set,
         self.hud_descriptor_sets.compute,
         frame.main_command_buffer,
     );
@@ -752,6 +754,7 @@ fn recordCommandBuffer(
         self.swapchain.extent,
         self.hud_pipeline_systems_data,
         self.hud_pipeline_data,
+        self.global_data.set,
         self.hud_descriptor_sets.graphics,
         frame.main_command_buffer,
     );

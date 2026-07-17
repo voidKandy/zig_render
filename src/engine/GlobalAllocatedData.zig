@@ -133,4 +133,7 @@ pub fn drawImgui(self: *@This()) void {
                 self.camera.mode = tag;
         }
     }
+
+    const pos = self.camera.eye; // adjust field name to whatever your Camera struct calls it
+    imgui.Text("Camera Pos: (%.2f, %.2f, %.2f)", pos.x, pos.y, pos.z);
 }

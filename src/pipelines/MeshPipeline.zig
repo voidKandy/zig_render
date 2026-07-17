@@ -355,8 +355,8 @@ fn initCommon(
 
     const set_layouts = [_]vk.DescriptorSetLayout{
         pd.global_descriptor_set_layout,
-        self.descriptor_set_layout,
         self.texture_set_layout,
+        self.descriptor_set_layout,
     };
 
     const layout_ci = vk.PipelineLayoutCreateInfo{
@@ -384,7 +384,7 @@ fn initCommon(
         .pNext = null,
         .pDynamicState = &dynamic_state_ci,
         .stageCount = shader_stage_ci.len,
-        .pStages = &shader_stage_ci[0],
+        .pStages = &shader_stage_ci,
         .pVertexInputState = &vertex_input_ci,
         .pInputAssemblyState = &input_assembly_ci,
         .pViewportState = &viewport_ci,
@@ -404,7 +404,7 @@ fn initCommon(
         .pNext = null,
         .pDynamicState = &dynamic_state_ci,
         .stageCount = shader_stage_ci.len,
-        .pStages = &shader_stage_ci[0],
+        .pStages = &shader_stage_ci,
         .pVertexInputState = &vertex_input_ci,
         .pInputAssemblyState = &input_assembly_ci,
         .pViewportState = &viewport_ci,
@@ -418,8 +418,8 @@ fn initCommon(
         .basePipelineHandle = null,
         .basePipelineIndex = -1,
     };
-    const cis =
-        &[_]vk.GraphicsPipelineCreateInfo{ solid_pipeline_ci, line_pipeline_ci };
+    const cis = &[_]vk.GraphicsPipelineCreateInfo{ solid_pipeline_ci, line_pipeline_ci };
+
     var pipelines = [2]vk.Pipeline{ undefined, undefined };
     checkVk(vk.CreateGraphicsPipelines(
         pd.device,
@@ -755,7 +755,7 @@ pub fn recordCommands(
         cmd,
         vk.PIPELINE_BIND_POINT_GRAPHICS,
         self.pipeline_layout,
-        2, // set index 1
+        1, // set index 1
         1,
         &tx_set,
         0,
@@ -769,7 +769,7 @@ pub fn recordCommands(
             cmd,
             vk.PIPELINE_BIND_POINT_GRAPHICS,
             self.pipeline_layout,
-            1, // set index 0
+            2, // set index 0
             1,
             &set,
             0,

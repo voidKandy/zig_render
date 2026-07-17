@@ -127,6 +127,11 @@ pub fn main(init: std.process.Init) void {
             .y = 0.5,
             .z = 0.0,
         },
+        .origin = .{
+            .x = 4.0,
+            .y = 0.0,
+            .z = 0.0,
+        },
     };
 
     const maze_mesh3D = maze_mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
@@ -159,6 +164,8 @@ pub fn main(init: std.process.Init) void {
             },
             .maze = maze,
             .pixels_per_cell = pixels_per_cell,
+            .cell_size = maze_mesh_options.cell_size,
+            .maze_origin = maze_mesh_options.origin,
         };
 
     engine.initPipelines(

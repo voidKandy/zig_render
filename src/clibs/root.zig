@@ -355,7 +355,6 @@ pub const vk = struct {
     pub const PipelineBindPoint = c.VkPipelineBindPoint;
     pub const BufferCreateInfo = c.VkBufferCreateInfo;
     pub const RenderPassBeginInfo = c.VkRenderPassBeginInfo;
-    pub const RenderingInfo = c.VkRenderingInfo;
     pub const RenderingAttachmentInfo = c.VkRenderingAttachmentInfo;
     pub const SubmitInfo = c.VkSubmitInfo;
     pub const BufferCopy = c.VkBufferCopy;

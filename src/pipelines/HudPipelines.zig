@@ -17,11 +17,13 @@ const Bindings = struct {
     const METADATA = 1;
 };
 
-const ComputePushConstants = struct {
+const ComputePushConstants = extern struct {
     width: u32,
     height: u32,
     pixels_per_cell: u32,
-    _pad0: u32 = 0,
+    /// size of maze mesh cells in world scale
+    cell_size: f32,
+    maze_origin: core.lib.math.Vec3,
 };
 
 const GraphicsPushConstants = struct {
@@ -55,8 +57,11 @@ pub const AllocatedData = struct {
         };
 
         meshes: []const HudMesh,
+
         maze: core.lib.Maze,
         pixels_per_cell: u32,
+        cell_size: f32,
+        maze_origin: core.lib.math.Vec3,
     };
 
     meshes: core.resources.Meshes2D.AllocatedData,
@@ -66,9 +71,13 @@ pub const AllocatedData = struct {
     maze_state: vma_usage.MappedBuffer,
 
     /// this is not alloc data
+    /// should be moved to some kind of struct for maze
+    /// maybe like metadata for meshes?
     maze_mesh_idx: u32,
     maze_dimensions: vk.Extent2D,
     pixels_per_cell: u32,
+    cell_size: f32,
+    maze_origin: core.lib.math.Vec3,
 
     pub fn create(
         allocs: core.engine.Engine.Allocators,
@@ -183,10 +192,12 @@ pub const AllocatedData = struct {
                     .width = cd.maze.width,
                     .height = cd.maze.height,
                 },
-                .pixels_per_cell = cd.pixels_per_cell,
                 .meshes = uploaded_meshes,
                 // BAD
                 .maze_mesh_idx = 0,
+                .cell_size = cd.cell_size,
+                .pixels_per_cell = cd.pixels_per_cell,
+                .maze_origin = cd.maze_origin,
             },
             .{ .mesh_ranges = try meshes.ranges.toOwnedSlice(allocs.std) },
         };
@@ -214,6 +225,7 @@ pub const SystemsData = struct {
 };
 
 pub const Description = struct {
+    global_descriptor_set_layout: vk.DescriptorSetLayout,
     device: vk.Device,
     render_pass: vk.RenderPass,
     window_extent: vk.Extent2D,
@@ -245,7 +257,7 @@ pub fn init(pd: Description, alloc_cbs: ?*vk.AllocationCallbacks) Self {
     var self = Self{};
     self.createDescriptorSetLayout(pd.device, alloc_cbs);
     self.createDescriptorPool(pd.device, alloc_cbs);
-    self.initComputePipeline(pd.device, alloc_cbs);
+    self.initComputePipeline(pd, alloc_cbs);
     self.initGraphicsPipeline(pd, alloc_cbs);
     return self;
 }
@@ -333,28 +345,34 @@ fn createDescriptorPool(
 /// pipeline manages its own compute shaders internally
 fn initComputePipeline(
     self: *Self,
-    device: vk.Device,
+    pd: Description,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     const maze_shader = core.engine.shaders.createShaderModule(
         "maze.comp",
-        device,
+        pd.device,
         alloc_cbs,
     ) orelse @panic("failed to create maze compute shader module");
-    defer vk.DestroyShaderModule(device, maze_shader, alloc_cbs);
+    defer vk.DestroyShaderModule(pd.device, maze_shader, alloc_cbs);
     const push_constant = vk.PushConstantRange{
         .offset = 0,
         .size = @sizeOf(ComputePushConstants),
         .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
     };
+
+    const set_layouts = [_]vk.DescriptorSetLayout{
+        pd.global_descriptor_set_layout,
+        self.compute_descriptor_set_layout,
+    };
+
     const layout_ci = vk.PipelineLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &self.compute_descriptor_set_layout,
+        .setLayoutCount = set_layouts.len,
+        .pSetLayouts = &set_layouts,
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &push_constant,
     };
-    checkVk(vk.CreatePipelineLayout(device, &layout_ci, alloc_cbs, &self.compute_pipeline_layout)) catch
+    checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.compute_pipeline_layout)) catch
         @panic("failed to create main compute pipeline layout");
 
     const stage = vk.PipelineShaderStageCreateInfo{
@@ -368,7 +386,7 @@ fn initComputePipeline(
         .layout = self.compute_pipeline_layout,
         .stage = stage,
     };
-    checkVk(vk.CreateComputePipelines(device, null, 1, &ci, alloc_cbs, &self.compute_pipeline)) catch
+    checkVk(vk.CreateComputePipelines(pd.device, null, 1, &ci, alloc_cbs, &self.compute_pipeline)) catch
         @panic("failed to create main compute pipeline");
 }
 
@@ -510,10 +528,15 @@ fn initGraphicsPipeline(
         .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
     };
 
+    const set_layouts = [_]vk.DescriptorSetLayout{
+        pd.global_descriptor_set_layout,
+        self.graphics_descriptor_set_layout,
+    };
+
     const layout_ci = vk.PipelineLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &self.graphics_descriptor_set_layout,
+        .setLayoutCount = set_layouts.len,
+        .pSetLayouts = &set_layouts,
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &push_constant,
     };
@@ -656,16 +679,20 @@ pub fn bindGraphics(self: Self, cmd: vk.CommandBuffer) void {
 pub fn recordCommandsCompute(
     self: Self,
     alloc_data: AllocatedData,
+    global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
+    const sets = [_]vk.DescriptorSet{
+        global_descriptor_set, set,
+    };
     vk.CmdBindDescriptorSets(
         cmd,
         vk.PIPELINE_BIND_POINT_COMPUTE,
         self.compute_pipeline_layout,
         0,
-        1,
-        &set,
+        sets.len,
+        &sets,
         0,
         null,
     );
@@ -674,6 +701,8 @@ pub fn recordCommandsCompute(
         .width = alloc_data.maze_dimensions.width,
         .height = alloc_data.maze_dimensions.height,
         .pixels_per_cell = alloc_data.pixels_per_cell,
+        .cell_size = alloc_data.cell_size,
+        .maze_origin = alloc_data.maze_origin,
     };
     vk.CmdPushConstants(
         cmd,
@@ -717,16 +746,21 @@ pub fn recordCommandsGraphics(
     window_extent: vk.Extent2D,
     sys_data: SystemsData,
     alloc_data: AllocatedData,
+    global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
+    const sets = [_]vk.DescriptorSet{
+        global_descriptor_set, set,
+    };
+
     vk.CmdBindDescriptorSets(
         cmd,
         vk.PIPELINE_BIND_POINT_GRAPHICS,
         self.graphics_pipeline_layout,
         0,
-        1,
-        &set,
+        sets.len,
+        &sets,
         0,
         null,
     );
