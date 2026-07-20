@@ -7,6 +7,9 @@ pub const bindings = struct {
     pub const sdl_usage = @import("bindings/sdl_usage.zig");
     pub const vulkan_init = @import("bindings/vulkan_init.zig");
     pub const vulkan_util = @import("bindings/vulkan_util.zig");
+    test {
+        std.testing.refAllDecls(@This());
+    }
 };
 
 pub const engine = struct {
@@ -16,6 +19,9 @@ pub const engine = struct {
     pub const GlobalAllocatedData = @import("engine/GlobalAllocatedData.zig");
     pub const Input = @import("engine/Input.zig");
     pub const shaders = @import("engine/shaders.zig");
+    test {
+        std.testing.refAllDecls(@This());
+    }
 };
 
 pub const lib = struct {
@@ -24,23 +30,36 @@ pub const lib = struct {
     pub const Maze = @import("lib/Maze.zig");
     pub const mesh = @import("lib/mesh.zig");
     pub const terrain = @import("lib/terrain.zig");
+    pub const alpha_wrapping = @import("lib/alpha_wrapping.zig");
+    test {
+        std.testing.refAllDecls(@This());
+    }
 };
 
 pub const loaders = struct {
     pub const obj = @import("loaders/obj.zig");
     pub const mtl = @import("loaders/mtl.zig");
+    test {
+        std.testing.refAllDecls(@This());
+    }
 };
 
 pub const pipelines = struct {
     pub const MeshPipeline = @import("pipelines/MeshPipeline.zig");
     pub const HudPipelines = @import("pipelines/HudPipelines.zig");
     pub const BackgroundPipeline = @import("pipelines/BackgroundPipeline.zig");
+    test {
+        std.testing.refAllDecls(@This());
+    }
 };
 
 pub const resources = struct {
     pub const Materials = @import("resources/Materials.zig");
     pub const Meshes2D = @import("resources/Meshes2D.zig");
     pub const Meshes3D = @import("resources/Meshes3D.zig");
+    test {
+        std.testing.refAllDecls(@This());
+    }
 };
 
 test {

@@ -47,7 +47,6 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/vma/"));
     core_lib.addIncludePath(b.path("libs/stb/"));
     core_lib.addIncludePath(b.path("libs/imgui/"));
-    core_lib.addIncludePath(b.path("libs/tinyobjloader/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/clibs/stb_image.c"), .flags = &.{""} });
 
     addAllShaders(b, io, core_lib);
@@ -87,9 +86,7 @@ pub fn build(b: *std.Build) !void {
     });
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
-
     const test_step = b.step("test", "Run tests");
-    // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
     buildBinaries(

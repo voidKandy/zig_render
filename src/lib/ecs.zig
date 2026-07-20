@@ -43,12 +43,9 @@ pub fn IdentifierManager(
                 allocator.destroy(@as(*IdentifierNode, @fieldParentPtr("node", n)));
         }
 
+        const SEED = 42;
         pub fn init(allocator: Allocator) (std.posix.OpenError || Allocator.Error)!Manager {
-            var prng = std.Random.DefaultPrng.init(blk: {
-                var seed: u64 = undefined;
-                try std.posix.getrandom(std.mem.asBytes(&seed));
-                break :blk seed;
-            });
+            var prng = std.Random.DefaultPrng.init(SEED);
             const rand = prng.random();
 
             var available_ids = std.DoublyLinkedList{};
@@ -609,7 +606,7 @@ pub fn Ecs(
 
         const strct_info = blk: {
             var fnms: [N_COMPONENTS][]const u8 = undefined;
-            var ftyps: [N_COMPONENTS]Type = undefined;
+            var ftyps: [N_COMPONENTS]type = undefined;
             var fattrs: [N_COMPONENTS]std.builtin.Type.StructField.Attributes = undefined;
             for (@typeInfo(Options.components).@"struct".fields, &fnms, &ftyps, &fattrs) |field, *fnm, *ftp, *attr| {
                 fnm.* = field.name;
@@ -618,39 +615,9 @@ pub fn Ecs(
             }
             break :blk .{ fnms, ftyps, fattrs };
         };
-        // const meta_structure: struct { [N_COMPONENTS]Type.EnumField, [N_COMPONENTS]Type.StructField, [N_COMPONENTS]type } = blk: {
-        //     var en_fields: [N_COMPONENTS]Type.EnumField = undefined;
-        //     var st_fields: [N_COMPONENTS]Type.StructField = undefined;
-        //     var types: [N_COMPONENTS]type = undefined;
 
-        //     for (0.., @typeInfo(Options.components).@"struct".fields, &types, &en_fields, &st_fields) |i, field, *t, *enfld, *stfld| {
-        //         enfld.* = Type.EnumField{
-        //             .name = field.name,
-        //             .value = i,
-        //         };
-        //         stfld.* = Type.StructField{
-        //             .name = field.name,
-        //             .type = field.type,
-        //             .default_value_ptr = null,
-        //             .is_comptime = false,
-        //             .alignment = @alignOf(field.type),
-        //         };
-        //         t.* = field.type;
-        //     }
-        //     break :blk .{ en_fields, st_fields, types };
-        // };
-
-        pub const ComponentTag =
-            @Enum(u32, .exhaustive, en_info.@"0", en_info.@"1");
-        // @Enum(comptime TagInt: type, comptime mode: Type.Enum.Mode, comptime field_names: []const []const u8, comptime field_values: *const [field_names.len]TagInt)
-        // @Type(Type{ .@"enum" = .{
-        //     .tag_type = u32,
-        //     .fields = &meta_structure.@"0",
-        //     .decls = &[_]Type.Declaration{},
-        //     .is_exhaustive = true,
-        // } });
-        pub const ComponentPlexe =
-            @Struct(.auto, null, strct_info.@"0", strct_info.@"1", strct_info.@"2");
+        pub const ComponentTag = @Enum(u32, .exhaustive, &en_info.@"0", &en_info.@"1");
+        pub const ComponentPlexe = @Struct(.auto, null, strct_info.@"0", strct_info.@"1", strct_info.@"2");
         pub const TypeArr = strct_info.@"1";
 
         const ComponentsManager = struct {

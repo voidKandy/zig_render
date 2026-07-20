@@ -183,15 +183,15 @@ pub const Mesh2D = struct {
 
 test "meshmaze" {
     const allocator = std.testing.allocator;
-    var maze = try core.Maze.init(allocator, 10, 10);
+    var maze = try core.lib.Maze.init(allocator, 10, 10);
     defer maze.deinit(allocator);
     maze.generate(allocator, 16, 8);
 
-    var mesh = try Mesh3D.fromMaze(
-        allocator,
-        maze,
-        2.0,
-        2.0,
-    );
+    const opts = core.lib.Maze.MeshOptions{
+        .cell_size = 2.0,
+        .wall_height = 2.0,
+    };
+
+    const mesh = try opts.createMesh(allocator, maze);
     defer mesh.deinit(allocator);
 }
