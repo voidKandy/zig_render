@@ -31,6 +31,7 @@ pub const lib = struct {
     pub const mesh = @import("lib/mesh.zig");
     pub const terrain = @import("lib/terrain.zig");
     pub const alpha_wrapping = @import("lib/alpha_wrapping.zig");
+    pub const delaunay = @import("lib/delaunay.zig");
     test {
         std.testing.refAllDecls(@This());
     }

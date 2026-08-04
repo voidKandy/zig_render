@@ -42,6 +42,20 @@ pub const Vec3 = extern struct {
     pub const FORWARD = make(0.0, 1.0, 0.0);
     pub const RIGHT = make(1.0, 0.0, 0.0);
 
+    pub fn format(self: @This(), w: *std.Io.Writer) !void {
+        try w.print(
+            \\
+            \\ x: {},
+            \\ y: {},
+            \\ z: {},
+            \\
+        , .{
+            self.x,
+            self.y,
+            self.z,
+        });
+    }
+
     pub inline fn fromSizedArray(array: [3]f32) Self {
         return .{ .x = array[0], .y = array[1], .z = array[2] };
     }
@@ -155,7 +169,7 @@ pub const Vec4 = extern struct {
     }
 
     pub fn nomalized(self: Self) Self {
-        return self.to_vec3().normalized().toVec4(self.w);
+        return self.to_vec3().normalized().toVec3(self.w);
     }
 
     pub fn toVec3(self: Self) Vec3 {
@@ -167,6 +181,30 @@ pub const Vec4 = extern struct {
     }
 };
 
+pub const Mat3 = struct {
+    i: Vec3,
+    j: Vec3,
+    k: Vec3,
+
+    pub const IDENTITY: @This() = make(
+        Vec3.make(1.0, 0.0, 0.0),
+        Vec3.make(0.0, 1.0, 0.0),
+        Vec3.make(0.0, 0.0, 1.0),
+    );
+
+    pub inline fn make(i: Vec3, j: Vec3, k: Vec3) @This() {
+        return .{ .i = i, .j = j, .k = k };
+    }
+
+    pub fn determinant(
+        self: @This(),
+    ) f32 {
+        return self.i.x * (self.j.y * self.k.z - self.j.z * self.k.y) -
+            self.i.y * (self.j.x * self.k.z - self.j.z * self.k.x) +
+            self.i.z * (self.j.x * self.k.y - self.j.y * self.k.x);
+    }
+};
+
 pub const Mat4 = extern struct {
     i: Vec4,
     j: Vec4,
@@ -175,7 +213,7 @@ pub const Mat4 = extern struct {
 
     const Self = @This();
 
-    pub const IDENTITY: Mat4 = make(
+    pub const IDENTITY: @This() = make(
         Vec4.make(1.0, 0.0, 0.0, 0.0),
         Vec4.make(0.0, 1.0, 0.0, 0.0),
         Vec4.make(0.0, 0.0, 1.0, 0.0),

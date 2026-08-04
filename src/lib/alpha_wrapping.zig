@@ -2,209 +2,786 @@ const std = @import("std");
 const core = @import("../root.zig");
 const math_mod = core.lib.math;
 const mesh_mod = core.lib.mesh;
+const Allocator = std.mem.Allocator;
+const Vec2 = math_mod.Vec2;
 const Vec3 = math_mod.Vec3;
+const Vec4 = math_mod.Vec4;
+const Mat3 = math_mod.Mat3;
+const delaunay = core.lib.delaunay;
 
-pub const delaunay = struct {
-    const Tetrahedron = struct {
-        /// we store vertices indices
-        vertices: [4]usize,
+pub const Tag = enum { inside, outside };
 
-        pub fn vertex(self: Tetrahedron, mesh: *const Mesh, i: usize) Vec3 {
-            return mesh.vertices.items[self.vertices[i]];
+const Gate = struct {
+    /// the "inside" cell we're testing whether to carve
+    tet_idx: usize,
+    /// which of tet_idx's faces we're entering through
+    face_idx: usize,
+    /// the "outside" cell we're carving from
+    from_tet_idx: usize,
+    radius: f32,
+};
+
+/// the gates are processed in order of decreasing circumradii
+fn gateOrder(context: void, a: Gate, b: Gate) std.math.Order {
+    _ = context;
+    // max-heap: largest circumradius processed first
+    return std.math.order(b.radius, a.radius);
+}
+
+pub const Wrapper = struct {
+    tri: *delaunay.Triangulation,
+    tags: std.ArrayList(Tag),
+
+    pub fn init(tri: *delaunay.Triangulation, a: Allocator) !Wrapper {
+        var tags: std.ArrayList(Tag) = try .initCapacity(a, tri.tetrahedra.items.len);
+        try tags.appendNTimes(a, .inside, tri.tetrahedra.items.len);
+        return .{
+            .tri = tri,
+            .tags = tags,
+        };
+    }
+
+    pub fn deinit(self: *Wrapper, a: Allocator) void {
+        self.tags.deinit(a);
+    }
+
+    fn ensureTagsCapacity(self: *Wrapper, a: Allocator) Allocator.Error!void {
+        while (self.tags.items.len < self.tri.tetrahedra.items.len) {
+            try self.tags.append(a, .inside); // placeholder; real new tets get set explicitly below
         }
+    }
 
-        pub fn containsPoint(
-            self: Tetrahedron,
-            mesh: *const Mesh,
-            p: Vec3,
-        ) bool {
-            const a = self.vertex(mesh, 0);
-            const b = self.vertex(mesh, 1);
-            const c = self.vertex(mesh, 2);
-            const d = self.vertex(mesh, 3);
+    /// For a tetrahedron known to be .inside, pushes a gate for every one
+    /// of its faces bordering an .outside neighbor. Used both right after
+    /// Steiner-point insertion (new cells finding their outside neighbors)
+    fn pushGatesIntoInsideTet(
+        self: *Wrapper,
+        a: Allocator,
+        queue: *std.PriorityQueue(Gate, void, gateOrder),
+        tet_idx: usize,
+        tet: delaunay.Tetrahedron,
+        alpha: f32,
+        max_radius: f32, //  the radius of the gate that triggered this insertion
+    ) Allocator.Error!void {
+        for (tet.faces(), 0..) |face, face_idx| {
+            const loc = self.tri.adjacency.neighborLocation(tet_idx, face_idx, tet) orelse continue;
+            if (self.tags.items[loc.tet] != .outside) continue;
 
-            const eps: f32 = 1e-5;
+            const radius = face.circumradius(self.tri) catch continue;
+            if (radius <= alpha) continue;
+            if (radius >= max_radius) continue;
 
-            const v = signedVolume(a, b, c, d);
+            try queue.push(a, .{
+                .tet_idx = tet_idx,
+                .face_idx = face_idx,
+                .from_tet_idx = loc.tet,
+                .radius = radius,
+            });
+        }
+    }
 
-            const v0 = signedVolume(p, b, c, d);
-            const v1 = signedVolume(a, p, c, d);
-            const v2 = signedVolume(a, b, p, d);
-            const v3 = signedVolume(a, b, c, p);
+    /// TEMP?
+    /// uses the inside cell's own circumcenter as both endpoints when there's no real outside cell
+    /// effectively a zero-length segment, meaning segmentOffsetIntersection will just check whether
+    /// that single point crosses the offset threshold. That's a reasonable
+    /// approximation for "entering from the true exterior" but isn't exactly what the paper describes
+    /// (which relies on the infinite cells having well-defined circumcenters too, a concept we don't have
+    /// in this simpler bounded-super-tetrahedron approach).
+    /// Worth flagging as an approximation, not a fully faithful translation
+    /// if it causes weird behavior at the outer hull specifically, this is the place to revisit.
+    const NO_OUTSIDE_CELL = std.math.maxInt(usize);
+    /// Shrink-wraps the triangulation: floods from the outer boundary
+    /// inward, tagging tetrahedra `.outside` wherever alpha-traversable
+    /// and not blocked. Cells are never removed, only tagged — the final
+    /// wrapped surface is the boundary between .inside and .outside cells.
+    ///
+    /// TODO(oracle): currently a stub that never blocks traversal (no
+    /// Steiner point insertion, no offset-surface intersection checks).
+    /// A future pass replaces the hardcoded "always carve" with real
+    /// geometry queries against the input.
+    pub fn run(
+        self: *Wrapper,
+        a: Allocator,
+        alpha: f32,
+        offset: f32,
+        oracle: MeshOracle,
+    ) !void {
+        if (alpha <= 0.0) @panic("alpha of 0 or less disables the sizing bound entirely, defeating its purpose");
+        const min_steiner_separation = alpha * 0.1;
 
-            if (v > 0) {
-                return v0 >= -eps and
-                    v1 >= -eps and
-                    v2 >= -eps and
-                    v3 >= -eps;
-            } else {
-                return v0 <= eps and
-                    v1 <= eps and
-                    v2 <= eps and
-                    v3 <= eps;
+        var queue = std.PriorityQueue(Gate, void, gateOrder).initContext({});
+        defer queue.deinit(a);
+
+        // seed: every boundary face (no neighborLocation) borders the implicit
+        // exterior, so its adjacent tetrahedron is a candidate to carve
+        for (self.tri.tetrahedra.items, 0..) |tet_opt, tet_idx| {
+            const tet = tet_opt orelse continue;
+            for (tet.faces(), 0..) |face, face_idx| {
+                if (self.tri.adjacency.neighborLocation(tet_idx, face_idx, tet) != null) continue;
+                const radius = face.circumradius(self.tri) catch continue; // skip degenerate
+                if (radius <= alpha) continue;
+                try queue.push(a, .{
+                    .tet_idx = tet_idx,
+                    .face_idx = face_idx,
+                    .from_tet_idx = NO_OUTSIDE_CELL,
+                    .radius = radius,
+                });
             }
         }
 
-        fn signedVolume(
-            a: Vec3,
-            b: Vec3,
-            c: Vec3,
-            d: Vec3,
-        ) f32 {
-            return Vec3.dot(
-                b.sub(a),
-                Vec3.cross(
-                    c.sub(a),
-                    d.sub(a),
-                ),
-            );
-        }
-    };
-
-    pub const Mesh = struct {
-        vertices: std.ArrayList(Vec3),
-        tetrahedra: std.ArrayList(Tetrahedron),
-
-        fn deinit(self: *@This(), a: std.mem.Allocator) void {
-            self.tetrahedra.deinit(a);
-            self.vertices.deinit(a);
-        }
-
-        /// creates a single large tetrahedron that fits the
-        /// entirety of the aabb
-        pub fn init(a: std.mem.Allocator, aabb: Aabb) std.mem.Allocator.Error!@This() {
-            var mesh = Mesh{
-                .vertices = try std.ArrayList(Vec3).initCapacity(a, 4),
-                .tetrahedra = try std.ArrayList(Tetrahedron).initCapacity(a, 1),
+        while (queue.pop()) |gate| {
+            if (self.tags.items[gate.tet_idx] == .outside) continue; // stale gate
+            const tet = self.tri.tetrahedra.items[gate.tet_idx] orelse continue; // tombstoned since queued
+            // A gate whose entry face is already too small to traverse isn't
+            // eligible for refinement either — treat it as a dead end, same
+            // as the carve-through path already does for its own gates.
+            if (gate.radius <= alpha) continue;
+            const circumsphere = tet.circumsphere(self.tri) catch {
+                self.tags.items[gate.tet_idx] = .outside;
+                continue;
             };
+            const from_point: Vec3 = blk: {
+                if (gate.from_tet_idx == NO_OUTSIDE_CELL) break :blk circumsphere.center;
+                const from_tet = self.tri.tetrahedra.items[gate.from_tet_idx] orelse break :blk circumsphere.center;
+                const from_sphere = from_tet.circumsphere(self.tri) catch break :blk circumsphere.center;
+                break :blk from_sphere.center;
+            };
+            var new_tets: std.ArrayList(usize) = try .initCapacity(a, 64);
+            defer new_tets.deinit(a);
 
-            const center = aabb.center();
+            if (oracle.segmentOffsetIntersection(from_point, circumsphere.center, offset)) |steiner| {
+                // Can't usefully refine here; treat as resolved without inserting.
+                if (tooCloseToExisting(self.tri, steiner, min_steiner_separation)) continue;
 
-            // Make the tetrahedron comfortably larger than the box.
-            const s = aabb.diagonal() * 4.0;
+                new_tets.clearRetainingCapacity();
 
-            try mesh.vertices.appendSlice(a, &.{
-                center.add(Vec3.make(s, s, s)),
-                center.add(Vec3.make(-s, -s, s)),
-                center.add(Vec3.make(-s, s, -s)),
-                center.add(Vec3.make(s, -s, -s)),
-            });
+                _ = self.tri.addVertexTracked(a, steiner, &new_tets) catch |err| switch (err) {
+                    error.DegenerateCavity => continue, // can't safely refine here; drop this gate
+                    else => return err,
+                };
 
-            try mesh.tetrahedra.append(a, .{
-                .vertices = .{ 0, 1, 2, 3 },
-            });
+                try self.ensureTagsCapacity(a);
+                for (new_tets.items) |idx| self.tags.items[idx] = .inside;
+                for (new_tets.items) |idx| {
+                    const new_tet = self.tri.tetrahedra.items[idx].?;
+                    try self.pushGatesIntoInsideTet(a, &queue, idx, new_tet, alpha, gate.radius);
+                }
+                continue;
+            }
 
-            return mesh;
+            if (oracle.tetIntersectsMesh(self.tri, tet)) {
+                const proj = oracle.projectToOffset(circumsphere.center, offset);
+                if (tooCloseToExisting(self.tri, proj, min_steiner_separation)) continue;
+                new_tets.clearRetainingCapacity();
+                _ = self.tri.addVertexTracked(a, proj, &new_tets) catch |err| switch (err) {
+                    error.DegenerateCavity => continue, // can't safely refine here; drop this gate
+                    else => return err,
+                };
+
+                try self.ensureTagsCapacity(a);
+                for (new_tets.items) |idx| self.tags.items[idx] = .inside;
+                for (new_tets.items) |idx| {
+                    const new_tet = self.tri.tetrahedra.items[idx].?;
+                    try self.pushGatesIntoInsideTet(a, &queue, idx, new_tet, alpha, gate.radius);
+                }
+                continue;
+            }
+
+            self.tags.items[gate.tet_idx] = .outside;
+
+            for (tet.faces(), 0..) |tface, tface_idx| {
+                if (tface_idx == gate.face_idx) continue; // don't re-cross the tface we entered through
+                const loc = self.tri.adjacency.neighborLocation(gate.tet_idx, tface_idx, tet) orelse continue;
+                if (self.tags.items[loc.tet] == .outside) continue;
+                const radius = tface.circumradius(self.tri) catch continue;
+                if (radius <= alpha) continue;
+                try queue.push(a, .{
+                    .tet_idx = loc.tet,
+                    .face_idx = loc.face,
+                    .from_tet_idx = gate.tet_idx,
+                    .radius = radius,
+                });
+            }
         }
+    }
+
+    /// Returns the faces separating an .inside cell from an .outside one
+    /// (or from the implicit exterior). This is the wrapped output surface.
+    pub fn extractBoundaryFaces(self: *const Wrapper, a: Allocator) Allocator.Error![]delaunay.Triangulation.Face {
+        var result = try std.ArrayList(delaunay.Triangulation.Face).initCapacity(a, 64);
+        errdefer result.deinit(a);
+
+        for (self.tri.tetrahedra.items, 0..) |tet_opt, tet_idx| {
+            if (self.tags.items[tet_idx] == .outside) continue;
+            const tet = tet_opt orelse continue;
+
+            for (tet.faces(), 0..) |face, face_idx| {
+                const loc = self.tri.adjacency.neighborLocation(tet_idx, face_idx, tet);
+                const neighbor_is_outside = if (loc) |l|
+                    self.tags.items[l.tet] == .outside
+                else
+                    true; // boundary face borders the implicit exterior
+
+                if (neighbor_is_outside) try result.append(a, face);
+            }
+        }
+
+        return result.toOwnedSlice(a);
+    }
+};
+
+/// A moderate alpha for tests: small enough that most gates between
+/// well-separated points remain traversable, large enough to bound
+/// refinement near tightly-packed geometry (e.g. near a test mesh)
+/// and avoid near-duplicate Steiner point degeneracies.
+const TEST_ALPHA: f32 = 0.5;
+
+test "Wrapper.run with stub oracle carves the entire single-tet triangulation" {
+    const a = std.testing.allocator;
+    var tri = try delaunay.Triangulation.init(a, .{ .min = Vec3.make(-5, -5, -5), .max = Vec3.make(5, 5, 5) });
+    defer tri.deinit(a);
+
+    var wrapper = try Wrapper.init(&tri, a);
+    defer wrapper.deinit(a);
+
+    const mesh = try mesh_mod.Mesh3D.init(
+        a,
+        &.{
+            .{
+                .position = Vec4.make(0, 0, 0, 1),
+                .normal = Vec4.ZERO,
+                .uv = Vec2.ZERO,
+                .color = Vec4.ZERO,
+            },
+            .{
+                .position = Vec4.make(1, 0, 0, 1),
+                .normal = Vec4.ZERO,
+                .uv = Vec2.ZERO,
+                .color = Vec4.ZERO,
+            },
+            .{
+                .position = Vec4.make(0, 1, 0, 1),
+                .normal = Vec4.ZERO,
+                .uv = Vec2.ZERO,
+                .color = Vec4.ZERO,
+            },
+        },
+        &.{ 0, 1, 2 },
+    );
+    defer mesh.deinit(a);
+
+    const oracle = MeshOracle{
+        .mesh = &mesh,
     };
-};
 
-pub const Aabb = struct {
-    min: Vec3,
-    max: Vec3,
+    try wrapper.run(a, TEST_ALPHA, 1.0, oracle);
 
-    pub fn computeFromMesh(mesh: mesh_mod.Mesh3D) @This() {
-        std.debug.assert(mesh.vertices.len > 0);
+    try std.testing.expectEqual(Tag.outside, wrapper.tags.items[0]);
+}
 
-        const first = mesh.vertices[0].position.toVec3();
+test "Steiner point insertion strictly shrinks the triggering facet's circumradius" {
+    const a = std.testing.allocator;
+    var tri = try delaunay.Triangulation.init(a, .{ .min = Vec3.make(-5, -5, -5), .max = Vec3.make(5, 5, 5) });
+    defer tri.deinit(a);
 
-        var min = first;
-        var max = first;
+    const tet = tri.tetrahedra.items[0].?;
+    const face = tet.faces()[0];
+    const radius_before = try face.circumradius(&tri);
 
-        for (mesh.vertices[1..]) |vertex| {
-            const p = vertex.position.toVec3();
+    const mesh = try mesh_mod.Mesh3D.init(
+        a,
+        &.{
+            .{ .position = Vec4.make(0, 0, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+            .{ .position = Vec4.make(1, 0, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+            .{ .position = Vec4.make(0, 1, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+        },
+        &.{ 0, 1, 2 },
+    );
+    defer mesh.deinit(a);
 
-            min.x = @min(min.x, p.x);
-            min.y = @min(min.y, p.y);
-            min.z = @min(min.z, p.z);
+    const oracle = MeshOracle{ .mesh = &mesh };
+    const offset: f32 = 1.0;
 
-            max.x = @max(max.x, p.x);
-            max.y = @max(max.y, p.y);
-            max.z = @max(max.z, p.z);
+    // A genuine, non-degenerate segment: one endpoint very close to the
+    // mesh (distance ~0, well inside the offset surface), the other far
+    // away (distance >> offset, well outside it) — guaranteed to cross
+    // distance(p) == offset somewhere in between.
+    const near_mesh = Vec3.make(0.1, 0.1, 0.0); // close to the triangle
+    const far_from_mesh = Vec3.make(4.0, 4.0, 4.0); // far away
+
+    const steiner = oracle.segmentOffsetIntersection(far_from_mesh, near_mesh, offset) orelse {
+        return error.SkipZigTest;
+    };
+
+    var new_tets: std.ArrayList(usize) = try .initCapacity(a, 16);
+    defer new_tets.deinit(a);
+    _ = try tri.addVertexTracked(a, steiner, &new_tets);
+
+    try std.testing.expect(new_tets.items.len > 0);
+
+    var smallest_new_radius: f32 = std.math.inf(f32);
+    for (new_tets.items) |idx| {
+        const new_tet = tri.tetrahedra.items[idx].?;
+        for (new_tet.faces()) |f| {
+            const r = f.circumradius(&tri) catch continue;
+            smallest_new_radius = @min(smallest_new_radius, r);
         }
-
-        return .{
-            .min = min,
-            .max = max,
-        };
     }
 
-    /// Returns corners in order shown below
-    ///     7------6
-    ///    /|     /|
-    ///   4------5 |
-    ///   | |    | |
-    ///   | 3----|-2
-    ///   |/     |/
-    ///   0------1
-    ///
-    pub fn corners(self: Aabb) [8]Vec3 {
-        return .{
-            Vec3.make(self.min.x, self.min.y, self.min.z), // 0
-            Vec3.make(self.max.x, self.min.y, self.min.z), // 1
-            Vec3.make(self.max.x, self.max.y, self.min.z), // 2
-            Vec3.make(self.min.x, self.max.y, self.min.z), // 3
+    try std.testing.expect(smallest_new_radius < radius_before);
+}
 
-            Vec3.make(self.min.x, self.min.y, self.max.z), // 4
-            Vec3.make(self.max.x, self.min.y, self.max.z), // 5
-            Vec3.make(self.max.x, self.max.y, self.max.z), // 6
-            Vec3.make(self.min.x, self.max.y, self.max.z), // 7
-        };
+test "segmentOffsetIntersection finds a narrow feature that used to fall between coarse samples" {
+    const from = Vec3.make(-5, 5, 0);
+    const to = Vec3.make(5, 5, 0);
+    const offset: f32 = 1.0;
+
+    const a = std.testing.allocator;
+    const feature_y: f32 = 5.0 - 0.9539;
+
+    const mesh = try mesh_mod.Mesh3D.init(
+        a,
+        &.{
+            .{ .position = Vec4.make(0.55, feature_y, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+            .{ .position = Vec4.make(0.65, feature_y, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+            .{ .position = Vec4.make(0.6, feature_y + 0.05, 0.02, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+        },
+        &.{ 0, 1, 2 },
+    );
+    defer mesh.deinit(a);
+
+    const oracle = MeshOracle{ .mesh = &mesh };
+
+    // Ground truth: confirm a real crossing exists.
+    var found_real_crossing = false;
+    var i: usize = 0;
+    const dense_samples: usize = 500;
+    while (i <= dense_samples) : (i += 1) {
+        const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(dense_samples));
+        const p = from.add(to.sub(from).mul(t));
+        if (oracle.distance(p) < offset) {
+            found_real_crossing = true;
+            break;
+        }
     }
+    try std.testing.expect(found_real_crossing);
 
-    pub fn center(self: Aabb) Vec3 {
-        return self.min.add(self.max).mul(0.5);
-    }
+    // Regression check: with SEGMENT_SAMPLE_COUNT = 32, this narrow
+    // feature (which was missed at the old default of 8) should now
+    // be found. If this ever starts failing again, SEGMENT_SAMPLE_COUNT
+    // may have been lowered, or the feature-size assumptions here no
+    // longer hold relative to it.
+    const result = oracle.segmentOffsetIntersection(from, to, offset);
+    try std.testing.expect(result != null);
+}
 
-    pub fn size(self: Aabb) Vec3 {
-        return self.max.sub(self.min);
-    }
-
-    pub fn diagonal(self: Aabb) f32 {
-        return self.max.sub(self.min).norm();
-    }
-
-    pub fn expand(self: *Aabb, amount: f32) void {
-        const delta = Vec3.make(amount, amount, amount);
-        self.min = self.min.sub(delta);
-        self.max = self.max.add(delta);
-    }
-};
-
-test "super tetrahedron contains AABB" {
+test "projectToOffset produces near-duplicate points for different circumcenters near the same mesh feature" {
     const a = std.testing.allocator;
 
-    var maze = try core.lib.Maze.init(a, 10, 10);
-    defer maze.deinit(a);
-
-    const maze_mesh_options = core.lib.Maze.MeshOptions{
-        .cell_size = 2.0,
-        .wall_height = 2.0,
-        .margin = .{
-            .x = 0.5,
-            .y = 0.5,
-            .z = 0.0,
+    // A single small mesh triangle near the origin.
+    const mesh = try mesh_mod.Mesh3D.init(
+        a,
+        &.{
+            .{ .position = Vec4.make(0, 0, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+            .{ .position = Vec4.make(1, 0, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+            .{ .position = Vec4.make(0, 1, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
         },
-        .origin = .{
-            .x = 4.0,
-            .y = 0.0,
-            .z = 0.0,
-        },
-    };
+        &.{ 0, 1, 2 },
+    );
+    defer mesh.deinit(a);
 
-    var maze_mesh = try maze_mesh_options.createMesh(a, maze);
-    defer maze_mesh.deinit(a);
+    const oracle = MeshOracle{ .mesh = &mesh };
+    const offset: f32 = 1.0;
 
-    const aabb = Aabb.computeFromMesh(maze_mesh);
+    // Two DIFFERENT points that are both closest to the same single
+    // vertex of the triangle (the origin), just approached from
+    // slightly different directions/distances — a very plausible
+    // situation for two different circumcenters near the same feature.
+    const p1 = Vec3.make(0.0, 0.0, 5.0);
+    const p2 = Vec3.make(0.0, 0.0, 4.0);
 
-    var delaunay_mesh = try delaunay.Mesh.init(a, aabb);
-    defer delaunay_mesh.deinit(a);
+    const closest1 = oracle.closestPoint(p1);
+    const closest2 = oracle.closestPoint(p2);
 
-    const tet = delaunay_mesh.tetrahedra.items[0];
+    // Confirm the premise: both really do share the same nearest point.
+    try std.testing.expect(closest1.point.eucDist(closest2.point) < 1e-4);
 
-    for (aabb.corners()) |corner| {
-        try std.testing.expect(
-            tet.containsPoint(&delaunay_mesh, corner),
-        );
+    const proj1 = oracle.projectToOffset(p1, offset);
+    const proj2 = oracle.projectToOffset(p2, offset);
+
+    // Since both p1 and p2 lie along the same ray from the same
+    // closest point, projectToOffset should produce IDENTICAL output
+    // for both, despite p1 and p2 being genuinely different input
+    // points 1 unit apart. This is the actual bug: two legitimately
+    // different cells can be mapped to the same (or near-same) Steiner
+    // point, which can't shrink both of their cavities simultaneously,
+    // and can produce a degenerate/duplicate insertion.
+    std.debug.print("proj1: {any}\nproj2: {any}\ndistance: {d}\n", .{
+        proj1,
+        proj2,
+        proj1.eucDist(proj2),
+    });
+
+    try std.testing.expect(proj1.eucDist(proj2) < 1e-3);
+}
+
+test "inserting a Steiner point mid-flood correctly tags and gates new tetrahedra" {
+    const a = std.testing.allocator;
+    var tri = try delaunay.Triangulation.init(a, .{ .min = Vec3.make(-5, -5, -5), .max = Vec3.make(5, 5, 5) });
+    defer tri.deinit(a);
+
+    var wrapper = try Wrapper.init(&tri, a);
+    defer wrapper.deinit(a);
+
+    var new_tets: std.ArrayList(usize) = try .initCapacity(a, 16);
+    defer new_tets.deinit(a);
+
+    const original_count = tri.tetrahedra.items.len; // 1
+    _ = try tri.addVertexTracked(a, Vec3.make(0, 0, 0), &new_tets);
+
+    try std.testing.expect(new_tets.items.len == 4); // 1 tet -> 4 boundary faces -> 4 new tets
+    try std.testing.expect(tri.tetrahedra.items.len == original_count - 1 + new_tets.items.len);
+
+    try wrapper.ensureTagsCapacity(a);
+    for (new_tets.items) |idx| wrapper.tags.items[idx] = .inside;
+
+    for (new_tets.items) |idx| {
+        try std.testing.expect(wrapper.tags.items[idx] == .inside);
     }
 }
+
+test "Wrapper.run produces a wrap that strictly encloses the input mesh" {
+    const a = std.testing.allocator;
+    const aabb = delaunay.Aabb{ .min = Vec3.make(-10, -10, -10), .max = Vec3.make(10, 10, 10) };
+
+    var tri = try delaunay.Triangulation.init(a, aabb);
+    defer tri.deinit(a);
+
+    const points = [_]Vec3{
+        Vec3.make(0.3, 1.7, -2.1),
+        Vec3.make(4.2, -0.5, 3.3),
+        Vec3.make(-3.1, 2.8, 0.9),
+        Vec3.make(1.1, -4.4, -1.2),
+        Vec3.make(-2.0, -1.3, 4.7),
+        Vec3.make(2.9, 3.1, 1.8),
+    };
+    for (points) |p| _ = try tri.addVertex(a, p);
+
+    var wrapper = try Wrapper.init(&tri, a);
+    defer wrapper.deinit(a);
+
+    const mesh = try mesh_mod.Mesh3D.init(a, &.{
+        .{ .position = Vec4.make(0, 0, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+        .{ .position = Vec4.make(1, 0, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+        .{ .position = Vec4.make(0, 1, 0, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO },
+    }, &.{ 0, 1, 2 });
+    defer mesh.deinit(a);
+
+    const oracle = MeshOracle{ .mesh = &mesh };
+    try wrapper.run(a, TEST_ALPHA, 1.0, oracle);
+
+    // Every mesh vertex must land inside a .inside-tagged tetrahedron,
+    // i.e. strictly within the wrapped volume, not carved away.
+    for (mesh.vertices) |mesh_vertex| {
+        const p = mesh_vertex.position.toVec3();
+
+        var found_containing_inside_tet = false;
+        for (tri.tetrahedra.items, 0..) |tet_opt, idx| {
+            const tet = tet_opt orelse continue;
+            if (wrapper.tags.items[idx] != .inside) continue;
+            if (tet.containsPoint(&tri, p)) {
+                found_containing_inside_tet = true;
+                break;
+            }
+        }
+
+        try std.testing.expect(found_containing_inside_tet);
+    }
+}
+
+test "Wrapper.run respects alpha: a large alpha prevents carving through a tight cavity" {
+    const a = std.testing.allocator;
+    const aabb = delaunay.Aabb{ .min = Vec3.make(-10, -10, -10), .max = Vec3.make(10, 10, 10) };
+
+    var tri = try delaunay.Triangulation.init(a, aabb);
+    defer tri.deinit(a);
+
+    const points = [_]Vec3{
+        Vec3.make(0.3, 1.7, -2.1),
+        Vec3.make(4.2, -0.5, 3.3),
+        Vec3.make(-3.1, 2.8, 0.9),
+        Vec3.make(1.1, -4.4, -1.2),
+        Vec3.make(-2.0, -1.3, 4.7),
+        Vec3.make(2.9, 3.1, 1.8),
+    };
+    for (points) |p| _ = try tri.addVertex(a, p);
+
+    var wrapper = try Wrapper.init(&tri, a);
+    defer wrapper.deinit(a);
+
+    const mesh = try mesh_mod.Mesh3D.init(
+        a,
+        &.{
+            .{
+                .position = Vec4.make(0, 0, 0, 1),
+                .normal = Vec4.ZERO,
+                .uv = Vec2.ZERO,
+                .color = Vec4.ZERO,
+            },
+            .{
+                .position = Vec4.make(1, 0, 0, 1),
+                .normal = Vec4.ZERO,
+                .uv = Vec2.ZERO,
+                .color = Vec4.ZERO,
+            },
+            .{
+                .position = Vec4.make(0, 1, 0, 1),
+                .normal = Vec4.ZERO,
+                .uv = Vec2.ZERO,
+                .color = Vec4.ZERO,
+            },
+        },
+        &.{ 0, 1, 2 },
+    );
+    defer mesh.deinit(a);
+
+    const oracle = MeshOracle{
+        .mesh = &mesh,
+    }; // an enormous alpha should make every gate non-traversable immediately,
+    // so nothing beyond the initial seed tags should ever get carved
+    try wrapper.run(a, 1000.0, 1.0, oracle);
+
+    var outside_count: usize = 0;
+    for (wrapper.tags.items) |tag| {
+        if (tag == .outside) outside_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), outside_count);
+}
+
+test "Wrapper.init tags every tetrahedron .inside before run()" {
+    const a = std.testing.allocator;
+    const aabb = delaunay.Aabb{ .min = Vec3.make(-10, -10, -10), .max = Vec3.make(10, 10, 10) };
+
+    var tri = try delaunay.Triangulation.init(a, aabb);
+    defer tri.deinit(a);
+
+    const points = [_]Vec3{
+        Vec3.make(0.3, 1.7, -2.1),
+        Vec3.make(4.2, -0.5, 3.3),
+        Vec3.make(-3.1, 2.8, 0.9),
+    };
+    for (points) |p| _ = try tri.addVertex(a, p);
+
+    var wrapper = try Wrapper.init(&tri, a);
+    defer wrapper.deinit(a);
+
+    try std.testing.expectEqual(tri.tetrahedra.items.len, wrapper.tags.items.len);
+    for (wrapper.tags.items) |tag| {
+        try std.testing.expectEqual(Tag.inside, tag);
+    }
+}
+
+const Point = struct {
+    point: Vec3,
+    dist: f32,
+};
+
+/// Closest point on triangle (a, b, c) to point p, and the distance to it.
+fn closestPointOnTriangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) Point {
+    // Standard closest-point-on-triangle via barycentric region tests.
+    const ab = b.sub(a);
+    const ac = c.sub(a);
+    const ap = p.sub(a);
+
+    const d1 = Vec3.dot(ab, ap);
+    const d2 = Vec3.dot(ac, ap);
+    if (d1 <= 0 and d2 <= 0) return .{ .point = a, .dist = a.eucDist(p) };
+
+    const bp = p.sub(b);
+    const d3 = Vec3.dot(ab, bp);
+    const d4 = Vec3.dot(ac, bp);
+    if (d3 >= 0 and d4 <= d3) return .{ .point = b, .dist = b.eucDist(p) };
+
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 and d1 >= 0 and d3 <= 0) {
+        const v = d1 / (d1 - d3);
+        const pt = a.add(ab.mul(v));
+        return .{ .point = pt, .dist = pt.eucDist(p) };
+    }
+
+    const cp = p.sub(c);
+    const d5 = Vec3.dot(ab, cp);
+    const d6 = Vec3.dot(ac, cp);
+    if (d6 >= 0 and d5 <= d6) return .{ .point = c, .dist = c.eucDist(p) };
+
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 and d2 >= 0 and d6 <= 0) {
+        const w = d2 / (d2 - d6);
+        const pt = a.add(ac.mul(w));
+        return .{ .point = pt, .dist = pt.eucDist(p) };
+    }
+
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 and (d4 - d3) >= 0 and (d5 - d6) >= 0) {
+        const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        const pt = b.add(c.sub(b).mul(w));
+        return .{ .point = pt, .dist = pt.eucDist(p) };
+    }
+
+    // p projects inside the triangle
+    const denom = 1.0 / (va + vb + vc);
+    const v = vb * denom;
+    const w = vc * denom;
+    const pt = a.add(ab.mul(v)).add(ac.mul(w));
+    return .{ .point = pt, .dist = pt.eucDist(p) };
+}
+
+/// TODO
+/// optimize! O(n)
+fn tooCloseToExisting(tri: *const delaunay.Triangulation, p: Vec3, min_dist: f32) bool {
+    for (tri.vertices.items) |v| {
+        if (v.eucDist(p) < min_dist) return true;
+    }
+    return false;
+}
+
+pub const MeshOracle = struct {
+    mesh: *const mesh_mod.Mesh3D,
+
+    /// TODO OPTIMIZE: brute-force O(triangle count) per query. A BVH
+    /// would make this practical for large meshes.
+    fn triangleCount(self: MeshOracle) usize {
+        return self.mesh.indices.len / 3;
+    }
+
+    fn triangle(self: MeshOracle, i: usize) [3]Vec3 {
+        const zero = self.mesh.indices[i * 3 + 0];
+        const one = self.mesh.indices[i * 3 + 1];
+        const two = self.mesh.indices[i * 3 + 2];
+        return .{
+            self.mesh.vertices[zero].position.toVec3(),
+            self.mesh.vertices[one].position.toVec3(),
+            self.mesh.vertices[two].position.toVec3(),
+        };
+    }
+
+    /// Unsigned distance from `p` to the mesh surface.
+    pub fn distance(self: MeshOracle, p: Vec3) f32 {
+        return self.closestPoint(p).dist;
+    }
+
+    /// Closest point on the mesh surface to `p`, and its distance.
+    pub fn closestPoint(self: MeshOracle, p: Vec3) struct { point: Vec3, dist: f32 } {
+        var best_dist: f32 = std.math.inf(f32);
+        var best_point: Vec3 = undefined;
+
+        var i: usize = 0;
+        while (i < self.triangleCount()) : (i += 1) {
+            const tri = self.triangle(i);
+            const result = closestPointOnTriangle(p, tri[0], tri[1], tri[2]);
+            if (result.dist < best_dist) {
+                best_dist = result.dist;
+                best_point = result.point;
+            }
+        }
+
+        return .{ .point = best_point, .dist = best_dist };
+    }
+
+    /// Projects `p` onto the offset surface (the level set at distance
+    /// `offset` from the mesh), moving away from the nearest surface point.
+    pub fn projectToOffset(self: MeshOracle, p: Vec3, offset: f32) Vec3 {
+        const closest = self.closestPoint(p);
+
+        const dir = if (closest.dist > 1e-6)
+            p.sub(closest.point).mul(1.0 / closest.dist)
+        else
+            Vec3.make(0, 1, 0); // p sits exactly on the surface; pick an arbitrary normal-ish direction
+
+        return closest.point.add(dir.mul(offset));
+    }
+
+    /// Number of samples used to search for a crossing of the offset
+    /// surface along a segment, before falling back to bisection to
+    /// refine the result. Too few samples can miss narrow features
+    /// smaller than segment_length / SEGMENT_SAMPLE_COUNT — see
+    /// "segmentOffsetIntersection misses a narrow feature between coarse
+    /// samples" test for a demonstrated failure case at low sample counts.
+    const SEGMENT_SAMPLE_COUNT: usize = 32;
+    /// Finds the first point along segment (from -> to) where the
+    /// unsigned-distance-minus-offset field crosses zero, i.e. where
+    /// the segment crosses the offset surface. Returns null if no
+    /// crossing is found.
+    ///
+    /// Approximate: samples the segment, finds a sign change in
+    /// (distance(p) - offset), then refines via bisection. This is not
+    /// exact (a sufficiently thin feature between samples could be
+    /// missed) but matches the "inexact by construction" nature of the
+    /// original algorithm, which also has no closed-form solution here.
+    pub fn segmentOffsetIntersection(self: MeshOracle, from: Vec3, to: Vec3, offset: f32) ?Vec3 {
+        const f = struct {
+            fn eval(oracle: MeshOracle, off: f32, p: Vec3) f32 {
+                return oracle.distance(p) - off;
+            }
+        }.eval;
+
+        var prev_t: f32 = 0.0;
+        var prev_val = f(self, offset, from);
+
+        var i: usize = 1;
+        while (i <= SEGMENT_SAMPLE_COUNT) : (i += 1) {
+            const t: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(SEGMENT_SAMPLE_COUNT));
+            const p = from.add(to.sub(from).mul(t));
+            const val = f(self, offset, p);
+
+            if ((prev_val <= 0) != (val <= 0)) {
+                // sign change between prev_t and t: bisect to refine
+                var lo_t = prev_t;
+                var hi_t = t;
+                var lo_val = prev_val;
+
+                var iter: usize = 0;
+                while (iter < 20) : (iter += 1) {
+                    const mid_t = (lo_t + hi_t) * 0.5;
+                    const mid_p = from.add(to.sub(from).mul(mid_t));
+                    const mid_val = f(self, offset, mid_p);
+
+                    if ((mid_val <= 0) == (lo_val <= 0)) {
+                        lo_t = mid_t;
+                        lo_val = mid_val;
+                    } else {
+                        hi_t = mid_t;
+                    }
+                }
+
+                const result_t = (lo_t + hi_t) * 0.5;
+                return from.add(to.sub(from).mul(result_t));
+            }
+
+            prev_t = t;
+            prev_val = val;
+        }
+
+        return null;
+    }
+
+    /// Whether any part of the mesh passes through the tetrahedron's
+    /// volume. Approximate: true if the tet contains any mesh vertex,
+    /// or any mesh triangle edge intersects a tet face.
+    ///
+    /// TODO: this is a reasonable approximation but not fully exact
+    /// (e.g. a triangle that pierces the tet without any vertex inside
+    /// and without its edges crossing a face — rare for reasonably
+    /// tessellated input, but a real edge case). Revisit if artifacts
+    /// show up in practice.
+    pub fn tetIntersectsMesh(self: MeshOracle, tri: *const delaunay.Triangulation, tet: delaunay.Tetrahedron) bool {
+        var i: usize = 0;
+        while (i < self.triangleCount()) : (i += 1) {
+            const t = self.triangle(i);
+            inline for (.{ t[0], t[1], t[2] }) |v| {
+                if (tet.containsPoint(tri, v)) return true;
+            }
+        }
+        return false;
+    }
+};
