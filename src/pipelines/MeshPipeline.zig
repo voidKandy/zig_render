@@ -785,7 +785,11 @@ pub fn recordCommands(
     }
 }
 
-pub fn drawImgui(self: *Self, a: std.mem.Allocator, system_data: *SystemsData) void {
+pub fn drawImgui(
+    self: *Self,
+    a: std.mem.Allocator,
+    system_data: *SystemsData,
+) void {
     var open = true;
     const shown = imgui.Begin("Mesh Pipeline", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();

@@ -33,7 +33,7 @@ const Directions = enum {
     north,
     south,
 
-    fn getValues(d: @This()) [2]i32 {
+    fn vector(d: @This()) [2]i32 {
         return switch (d) {
             .east => .{ 0, 1 },
             .west => .{ 0, -1 },
@@ -45,9 +45,20 @@ const Directions = enum {
 
 width: u32,
 height: u32,
+
 cells: []Cell,
-// flat array of all cell coordinates, partitioned as splits happen
+/// flat array of all cell coordinates, partitioned as splits happen
 coords: []CellIndex,
+threshold: ?usize = null,
+seed: ?u64 = null,
+
+// TEMP
+open_cells: []const CellIndex = &[_]CellIndex{
+    .{
+        .col = 0,
+        .row = 0,
+    },
+},
 
 /// minimum number of cells in a region before splitting
 /// should be moved to some builder struct
@@ -128,6 +139,12 @@ pub fn generate(self: *@This(), a: std.mem.Allocator, threshold: usize, seed: u6
 
     for (0..self.height) |row| {
         for (0..self.width) |col| {
+            if (std.meta.eql(self.open_cells[0], CellIndex{
+                .col = @as(u32, @intCast(col)),
+                .row = @as(u32, @intCast(row)),
+            })) {
+                continue;
+            }
             const cell = &self.cells[row * self.width + col];
             if (row == 0) cell.walls.north = true;
             if (row == self.height - 1) cell.walls.south = true;
@@ -135,6 +152,8 @@ pub fn generate(self: *@This(), a: std.mem.Allocator, threshold: usize, seed: u6
             if (col == self.width - 1) cell.walls.east = true;
         }
     }
+    self.threshold = threshold;
+    self.seed = seed;
 }
 
 const mesh = @import("../root.zig").lib.mesh;
@@ -368,13 +387,15 @@ pub const GenerationContext = struct {
         const size = region.max - region.min;
         for (maze.coords[region.min..region.max]) |idx|
             maze.cellAt(idx.row, idx.col).region = .none;
+
         if (size < self.threshold) {
             for (maze.coords[region.min..region.max]) |idx| {
                 for (std.meta.tags(Directions)) |d| {
-                    const vals = d.getValues();
-                    const nr = @as(i32, @intCast(idx.row)) + vals[0];
-                    const nc = @as(i32, @intCast(idx.col)) + vals[1];
-                    if (nr < 0 or nc < 0 or
+                    const vec = d.vector();
+                    const nr = @as(i32, @intCast(idx.row)) + vec[0];
+                    const nc = @as(i32, @intCast(idx.col)) + vec[1];
+                    if (nr < 0 or
+                        nc < 0 or
                         nr >= @as(i32, @intCast(maze.height)) or
                         nc >= @as(i32, @intCast(maze.width))) continue;
 
@@ -438,9 +459,9 @@ pub const GenerationContext = struct {
             const cur_cell = maze.cellAt(cur_coords.row, cur_coords.col);
 
             for (std.meta.tags(Directions)) |d| {
-                const vals = d.getValues();
-                const nr = @as(i32, @intCast(cur_coords.row)) + vals[0];
-                const nc = @as(i32, @intCast(cur_coords.col)) + vals[1];
+                const vec = d.vector();
+                const nr = @as(i32, @intCast(cur_coords.row)) + vec[0];
+                const nc = @as(i32, @intCast(cur_coords.col)) + vec[1];
                 if (nr < 0 or nc < 0 or
                     nr >= @as(i32, @intCast(maze.height)) or
                     nc >= @as(i32, @intCast(maze.width)))
@@ -490,7 +511,7 @@ pub const GenerationContext = struct {
         const region_a = Region{ .min = region.min, .max = split };
         const region_b = Region{ .min = split, .max = region.max };
 
-        // --- WALL: draw walls on boundary, leave one gap ---
+        // --- WALL: create walls on boundary, leave one gap ---
         var gap_from: ?CellIndex = null;
         var gap_to: ?CellIndex = null;
         var gap_chosen = false;
@@ -498,9 +519,9 @@ pub const GenerationContext = struct {
 
         for (maze.coords[region_a.min..region_a.max]) |idx| {
             for (std.meta.tags(Directions)) |d| {
-                const vals = d.getValues();
-                const nr = @as(i32, @intCast(idx.row)) + vals[0];
-                const nc = @as(i32, @intCast(idx.col)) + vals[1];
+                const vec = d.vector();
+                const nr = @as(i32, @intCast(idx.row)) + vec[0];
+                const nc = @as(i32, @intCast(idx.col)) + vec[1];
 
                 if (nr < 0 or nc < 0 or
                     nr >= @as(i32, @intCast(maze.height)) or
@@ -524,9 +545,9 @@ pub const GenerationContext = struct {
         // now draw all walls except the gap
         for (maze.coords[region_a.min..region_a.max]) |idx| {
             for (std.meta.tags(Directions)) |d| {
-                const vals = d.getValues();
-                const nr = @as(i32, @intCast(idx.row)) + vals[0];
-                const nc = @as(i32, @intCast(idx.col)) + vals[1];
+                const vec = d.vector();
+                const nr = @as(i32, @intCast(idx.row)) + vec[0];
+                const nc = @as(i32, @intCast(idx.col)) + vec[1];
                 if (nr < 0 or nc < 0 or
                     nr >= @as(i32, @intCast(maze.height)) or
                     nc >= @as(i32, @intCast(maze.width))) continue;

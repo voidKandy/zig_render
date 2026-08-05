@@ -199,7 +199,10 @@ pub const AllocatedData = struct {
                 .pixels_per_cell = cd.pixels_per_cell,
                 .maze_origin = cd.maze_origin,
             },
-            .{ .mesh_ranges = try meshes.ranges.toOwnedSlice(allocs.std) },
+            SystemsData{
+                .mesh_ranges = try meshes.ranges.toOwnedSlice(allocs.std),
+                .maze = cd.maze,
+            },
         };
     }
 
@@ -219,8 +222,33 @@ pub const AllocatedData = struct {
 pub const SystemsData = struct {
     mesh_ranges: []core.resources.Meshes2D.MeshRanges,
 
+    maze: core.lib.Maze,
+    maze_update: bool = false,
+
     pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
         allocs.std.free(self.mesh_ranges);
+    }
+
+    pub fn update(
+        self: *@This(),
+        a: std.mem.Allocator,
+        alloc_data: AllocatedData,
+    ) void {
+        if (self.maze_update) {
+
+            // TEMP
+            for (self.maze.cells) |*c|
+                c.walls = .{};
+
+            self.maze.generate(a, self.maze.threshold.?, self.maze.seed.?);
+            const cells = GPUMazeCell.arrayFromCellArray(a, self.maze.cells) catch @panic("OOM");
+            defer a.free(cells);
+
+            const aligned_maze: [*]GPUMazeCell = @ptrCast(@alignCast(alloc_data.maze_state.mapped));
+            @memcpy(aligned_maze, cells);
+
+            self.maze_update = false;
+        }
     }
 };
 
@@ -795,10 +823,19 @@ pub fn recordCommandsGraphics(
     }
 }
 
-pub fn drawImgui(self: *Self, ui_set: vk.DescriptorSet) void {
+pub fn drawImgui(
+    self: *Self,
+    system_data: *SystemsData,
+    ui_set: vk.DescriptorSet,
+) void {
     _ = self;
     var open = true;
     const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    var seed: c_int = @intCast(system_data.maze.seed.?);
+    if (imgui.InputInt("seed", &seed)) {
+        system_data.maze.seed = @as(u64, @intCast(seed));
+        system_data.maze_update = true;
+    }
     defer imgui.End();
     if (!shown) return;
     imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });

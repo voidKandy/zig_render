@@ -186,6 +186,10 @@ pub fn run(self: *Self) void {
         self.mesh_pipeline_systems_data.update(
             self.mesh_pipeline_data,
         );
+        self.hud_pipeline_systems_data.update(
+            self.allocs.std,
+            self.hud_pipeline_data,
+        );
         self.drawImgui();
         self.drawFrame();
     }
@@ -588,8 +592,14 @@ fn drawImgui(self: *Self) void {
 
     self.global_data.drawImgui();
     self.background_pipeline.drawImgui();
-    self.hud_pipeline.drawImgui(self.hud_descriptor_sets.ui);
-    self.mesh_pipeline.drawImgui(self.allocs.std, &self.mesh_pipeline_systems_data);
+    self.hud_pipeline.drawImgui(
+        &self.hud_pipeline_systems_data,
+        self.hud_descriptor_sets.ui,
+    );
+    self.mesh_pipeline.drawImgui(
+        self.allocs.std,
+        &self.mesh_pipeline_systems_data,
+    );
 
     c.imgui.Render();
 }
