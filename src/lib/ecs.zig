@@ -231,21 +231,21 @@ pub const Entity = u32;
 
 pub const EcsOptions = struct {
     max_entities: usize,
-    max_systems: usize,
+    // max_systems: usize,
     /// Starting to feel fishy
     State: type,
-    // components: []const ComponentDecl,
     /// Components are declared by a simple struct
+    /// fieldnames and their types define what components
+    /// map to which type and what name
     components: type,
-    // systems: []type,
 };
 
 /// Entity Component System "Coordinator"
 pub fn Ecs(
     comptime Options: EcsOptions,
 ) type {
-    if (Options.max_entities == 0 or Options.max_systems == 0) {
-        @compileError("Set Options.max_entities & Options.max_systems to at least 1!");
+    if (Options.max_entities == 0) {
+        @compileError("Set Options.max_entities to at least 1!");
     }
     return struct {
         const ThisEcs = @This();
@@ -256,7 +256,6 @@ pub fn Ecs(
         /// this is an allocator returned by `ArenaAllocator.allocator()`
         allocator: Allocator,
         entities: EntityManager,
-        systems: SystemManager,
         components: ComponentsManager,
 
         pub fn init(arena: *std.heap.ArenaAllocator) ThisEcs {
@@ -264,13 +263,11 @@ pub fn Ecs(
             return ThisEcs{
                 .allocator = alloc,
                 .entities = EntityManager.init(alloc),
-                .systems = SystemManager.init(alloc) catch @panic("FAILED to initialize Systems Manager"),
                 .components = ComponentsManager.init(),
             };
         }
         pub fn deinit(self: *ThisEcs) void {
             self.entities.manager.deinit(self.allocator);
-            self.systems.deinit();
             self.components.deinit(self.allocator);
         }
 
@@ -281,166 +278,6 @@ pub fn Ecs(
         /// archetype.set(@intFromEnum(ComponentTag.othercomponent));
         /// ```
         pub const Signature = std.bit_set.IntegerBitSet(N_COMPONENTS);
-
-        /// If `ECS` finds no enities matching `queries`, the system will not run
-        /// If `queries` field is null, the system will run regardless
-        pub const System = struct {
-            const StartFunc = *const fn (*anyopaque, *ThisEcs) anyerror!void;
-            const RunFunc = *const fn (*anyopaque, *ThisEcs, *Options.State) anyerror!void;
-            disabled: bool = false,
-            // schedule: SysSchedule,
-            inner: *anyopaque,
-            /// Sometimes a system wants to spawn entities or do other setup
-            startupFn: ?StartFunc,
-            runFn: RunFunc,
-
-            /// **Requirements** for type passed as `T`:
-            ///  `pub fn run(*@This(),  *ThisEcs, *Options.State) anyerror!void`
-            ///  Optionally:
-            /// `pub fn startup(*@This(), *ThisEcs)  anyerror!void`
-            /// **!! NOTE THEY ARE PUBLIC !!**
-            /// Allocates for *inner
-            /// > INFO Feels weird
-            pub fn init(
-                allocator: std.mem.Allocator,
-                T: type,
-                v: T,
-            ) Allocator.Error!@This() {
-                const inner = try allocator.create(T);
-                inner.* = v;
-                var startFunc: ?System.StartFunc = null;
-
-                std.log.warn(
-                    \\ Initializing {s} system..
-                    \\
-                , .{@typeName(T)});
-
-                if (std.meta.hasFn(T, "startup")) {
-                    startFunc = struct {
-                        fn start(val: *anyopaque, ecs: *ThisEcs) anyerror!void {
-                            std.log.warn(
-                                \\ {s} Startup running...
-                                \\
-                            , .{@typeName(T)});
-                            const val_as_type: *T = @ptrCast(@alignCast(val));
-                            std.log.warn(
-                                \\ VALUE: 
-                                \\ {any}
-                            , .{val_as_type.*});
-                            return T.startup(val_as_type, ecs);
-                        }
-                    }.start;
-                }
-
-                return System{
-                    // .schedule = schedule,
-                    .inner = @ptrCast(inner),
-                    // .alignment = @alignOf(T),
-                    .runFn = struct {
-                        fn run(val: *anyopaque, ecs: *ThisEcs, state: *Options.State) anyerror!void {
-                            std.log.warn(
-                                \\ {s} System running...
-                                \\
-                                \\ alignment: {d}
-                                \\ target alignment: {d}
-                            , .{ @typeName(T), @alignOf(@TypeOf(val)), @alignOf(T) });
-                            const val_as_type: *T = @ptrCast(@alignCast(val));
-                            return T.run(val_as_type, ecs, state);
-                        }
-                    }.run,
-                    .startupFn = startFunc,
-                };
-            }
-        };
-
-        /// Maps to fields of system manager.
-        /// > this was the quickest way to implement scheduling, I'm sure there's a better way
-        pub const SysSchedule = enum {
-            pre_render,
-            render,
-            post_render,
-        };
-
-        const SystemManager = struct {
-            all: IdentifierManager(System, Options.max_systems),
-            schedules: std.AutoHashMap(SysSchedule, std.AutoHashMap(u32, void)),
-            fn init(allocator: Allocator) !@This() {
-                return .{
-                    .all = try IdentifierManager(System, Options.max_systems).init(allocator),
-                    .schedules = std.AutoHashMap(SysSchedule, std.AutoHashMap(u32, void)).init(allocator),
-                };
-            }
-            fn deinit(self: *@This()) void {
-                defer self.schedules.deinit();
-                var iter =
-                    self.schedules.iterator();
-                while (iter.next()) |entry| {
-                    entry.value_ptr.*.deinit();
-                }
-            }
-        };
-
-        pub fn registerSystem(self: *@This(), system: System, schedule: SysSchedule) Allocator.Error!struct { u32, usize } {
-            const registered = try self.systems.all.register(system);
-            const result = try self.systems.schedules.getOrPut(schedule);
-
-            if (!result.found_existing) {
-                var set = std.AutoHashMap(u32, void).init(self.allocator);
-                try set.put(registered.@"0", {});
-                result.value_ptr.* = set;
-            } else {
-                try result.value_ptr.*.put(registered.@"0", {});
-            }
-            return registered;
-        }
-
-        /// nullifies startFn after running
-        /// This is maybe a bad solution to keeping track of systems that have been started
-        /// > but also maybe very good?
-        pub fn startSytem(self: *ThisEcs, sys_id: u32) anyerror!void {
-            var system = self.systems.all.getData(sys_id) orelse return error.NoData;
-            const func = system.startupFn orelse return;
-
-            std.log.warn(
-                \\ starting System with id {d}
-                \\ 
-            , .{sys_id});
-            try func(system.inner, self);
-            system.startupFn = null;
-        }
-        /// Should be run right when drawing mode begins, before the update loop
-        /// should take schedule into account
-        /// might create entities
-        pub fn startSytems(self: *ThisEcs) anyerror!void {
-            std.log.warn(
-                \\ Starting {d} systems...
-                \\
-            , .{self.systems.all.count});
-            var iter =
-                self.systems.all.identifier_map.valueIterator();
-            while (iter.next()) |id| {
-                try self.startSytem(id.*);
-            }
-        }
-
-        pub fn runSystems(self: *ThisEcs, state: *ThisEcs.State) anyerror!void {
-            for (&[_]SysSchedule{
-                .pre_render,
-                .render,
-                .post_render,
-            }) |schedule| {
-                const schedule_set =
-                    self.systems.schedules.get(schedule);
-                if (schedule_set) |set| {
-                    var sys_id_iter = set.keyIterator();
-                    while (sys_id_iter.next()) |id| {
-                        const system = self.systems.all.getData(id.*) orelse return error.NoData;
-                        if (system.disabled) continue;
-                        try system.runFn(system.inner, self, state);
-                    }
-                }
-            }
-        }
 
         pub fn entityHandle(self: *ThisEcs, entity: Entity) error{NoData}!EntityHandle {
             var sig =
@@ -836,7 +673,6 @@ test "ECS Entity Management" {
     };
     const MyEcs = Ecs(.{
         .max_entities = 5,
-        .max_systems = 5,
         .State = State,
         .components = struct {
             somecomponent: bool,
@@ -980,28 +816,18 @@ test "ECS Entity Management" {
                 }
             }
         };
-    // const some_system_st = try ecs.allocator.create(SomeSysState);
-    const some_system_st = SomeSysState{ .call_count = 0 };
-    const some_system = try MyEcs.System.init(ecs.allocator, SomeSysState, some_system_st);
-    // const some_system = try ecs.initSystem(SomeSysState, some_system_st);
-    const sys_id, const sys_idx = try ecs.registerSystem(some_system, .pre_render);
-
-    // try ecs.startSytems();
-    try ecs.startSytem(sys_id);
+    var some_system_st = SomeSysState{ .call_count = 0 };
+    try some_system_st.startup(&ecs);
 
     var state = State{};
-    try ecs.runSystems(&state);
-
+    try some_system_st.run(&ecs, &state);
     {
         const got = ecs.components.access(u32, MyEcs.ComponentTag.someothercomponent, entity_b.index().?) orelse @panic("Nothing at that index");
         try std.testing.expectEqual(
             1111,
             got.*,
         );
-        try std.testing.expect(blk: {
-            const st: *SomeSysState = @ptrCast(@alignCast(ecs.systems.all.data[sys_idx].?.inner));
-            break :blk st.*.call_count == 2;
-        });
+        try std.testing.expect(some_system_st.call_count == 2);
     }
 
     std.debug.print(
