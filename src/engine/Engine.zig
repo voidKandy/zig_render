@@ -45,7 +45,7 @@ imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
 global_data: core.engine.GlobalAllocatedData = undefined,
 
-ecs: core.engine.data.Ecs,
+world: core.engine.world.GameWorld,
 
 background_pipeline: BackgroundPipeline = undefined,
 background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
@@ -81,7 +81,7 @@ pub fn init(
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
         .io = io,
-        .ecs = core.engine.data.Ecs.init(a) catch @panic("OOM"),
+        .world = core.engine.world.GameWorld.init(a) catch @panic("OOM"),
     };
 
     self.initWindow();
@@ -187,7 +187,7 @@ pub fn run(self: *Self) void {
         );
 
         self.mesh_pipeline_gui.update(
-            &self.ecs,
+            &self.world,
             self.mesh_pipeline_data,
         );
         self.hud_pipeline_systems_data.update(
@@ -343,7 +343,7 @@ pub fn initPipelines(
 
     self.mesh_pipeline_data, self.mesh_pipeline_gui = MeshPipeline.AllocatedData.create(
         self.allocs,
-        &self.ecs,
+        &self.world,
         &self.upload_context,
         self.logical_device,
         self.physical_device,
@@ -604,7 +604,7 @@ fn drawImgui(self: *Self) void {
     self.mesh_pipeline_gui.drawImgui(
         self.allocs.std,
         &self.mesh_pipeline,
-        &self.ecs,
+        &self.world,
     );
 
     c.imgui.Render();
@@ -758,7 +758,7 @@ fn recordCommandBuffer(
 
     self.mesh_pipeline.bind(frame.main_command_buffer);
     self.mesh_pipeline.recordCommands(
-        &self.ecs,
+        &self.world,
         // self.mesh_pipeline_systems_data,
         self.global_data.set,
         self.mesh_descriptor_set,

@@ -236,29 +236,30 @@ pub const EcsOptions = struct {
     components: type,
 };
 
-/// Entity Component System "Coordinator"
-pub fn Ecs(
+/// Does not care about how `System` part of the ECS is implemented
+/// caller is expected to have their own `System` system
+/// should leverage querying and storage of components provided by this type
+pub fn EntityStore(
     comptime Options: EcsOptions,
 ) type {
     if (Options.max_entities == 0) {
         @compileError("Set Options.max_entities to at least 1!");
     }
     return struct {
-        const ThisEcs = @This();
+        const ThisStore = @This();
         pub const Opts = Options;
         const N_COMPONENTS: usize =
             @intCast(@typeInfo(Options.components).@"struct".fields.len);
-        /// this is an allocator returned by `ArenaAllocator.allocator()`
         entities: EntityManager,
         components: ComponentsManager,
 
-        pub fn init(a: Allocator) Allocator.Error!ThisEcs {
-            return ThisEcs{
+        pub fn init(a: Allocator) Allocator.Error!ThisStore {
+            return ThisStore{
                 .entities = EntityManager.init(a),
                 .components = ComponentsManager.init(),
             };
         }
-        pub fn deinit(self: *ThisEcs, a: Allocator) void {
+        pub fn deinit(self: *ThisStore, a: Allocator) void {
             self.entities.manager.deinit(a);
         }
 
@@ -270,7 +271,7 @@ pub fn Ecs(
         /// ```
         pub const Signature = std.bit_set.IntegerBitSet(N_COMPONENTS);
 
-        pub fn entityHandle(self: *ThisEcs, entity_id: u32) error{NoData}!EntityHandle {
+        pub fn entityHandle(self: *ThisStore, entity_id: u32) error{NoData}!EntityHandle {
             var sig =
                 self.entities.manager.getData(entity_id) orelse return error.NoData;
             return EntityHandle{ .ecs = self, .identifier = entity_id, .signature = &sig };
@@ -310,7 +311,7 @@ pub fn Ecs(
         /// TODO OPTIMIZE
         /// This currently is 0(n) n=entities
         /// There is also an ArrayList allocated
-        pub fn queryEntities(self: *ThisEcs, query: Query) QueryIterator {
+        pub fn queryEntities(self: *ThisStore, query: Query) QueryIterator {
             return .{
                 .ecs = self,
                 .query = query,
@@ -366,7 +367,7 @@ pub fn Ecs(
         };
 
         pub const QueryIterator = struct {
-            ecs: *ThisEcs,
+            ecs: *ThisStore,
             query: Query,
             index: usize = 0,
 
@@ -522,7 +523,7 @@ pub fn Ecs(
         /// Returns the function by which `Entity`s are compared according to a `Query`'s rule
         /// Helper struct for easily managing any components associated with an entity
         pub const EntityHandle = struct {
-            ecs: *ThisEcs,
+            ecs: *ThisStore,
             identifier: u32,
             signature: *Signature,
             name: ?[]const u8 = null,
@@ -619,7 +620,7 @@ pub fn Ecs(
                 const id, const i = try self.manager.register(Signature.initEmpty());
                 // _ = i;
                 var parent_ptr =
-                    @as(*ThisEcs, @fieldParentPtr("entities", self));
+                    @as(*ThisStore, @fieldParentPtr("entities", self));
                 _ = &parent_ptr;
 
                 return EntityHandle{
@@ -643,7 +644,7 @@ test "ECS Entity Management" {
         \\
     , .{});
 
-    const MyEcs = Ecs(.{
+    const MyEcs = EntityStore(.{
         .max_entities = 5,
         .components = struct {
             somecomponent: bool,

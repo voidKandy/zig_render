@@ -47,7 +47,7 @@ pub const AllocatedData = struct {
 
     pub fn create(
         allocs: core.engine.Engine.Allocators,
-        ecs: *core.engine.data.Ecs,
+        world: *core.engine.world.GameWorld,
         upload_ctx: *core.bindings.vulkan_init.UploadContext,
         logical_device: core.bindings.vulkan_init.LogicalDevice,
         physical_device: core.bindings.vulkan_init.PhysicalDevice,
@@ -118,8 +118,8 @@ pub const AllocatedData = struct {
         const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
 
         for (meshes.meshes.items) |mesh_handle| {
-            var ent = try ecs.entities.register(null);
-            ent.addComponent(.mesh3D, core.engine.data.Mesh3DComponent{
+            var ent = try world.entities.register(null);
+            ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
                 .handle = mesh_handle,
             });
         }
@@ -130,13 +130,6 @@ pub const AllocatedData = struct {
                 .meshes = uploaded_meshes,
             },
             Gui{
-                // .mesh_scale_factors = blk: {
-                //     const scale_factors = try allocs.std.alloc(f32, meshes.meshes.items.len);
-                //     for (0..meshes.meshes.items.len) |i|
-                //         scale_factors[i] = 1.0;
-                //     break :blk scale_factors;
-                // },
-                // .meshes = try meshes.meshes.toOwnedSlice(allocs.std),
                 .mesh_metadatas = try meshes.meta_data.toOwnedSlice(allocs.std),
                 .material_names = try material_names.toOwnedSlice(allocs.std),
             },
@@ -170,7 +163,7 @@ pub const Gui = struct {
 
     pub fn update(
         self: *@This(),
-        ecs: *core.engine.data.Ecs,
+        ecs: *core.engine.world.GameWorld,
         alloc_data: AllocatedData,
     ) void {
         if (self.edited_meshes.items.len > 0) {
@@ -213,7 +206,7 @@ pub const Gui = struct {
         self: *@This(),
         a: std.mem.Allocator,
         pipeline: *Self,
-        ecs: *core.engine.data.Ecs,
+        ecs: *core.engine.world.GameWorld,
     ) void {
         var open = true;
         const shown = imgui.Begin("Mesh Pipeline", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
@@ -234,9 +227,9 @@ pub const Gui = struct {
         }
 
         var idx: usize = 0;
-        const query = core.engine.data.Ecs.Query{ .is = .{ .rule = .at_least, .sig = s: {
-            var s = core.engine.data.Ecs.Signature.initEmpty();
-            s.set(@intFromEnum(core.engine.data.Ecs.Meta.ComponentTag.mesh3D));
+        const query = core.engine.world.GameWorld.Query{ .is = .{ .rule = .at_least, .sig = s: {
+            var s = core.engine.world.GameWorld.Signature.initEmpty();
+            s.set(@intFromEnum(core.engine.world.GameWorld.Meta.ComponentTag.mesh3D));
             break :s s;
         } } };
         var mesh_entities_iter = ecs.queryEntities(query);
@@ -248,7 +241,7 @@ pub const Gui = struct {
             const mesh_component =
                 mutable_handle.accessComponent(.mesh3D) catch unreachable;
 
-            const mesh: core.engine.data.Mesh3DComponent = mesh_component.mesh3D;
+            const mesh: core.engine.world.Mesh3DComponent = mesh_component.mesh3D;
 
             const ranges = mesh.handle.ranges;
             const mesh_metadatas =
@@ -870,7 +863,7 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 
 pub fn recordCommands(
     self: Self,
-    ecs: *core.engine.data.Ecs,
+    ecs: *core.engine.world.GameWorld,
     global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     tx_set: vk.DescriptorSet,
@@ -898,9 +891,9 @@ pub fn recordCommands(
         null,
     );
 
-    const query = core.engine.data.Ecs.Query{ .is = .{ .rule = .at_least, .sig = s: {
-        var s = core.engine.data.Ecs.Signature.initEmpty();
-        s.set(@intFromEnum(core.engine.data.Ecs.Meta.ComponentTag.mesh3D));
+    const query = core.engine.world.GameWorld.Query{ .is = .{ .rule = .at_least, .sig = s: {
+        var s = core.engine.world.GameWorld.Signature.initEmpty();
+        s.set(@intFromEnum(core.engine.world.GameWorld.Meta.ComponentTag.mesh3D));
         break :s s;
     } } };
     var mesh_entities_iter = ecs.queryEntities(query);
@@ -909,7 +902,7 @@ pub fn recordCommands(
     while (mesh_entities_iter.next()) |handle| : (idx += 1) {
         var mutable_handle = handle;
         const mesh_component = mutable_handle.accessComponent(.mesh3D) catch unreachable;
-        const mesh: core.engine.data.Mesh3DComponent = mesh_component.mesh3D;
+        const mesh: core.engine.world.Mesh3DComponent = mesh_component.mesh3D;
         const ranges = mesh.handle.ranges;
         // bind set 0: VB, IB, UBO for this submesh
         vk.CmdBindDescriptorSets(

@@ -14,7 +14,7 @@ pub const bindings = struct {
 
 pub const engine = struct {
     pub const Camera = @import("engine/Camera.zig");
-    pub const data = @import("engine/data.zig");
+    pub const world = @import("engine/world.zig");
     pub const Engine = @import("engine/Engine.zig");
     pub const frames = @import("engine/frames.zig");
     pub const GlobalAllocatedData = @import("engine/GlobalAllocatedData.zig");

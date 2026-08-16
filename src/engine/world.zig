@@ -11,8 +11,8 @@ pub const Mesh3DComponent = struct {
 //     handle: core.resources.Meshes2D.MeshHandle,
 // metadatas: []const core.resources.Meshes2D.MetaData,
 // };
-pub const Ecs =
-    core.lib.ecs.Ecs(.{
+pub const GameWorld =
+    core.lib.ecs.EntityStore(.{
         .max_entities = 64,
         .components = struct {
             camera: core.engine.Camera,
