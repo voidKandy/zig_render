@@ -114,13 +114,13 @@ pub fn IdentifierManager(
             return (self.identifier_map.get(idx) orelse return null).id;
         }
 
-        pub fn getData(self: Manager, entity: u32) ?T {
-            const idx = self.index_map.get(entity) orelse return null;
+        pub fn getData(self: Manager, entity_id: u32) ?T {
+            const idx = self.index_map.get(entity_id) orelse return null;
             return self.data[idx];
         }
 
-        pub fn getDataPtr(self: *Manager, entity: u32) ?*T {
-            const idx = self.index_map.get(entity) orelse return null;
+        pub fn getDataPtr(self: *Manager, entity_id: u32) ?*T {
+            const idx = self.index_map.get(entity_id) orelse return null;
             return &(self.data[idx] orelse return null);
         }
     };
@@ -227,13 +227,9 @@ test "getDataPtr mutation persists across operations" {
     try std.testing.expectEqual(@as(u8, 99), m.getData(a.@"0").?);
 }
 pub const ComponentDecl = struct { [:0]const u8, type };
-pub const Entity = u32;
 
 pub const EcsOptions = struct {
     max_entities: usize,
-    // max_systems: usize,
-    /// Starting to feel fishy
-    State: type,
     /// Components are declared by a simple struct
     /// fieldnames and their types define what components
     /// map to which type and what name
@@ -249,26 +245,21 @@ pub fn Ecs(
     }
     return struct {
         const ThisEcs = @This();
-        pub const State = Options.State;
         pub const Opts = Options;
         const N_COMPONENTS: usize =
             @intCast(@typeInfo(Options.components).@"struct".fields.len);
         /// this is an allocator returned by `ArenaAllocator.allocator()`
-        allocator: Allocator,
         entities: EntityManager,
         components: ComponentsManager,
 
-        pub fn init(arena: *std.heap.ArenaAllocator) ThisEcs {
-            const alloc = arena.allocator();
+        pub fn init(a: Allocator) Allocator.Error!ThisEcs {
             return ThisEcs{
-                .allocator = alloc,
-                .entities = EntityManager.init(alloc),
+                .entities = EntityManager.init(a),
                 .components = ComponentsManager.init(),
             };
         }
-        pub fn deinit(self: *ThisEcs) void {
-            self.entities.manager.deinit(self.allocator);
-            self.components.deinit(self.allocator);
+        pub fn deinit(self: *ThisEcs, a: Allocator) void {
+            self.entities.manager.deinit(a);
         }
 
         /// Archetypes can easily be expressed through signatures:
@@ -279,19 +270,19 @@ pub fn Ecs(
         /// ```
         pub const Signature = std.bit_set.IntegerBitSet(N_COMPONENTS);
 
-        pub fn entityHandle(self: *ThisEcs, entity: Entity) error{NoData}!EntityHandle {
+        pub fn entityHandle(self: *ThisEcs, entity_id: u32) error{NoData}!EntityHandle {
             var sig =
-                self.entities.manager.getData(entity) orelse return error.NoData;
-            return EntityHandle{ .ecs = self, .identifier = entity, .signature = &sig };
+                self.entities.manager.getData(entity_id) orelse return error.NoData;
+            return EntityHandle{ .ecs = self, .identifier = entity_id, .signature = &sig };
         }
         /// Returns the signature associated with the given component
-        pub fn componentSignature(tag: ComponentTag) Signature {
+        pub fn componentSignature(tag: Meta.ComponentTag) Signature {
             var sig = Signature.initEmpty();
             sig.set(@intFromEnum(tag));
             return sig;
         }
         /// Returns the signature associated with the given component
-        pub fn componentsSignature(tags: []ComponentTag) Signature {
+        pub fn componentsSignature(tags: []Meta.ComponentTag) Signature {
             var sig = Signature.initEmpty();
             for (tags) |c| {
                 sig.set(@intFromEnum(c));
@@ -311,71 +302,19 @@ pub fn Ecs(
         //     }
         //     return &all;
         // }
-        pub inline fn componentType(variant: ComponentTag) type {
+        pub inline fn componentType(variant: Meta.ComponentTag) type {
             const idx = @intFromEnum(variant);
             return @typeInfo(Options.components).@"struct".fields[idx].type;
         }
 
-        pub fn queryEntities(self: *ThisEcs, query: Query) (error{NoData} || Allocator.Error)!?QueryResult {
-            std.log.warn(
-                \\
-                \\ Running Query {any}
-                \\
-            , .{query});
-
-            var all = try std.ArrayList(ThisEcs.EntityHandle).initCapacity(self.allocator, 2048);
-            // First, we get a result based purely on which type/tag the entity matches
-            get_entities: {
-                switch (query) {
-                    .id => |entity| {
-                        std.log.warn(
-                            \\ ALL ENTITIES:
-                            \\ {any}
-                        , .{self.entities.manager.lastRegistered()});
-                        if (self.entities.manager.index_map.get(entity)) |_| {
-                            try all.append(self.allocator, try self.entityHandle(entity));
-                            break :get_entities;
-                        }
-
-                        std.log.warn(
-                            \\
-                            \\ DIRECT QUERY RETURNED NO ENTITY FOR ID: {d}
-                        , .{entity});
-                        break :get_entities;
-                    },
-                    .query => |q| {
-                        var entity_iter = self.entities.manager.identifier_map.valueIterator();
-                        while (entity_iter.next()) |entity| {
-                            const idx = self.entities.manager.index_map.get(entity.*.id) orelse @panic("NO INDEX FOR ENTITY??");
-                            const sig = self.entities.manager.data[idx] orelse @panic("NO SIGNATURE FOR ENTITY??");
-
-                            var is_match = true;
-                            if (q.is) |is|
-                                is_match = is.rule.cmpFn()(sig, is.sig);
-
-                            var is_not_match = false;
-                            if (q.is_not) |is_not|
-                                is_not_match = is_not.rule.cmpFn()(sig, is_not.sig);
-
-                            if (is_match and !is_not_match)
-                                try all.append(self.allocator, try self.entityHandle(entity.*.id));
-                        }
-                        if (all.items.len > 0)
-                            break :get_entities;
-                    },
-                }
-            }
-
-            if (all.items.len == 0)
-                return null;
-
-            switch (query) {
-                .id => {
-                    std.debug.assert(all.items.len <= 1);
-                    return QueryResult{ .id = try self.entityHandle(query.id) };
-                },
-                .query => return QueryResult{ .query = try all.toOwnedSlice(self.allocator) },
-            }
+        /// TODO OPTIMIZE
+        /// This currently is 0(n) n=entities
+        /// There is also an ArrayList allocated
+        pub fn queryEntities(self: *ThisEcs, query: Query) QueryIterator {
+            return .{
+                .ecs = self,
+                .query = query,
+            };
         }
 
         pub const QueryRule = enum {
@@ -413,7 +352,7 @@ pub fn Ecs(
             rule: QueryRule,
             sig: Signature,
             // component_rules: ?[]const ComponentRule = null,
-            pub fn new(rule: QueryRule, components: []const ComponentTag) @This() {
+            pub fn new(rule: QueryRule, components: []const Meta.ComponentTag) @This() {
                 return .{ .rule = rule, .sig = componentsSignature(@constCast(components)) };
             }
         };
@@ -421,127 +360,162 @@ pub fn Ecs(
         /// Query can either directly look for an entity by id (id)
         /// or they can be queried by component signature (query)
         pub const QueryType = enum { id, query };
-        pub const Query = union(QueryType) {
-            id: Entity,
-            query: struct {
-                is: ?QueryStatement = null,
-                is_not: ?QueryStatement = null,
-            },
+        pub const Query = struct {
+            is: ?QueryStatement = null,
+            is_not: ?QueryStatement = null,
         };
 
-        pub const QueryResult = union(QueryType) { id: ThisEcs.EntityHandle, query: []ThisEcs.EntityHandle };
+        pub const QueryIterator = struct {
+            ecs: *ThisEcs,
+            query: Query,
+            index: usize = 0,
 
-        const en_info = blk: {
-            var fnms: [N_COMPONENTS][]const u8 = undefined;
-            var fvls: [N_COMPONENTS]u32 = undefined;
-            for (0.., @typeInfo(Options.components).@"struct".fields, &fnms, &fvls) |i, field, *fnm, *fvl| {
-                fnm.* = field.name;
-                fvl.* = i;
+            pub fn next(self: *@This()) ?EntityHandle {
+                while (self.index < self.ecs.entities.manager.count) {
+                    const idx = self.index;
+                    self.index += 1;
+
+                    const sig = self.ecs.entities.manager.data[idx] orelse unreachable;
+
+                    if (self.query.is) |is| {
+                        if (!is.rule.cmpFn()(sig, is.sig))
+                            continue;
+                    }
+
+                    if (self.query.is_not) |is_not| {
+                        if (is_not.rule.cmpFn()(sig, is_not.sig))
+                            continue;
+                    }
+
+                    const id = self.ecs.entities.manager.getId(idx) orelse unreachable;
+
+                    return self.ecs.entityHandle(id) catch unreachable;
+                }
+
+                return null;
             }
-            break :blk .{ fnms, fvls };
         };
 
-        const strct_info = blk: {
-            var fnms: [N_COMPONENTS][]const u8 = undefined;
-            var ftyps: [N_COMPONENTS]type = undefined;
-            var fattrs: [N_COMPONENTS]std.builtin.Type.StructField.Attributes = undefined;
-            for (@typeInfo(Options.components).@"struct".fields, &fnms, &ftyps, &fattrs) |field, *fnm, *ftp, *attr| {
-                fnm.* = field.name;
-                ftp.* = field.type;
-                attr.* = .{};
-            }
-            break :blk .{ fnms, ftyps, fattrs };
-        };
+        pub const Meta = struct {
+            names: [N_COMPONENTS][]const u8 = undefined,
+            types: [N_COMPONENTS]type = undefined,
+            /// fields for the ComponentArrays struct that stores arrays for each component type
+            struct_field_types: [N_COMPONENTS]type = undefined,
+            struct_field_attrs: [N_COMPONENTS]Type.StructField.Attributes = undefined,
 
-        pub const ComponentTag = @Enum(u32, .exhaustive, &en_info.@"0", &en_info.@"1");
-        pub const ComponentPlexe = @Struct(.auto, null, strct_info.@"0", strct_info.@"1", strct_info.@"2");
-        pub const TypeArr = strct_info.@"1";
+            enum_vals: [N_COMPONENTS]u32 = undefined,
+
+            un_field_attrs: [N_COMPONENTS]Type.UnionField.Attributes = undefined,
+            un_ptr_types: [N_COMPONENTS]type = undefined,
+
+            const STATIC: @This() = blk: {
+                var meta = @This(){};
+                for (
+                    @typeInfo(Options.components).@"struct".fields,
+                    &meta.names,
+                    &meta.types,
+                    &meta.enum_vals,
+                    &meta.struct_field_types,
+                    &meta.struct_field_attrs,
+                    &meta.un_field_attrs,
+                    &meta.un_ptr_types,
+                    0..,
+                ) |
+                    field,
+                    *fnm,
+                    *ftyp,
+                    *envl,
+                    *strtyp,
+                    *stfld_att,
+                    *unfld_att,
+                    *unptr_typ,
+                    i,
+                | {
+                    fnm.* = field.name;
+                    ftyp.* = field.type;
+                    envl.* = i;
+                    strtyp.* = [Options.max_entities]?field.type;
+                    stfld_att.* = .{};
+                    unfld_att.* = Type.UnionField.Attributes{
+                        .@"align" = @alignOf(field.type),
+                    };
+                    unptr_typ.* = *field.type;
+                }
+                break :blk meta;
+            };
+
+            pub const ComponentArrays =
+                @Struct(
+                    .auto,
+                    null,
+                    &STATIC.names,
+                    &STATIC.struct_field_types,
+                    &STATIC.struct_field_attrs,
+                );
+
+            pub const ComponentTag = @Enum(u32, .exhaustive, &STATIC.names, &STATIC.enum_vals);
+            pub const ComponentUnion = @Union(.auto, ComponentTag, &STATIC.names, &STATIC.types, &STATIC.un_field_attrs);
+            pub const ComponentPtrUnion = @Union(.auto, null, &STATIC.names, &STATIC.un_ptr_types, &STATIC.un_field_attrs);
+
+            const ALL_COMPONENT_TAGS: [N_COMPONENTS]ComponentTag = blk: {
+                var all: [N_COMPONENTS]ComponentTag = undefined;
+                for (0..N_COMPONENTS) |i| {
+                    all[i] = @enumFromInt(i);
+                }
+                break :blk all;
+            };
+        };
 
         const ComponentsManager = struct {
-            arrays: [N_COMPONENTS][Options.max_entities]?*anyopaque,
-            pub const Error = error{ InvalidType, OutOfMemory };
+            arrays: Meta.ComponentArrays,
 
-            inline fn tagType(which: ComponentTag) type {
-                return TypeArr[@intFromEnum(which)];
-            }
             pub fn init() @This() {
-                return @This(){ .arrays = arr: {
-                    var arr: [N_COMPONENTS][Options.max_entities]?*anyopaque = undefined;
-                    @memset(&arr, inner: {
-                        var a: [Options.max_entities]?*anyopaque = undefined;
-                        @memset(&a, null);
-                        break :inner a;
-                    });
-                    break :arr arr;
-                } };
+                var self: @This() = undefined;
+
+                inline for (Meta.STATIC.names) |name| {
+                    @memset(&@field(self.arrays, name), null);
+                }
+
+                return self;
             }
 
-            /// **Must** be called with allocator used to insert values
-            pub fn deinit(
-                self: @This(),
-                allocator: Allocator,
-            ) void {
-                inline for (self.arrays, 0..) |subarr, i| {
-                    for (subarr) |opt| {
-                        if (opt) |v| {
-                            const typed = @as(*TypeArr[i], @ptrCast(@alignCast(v)));
-                            allocator.destroy(typed);
-                        }
-                    }
-                }
+            fn get(self: @This(), comptime which: Meta.ComponentTag, idx: usize) ?Meta.ComponentUnion {
+                return @unionInit(Meta.ComponentUnion, @tagName(which), @field(self.arrays, @tagName(which))[idx] orelse return null);
             }
 
-            /// expects to be passed `T` for `component`
-            /// **NEVER** use multiple allocators for a single instance
-            pub fn insert(self: *@This(), allocator: Allocator, which: ComponentTag, idx: usize, component: anytype) Error!void {
-                switch (@typeInfo(@TypeOf(component))) {
-                    .pointer => {
-                        std.log.err(
-                            \\ Cannot Pass Pointer types to this function
-                            \\
-                        , .{});
-                        return error.InvalidType;
-                    },
-                    else => {},
-                }
-                inline for (TypeArr, 0..) |T, i| {
-                    if (i == @intFromEnum(which) and @TypeOf(component) == T) {
-                        const val_ptr = try allocator.create(T);
-                        val_ptr.* = component;
-                        self.arrays[@intFromEnum(which)][idx] = val_ptr;
-                        return;
-                    }
-                }
-                return error.InvalidType;
+            fn getPtr(self: @This(), comptime which: Meta.ComponentTag, idx: usize) ?Meta.ComponentPtrUnion {
+                return @unionInit(Meta.ComponentPtrUnion, @tagName(which), &@field(self.arrays, @tagName(which))[idx] orelse return null);
+            }
+
+            // expects to be passed `T` for `component`
+            // **NEVER** use multiple allocators for a single instance
+            pub fn insert(self: *@This(), comptime which: Meta.ComponentTag, idx: usize, component: anytype) void {
+                if (@FieldType(Meta.ComponentUnion, @tagName(which)) != @TypeOf(component)) @compileError("Passed invalid type to insert!");
+
+                @field(self.arrays, @tagName(which))[idx] = component;
             }
 
             /// moves component at `idx` to `to_idx`
             /// Nullifies data that was previously at `to_idx`
-            fn swap(self: *@This(), which: ComponentTag, idx: usize, to_idx: usize) void {
-                var arr = self.arrays[@intFromEnum(which)];
+            fn swap(self: *@This(), comptime which: Meta.ComponentTag, idx: usize, to_idx: usize) void {
+                var arr = @field(self.arrays, @tagName(which));
                 const tmp = arr[idx];
                 arr[to_idx] = tmp;
                 arr[idx] = null;
-                self.arrays[@intFromEnum(which)] = arr;
+                @field(self.arrays, @tagName(which)) = arr;
             }
 
-            pub fn removeNoReturn(self: *@This(), which: ComponentTag, idx: usize) void {
-                self.arrays[@intFromEnum(which)][idx] = null;
+            /// This function does not ensure that the entity's associated signature is unset for this component!!
+            fn removeNoReturn(self: *@This(), comptime which: Meta.ComponentTag, idx: usize) void {
+                @field(self.arrays, @tagName(which))[idx] = null;
                 return;
             }
 
-            pub fn removeWithReturn(self: *@This(), T: type, which: ComponentTag, idx: usize) ?*T {
-                const val = self.arrays[@intFromEnum(which)][idx];
+            /// This function does not ensure that the entity's associated signature is unset for this component!!
+            fn removeWithReturn(self: *@This(), comptime which: Meta.ComponentTag, idx: usize) ?Meta.ComponentUnion {
+                const val = self.get(which, idx) orelse return null;
                 self.removeNoReturn(which, idx);
-                return @ptrCast(@alignCast(val));
-            }
-
-            pub fn access(self: *@This(), T: type, which: ComponentTag, idx: usize) ?*T {
-                const ptr = self.arrays[@intFromEnum(which)][idx] orelse return null;
-                if (@intFromPtr(ptr) % @alignOf(T) != 0) {
-                    @panic("Misaligned pointer access in ECS component store");
-                }
-                return @ptrCast(@alignCast(ptr));
+                return val;
             }
         };
 
@@ -549,8 +523,9 @@ pub fn Ecs(
         /// Helper struct for easily managing any components associated with an entity
         pub const EntityHandle = struct {
             ecs: *ThisEcs,
-            identifier: Entity,
+            identifier: u32,
             signature: *Signature,
+            name: ?[]const u8 = null,
 
             /// Is `null` if the entity has been removed
             /// This is a little weird, I feel like the handle should be invalidated if index doesn't exist somehow
@@ -567,11 +542,10 @@ pub fn Ecs(
                 // Before removing the entity, we clear it's component data
                 {
                     const sig = self.ecs.entities.manager.getData(self.identifier) orelse @panic("No entity signature?");
-                    var bit_idx_iter = sig.iterator(.{});
-                    while (bit_idx_iter.next()) |i| {
-                        const comp_enum: ComponentTag = @enumFromInt(i);
-                        self.ecs.components.removeNoReturn(comp_enum, idx);
-                    }
+                    // unfortunately we need to do this because of the comptime requirements of removeNoReturn
+                    inline for (Meta.ALL_COMPONENT_TAGS) |tag|
+                        if (sig.isSet(@intFromEnum(tag)))
+                            self.ecs.components.removeNoReturn(tag, idx);
                 }
 
                 const last_registered_opt = self.ecs.entities.manager.lastRegistered();
@@ -595,42 +569,41 @@ pub fn Ecs(
                             , .{ last.@"0", ent.id });
                         }
                         const sig = self.ecs.entities.manager.getData(ent.id) orelse @panic("No entity signature?");
-                        var bit_idx_iter = sig.iterator(.{});
-                        while (bit_idx_iter.next()) |i| {
-                            const comp_enum: ComponentTag = @enumFromInt(i);
-                            self.ecs.components.swap(comp_enum, prev_idx_of_moved_ent, idx);
+                        inline for (Meta.ALL_COMPONENT_TAGS) |tag| {
+                            if (sig.isSet(@intFromEnum(tag))) {
+                                self.ecs.components.swap(tag, prev_idx_of_moved_ent, idx);
+                            }
                         }
                     }
                 }
             }
 
-            pub fn removeComponent(self: *@This(), which: ComponentTag, component: anytype) void {
+            pub fn accessComponent(
+                self: *@This(),
+                which: Meta.ComponentTag,
+            ) error{AccessFailed}!Meta.ComponentUnion {
+                inline for (Meta.ALL_COMPONENT_TAGS) |t| {
+                    if (t == which)
+                        if (self.ecs.components.get(t, self.index().?)) |c| return c;
+                }
+                return error.AccessFailed;
+            }
+
+            pub fn removeComponent(self: *@This(), which: Meta.ComponentTag, component: anytype) void {
                 const idx = self.index() orelse @panic("NO INDEX?");
                 var sig = self.ecs.entities.manager.data[idx];
                 sig.unset(@intFromEnum(which));
                 self.ecs.components.removeNoReturn(@TypeOf(component), which, idx);
             }
 
-            pub fn addComponent(self: *@This(), which: ComponentTag, component: anytype) ComponentsManager.Error!void {
+            pub fn addComponent(self: *@This(), comptime which: Meta.ComponentTag, component: anytype) void {
                 const idx = self.index() orelse @panic("NO INDEX?");
                 var sig = self.ecs.entities.manager.data[idx] orelse @panic("NO DATA?");
                 std.log.debug("sig: {b}\n", .{sig.mask});
                 sig.set(@intFromEnum(which));
                 std.log.debug("changed sig: {b}\n", .{sig.mask});
                 self.ecs.entities.manager.data[idx] = sig;
-                try self.ecs.components.insert(self.ecs.allocator, which, idx, component);
-            }
-
-            pub fn accessComponent(
-                self: *@This(),
-                T: type,
-                which: ComponentTag,
-            ) error{AccessFailed}!*T {
-                return self.ecs.components.access(
-                    T,
-                    which,
-                    self.index() orelse @panic("EntityHandle has no index?"),
-                ) orelse return error.AccessFailed;
+                self.ecs.components.insert(which, idx, component);
             }
         };
 
@@ -642,14 +615,19 @@ pub fn Ecs(
             }
 
             /// Creates an empty with an empty `Signature`
-            pub fn register(self: *@This()) Allocator.Error!EntityHandle {
+            pub fn register(self: *@This(), name: ?[]const u8) Allocator.Error!EntityHandle {
                 const id, const i = try self.manager.register(Signature.initEmpty());
                 // _ = i;
                 var parent_ptr =
                     @as(*ThisEcs, @fieldParentPtr("entities", self));
                 _ = &parent_ptr;
 
-                return EntityHandle{ .ecs = parent_ptr, .identifier = id, .signature = &self.manager.data[i].? };
+                return EntityHandle{
+                    .ecs = parent_ptr,
+                    .identifier = id,
+                    .signature = &self.manager.data[i].?,
+                    .name = name,
+                };
             }
         };
     };
@@ -657,9 +635,7 @@ pub fn Ecs(
 
 test "ECS Entity Management" {
     std.testing.refAllDecls(@This());
-    const allocator = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
+    const a = std.testing.allocator;
 
     std.debug.print(
         \\
@@ -667,87 +643,81 @@ test "ECS Entity Management" {
         \\
     , .{});
 
-    const State = struct {
-        pub fn draw() void {}
-        pub fn update() void {}
-    };
     const MyEcs = Ecs(.{
         .max_entities = 5,
-        .State = State,
         .components = struct {
             somecomponent: bool,
             othercomponent: u8,
             someothercomponent: u32,
         },
     });
-    var ecs = MyEcs.init(&arena);
-    defer ecs.deinit();
+    var ecs = try MyEcs.init(a);
+    defer ecs.deinit(a);
 
     // Entity Initialization
     // ---
     const entity_a: MyEcs.EntityHandle = a: {
-        var handle = try ecs.entities.register();
+        var handle = try ecs.entities.register(null);
         const someother: u32 = 5;
-        try handle.addComponent(.someothercomponent, someother);
+        handle.addComponent(.someothercomponent, someother);
         const some: bool = false;
-        try handle.addComponent(.somecomponent, some);
+        handle.addComponent(.somecomponent, some);
         break :a handle;
     };
 
     const entity_b: MyEcs.EntityHandle = a: {
-        var handle = try ecs.entities.register();
+        var handle = try ecs.entities.register(null);
         const someother: u32 = 7;
-        try handle.addComponent(MyEcs.ComponentTag.someothercomponent, someother);
+        handle.addComponent(.someothercomponent, someother);
         const some: bool = true;
-        try handle.addComponent(MyEcs.ComponentTag.somecomponent, some);
+        handle.addComponent(.somecomponent, some);
         break :a handle;
     };
 
     var entity_c: MyEcs.EntityHandle = a: {
-        const handle = try ecs.entities.register();
+        const handle = try ecs.entities.register(null);
         break :a handle;
     };
 
     // Entity Component Validation
     // ---
     {
-        const got = ecs.components.access(u32, MyEcs.ComponentTag.someothercomponent, entity_a.index().?) orelse @panic("Nothing at that index");
-        try std.testing.expectEqual(got.*, 5);
+        const got = ecs.components.get(.someothercomponent, entity_a.index().?) orelse @panic("Nothing at that index");
+        try std.testing.expectEqual(got, MyEcs.Meta.ComponentUnion{ .someothercomponent = 5 });
     }
     {
-        const got = ecs.components.access(bool, MyEcs.ComponentTag.somecomponent, entity_a.index().?) orelse @panic("Nothing at that index");
-        try std.testing.expectEqual(got.*, false);
+        const got = ecs.components.get(.somecomponent, entity_a.index().?) orelse @panic("Nothing at that index");
+        try std.testing.expectEqual(got, MyEcs.Meta.ComponentUnion{ .somecomponent = false });
     }
     {
-        const got = ecs.components.access(u32, MyEcs.ComponentTag.someothercomponent, entity_b.index().?) orelse @panic("Nothing at that index");
-        try std.testing.expectEqual(got.*, 7);
+        const got = ecs.components.get(.someothercomponent, entity_b.index().?) orelse @panic("Nothing at that index");
+        try std.testing.expectEqual(got, MyEcs.Meta.ComponentUnion{ .someothercomponent = 7 });
     }
     {
-        const got = ecs.components.access(bool, MyEcs.ComponentTag.somecomponent, entity_b.index().?) orelse @panic("Nothing at that index");
-        try std.testing.expectEqual(got.*, true);
+        const got = ecs.components.get(.somecomponent, entity_b.index().?) orelse @panic("Nothing at that index");
+        try std.testing.expectEqual(got, MyEcs.Meta.ComponentUnion{ .somecomponent = true });
     }
     {
-        const got = ecs.components.access(bool, MyEcs.ComponentTag.somecomponent, entity_c.index().?);
+        const got = ecs.components.get(.somecomponent, entity_c.index().?);
         try std.testing.expect(got == null);
     }
 
-    var all: [5]Entity = undefined;
+    var all: [5]u32 = undefined;
     @memset(&all, 0);
 
     const query = MyEcs.Query{ .query = .{ .is = .{ .rule = .exact, .sig = s: {
         var s = MyEcs.Signature.initEmpty();
-        s.set(@intFromEnum(MyEcs.ComponentTag.somecomponent));
-        s.set(@intFromEnum(MyEcs.ComponentTag.someothercomponent));
+        s.set(@intFromEnum(MyEcs.Meta.ComponentTag.somecomponent));
+        s.set(@intFromEnum(MyEcs.Meta.ComponentTag.someothercomponent));
         break :s s;
     } } } };
 
-    const matching = try ecs.queryEntities(query) orelse @panic("NOTHING MATCHING");
-
-    std.log.debug("got matching: {any}\n", .{matching});
+    const iter = try ecs.queryEntities(a, query) orelse @panic("NOTHING MATCHING");
 
     const containsEntityWithId = struct {
-        fn contains(qu: []MyEcs.EntityHandle, id: Entity) bool {
-            for (qu) |handle| {
+        fn contains(qu: MyEcs.QueryIterator, id: u32) bool {
+            var clone = qu;
+            while (clone.next()) |handle| {
                 if (handle.identifier == id) {
                     return true;
                 }
@@ -755,16 +725,16 @@ test "ECS Entity Management" {
             return false;
         }
     }.contains;
-    try std.testing.expect(containsEntityWithId(matching.query, entity_a.identifier));
-    try std.testing.expect(containsEntityWithId(matching.query, entity_b.identifier));
+    try std.testing.expect(containsEntityWithId(iter, entity_a.identifier));
+    try std.testing.expect(containsEntityWithId(iter, entity_b.identifier));
 
     // Component Removal
     // ---
 
     {
-        const removed = ecs.components.removeWithReturn(bool, MyEcs.ComponentTag.somecomponent, entity_a.index().?) orelse @panic("nothing at that index");
-        try std.testing.expectEqual(removed.*, false);
-        try std.testing.expectEqual(null, ecs.components.access(bool, MyEcs.ComponentTag.somecomponent, entity_a.index().?));
+        const removed = ecs.components.removeWithReturn(MyEcs.Meta.ComponentTag.somecomponent, entity_a.index().?) orelse @panic("nothing at that index");
+        try std.testing.expectEqual(removed.somecomponent, false);
+        try std.testing.expectEqual(null, ecs.components.get(MyEcs.Meta.ComponentTag.somecomponent, entity_a.index().?));
     }
 
     // Entity Index Storage
@@ -776,14 +746,14 @@ test "ECS Entity Management" {
 
         // adding component to `entity_c` to make sure the component data is moved as expected
         const val: u8 = 64;
-        try entity_c.addComponent(.othercomponent, val);
+        entity_c.addComponent(.othercomponent, val);
 
         try entity_a.destroy();
         try std.testing.expectEqual(0, ecs.entities.manager.index_map.get(entity_c.identifier));
         try std.testing.expectEqual(0, entity_c.index().?);
 
-        const got = ecs.components.access(u8, .othercomponent, entity_c.index().?);
-        try std.testing.expectEqual(val, got.?.*);
+        const got = ecs.components.get(.othercomponent, entity_c.index().?);
+        try std.testing.expectEqual(val, got.?.othercomponent);
     }
 
     // Systems
@@ -796,36 +766,34 @@ test "ECS Entity Management" {
                 self.call_count += 1;
                 _ = myecs;
             }
-            pub fn run(self: *@This(), myecs: *MyEcs, state: *State) anyerror!void {
+            pub fn run(self: *@This(), myecs: *MyEcs) anyerror!void {
                 const q =
                     MyEcs.Query{ .query = .{
-                        .is = MyEcs.QueryStatement.new(.at_least, &[_]MyEcs.ComponentTag{.someothercomponent}),
+                        .is = MyEcs.QueryStatement.new(.at_least, &[_]MyEcs.Meta.ComponentTag{.someothercomponent}),
                     } };
 
-                const result = try myecs.queryEntities(q);
-                _ = state;
+                var query_iter = myecs.queryEntities(a, q);
                 warn("IN SOME SYSTEM\n", .{});
                 self.call_count += 1;
-                for (result.?.query) |e| {
+                while (query_iter.next()) |e| {
                     warn("MUTATING ENTITY: {}", .{e});
                     const idx = e.index() orelse @panic("ENTITY SHOULD HAVE AN INDEX?");
-                    const v = myecs.components.access(u32, .someothercomponent, idx) orelse @panic("SHOULD HAVE THIS COMPONENT?");
-                    warn("VAL: {}", .{v.*});
+                    const v = myecs.components.get(.someothercomponent, idx) orelse @panic("SHOULD HAVE THIS COMPONENT?");
+                    warn("VAL: {}", .{v.someothercomponent});
                     const new: u32 = 1111;
-                    myecs.components.insert(myecs.allocator, .someothercomponent, idx, new) catch @panic("FAILED TO INSERT COMPONENT");
+                    myecs.components.insert(.someothercomponent, idx, new);
                 }
             }
         };
     var some_system_st = SomeSysState{ .call_count = 0 };
     try some_system_st.startup(&ecs);
 
-    var state = State{};
-    try some_system_st.run(&ecs, &state);
+    try some_system_st.run(&ecs);
     {
-        const got = ecs.components.access(u32, MyEcs.ComponentTag.someothercomponent, entity_b.index().?) orelse @panic("Nothing at that index");
+        const got = ecs.components.get(.someothercomponent, entity_b.index().?) orelse @panic("Nothing at that index");
         try std.testing.expectEqual(
             1111,
-            got.*,
+            got.someothercomponent,
         );
         try std.testing.expect(some_system_st.call_count == 2);
     }

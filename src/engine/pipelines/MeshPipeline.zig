@@ -1,6 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const core = @import("../root.zig");
+const core = @import("../../root.zig");
 const imgui = core.clibs.imgui;
 const log = std.log.scoped(.MeshPipeline);
 const mesh_mod = core.lib.mesh;
@@ -47,7 +47,7 @@ pub const AllocatedData = struct {
 
     pub fn create(
         allocs: core.engine.Engine.Allocators,
-        ecs: *core.engine.Engine.Ecs,
+        ecs: *core.engine.data.Ecs,
         upload_ctx: *core.bindings.vulkan_init.UploadContext,
         logical_device: core.bindings.vulkan_init.LogicalDevice,
         physical_device: core.bindings.vulkan_init.PhysicalDevice,
@@ -55,7 +55,7 @@ pub const AllocatedData = struct {
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) std.mem.Allocator.Error!struct {
         @This(),
-        SystemsData,
+        Gui,
     } {
         var all_uploaded_materials = std.StringHashMap(MaterialEntry).init(allocs.std);
         var material_names = std.ArrayList([:0]u8).empty;
@@ -119,7 +119,7 @@ pub const AllocatedData = struct {
 
         for (meshes.meshes.items) |mesh_handle| {
             var ent = try ecs.entities.register(null);
-            ent.addComponent(.mesh3D, core.engine.Engine.Mesh3DComponent{
+            ent.addComponent(.mesh3D, core.engine.data.Mesh3DComponent{
                 .handle = mesh_handle,
             });
         }
@@ -129,7 +129,7 @@ pub const AllocatedData = struct {
                 .materials = all_uploaded_materials,
                 .meshes = uploaded_meshes,
             },
-            SystemsData{
+            Gui{
                 // .mesh_scale_factors = blk: {
                 //     const scale_factors = try allocs.std.alloc(f32, meshes.meshes.items.len);
                 //     for (0..meshes.meshes.items.len) |i|
@@ -144,16 +144,24 @@ pub const AllocatedData = struct {
     }
 };
 
-pub const SystemsData = struct {
-    // TODO FIX very leaky abstraction
+pub const Gui = struct {
+    /// ALL mesh metadatas, passed from `Meshes3D` upon startup
+    /// slices into this are used when creating draw calls
     mesh_metadatas: []Meshes3D.MetaData,
-    edited_meshes: std.ArrayListUnmanaged(u32) = .empty,
+    /// passed from `Materials` upon startup
     material_names: [][:0]u8,
+
+    /// system side data associated with meshes
+    mesh_data: std.AutoHashMapUnmanaged(u32, struct {
+        /// allows for abitrary scaling of meshes
+        scale_factor: f32,
+    }) = .empty,
+    /// edited meshes by entity id
+    edited_meshes: std.ArrayListUnmanaged(u32) = .empty,
 
     pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
         allocs.std.free(self.mesh_metadatas);
-        // allocs.std.free(self.meshes);
-        // allocs.std.free(self.mesh_scale_factors);
+        self.mesh_data.deinit(allocs.std);
         for (self.material_names) |name|
             allocs.std.free(name);
         allocs.std.free(self.material_names);
@@ -162,11 +170,9 @@ pub const SystemsData = struct {
 
     pub fn update(
         self: *@This(),
-        ecs: *core.engine.Engine.Ecs,
+        ecs: *core.engine.data.Ecs,
         alloc_data: AllocatedData,
     ) void {
-
-        // metadata system
         if (self.edited_meshes.items.len > 0) {
             const aligned_metadatas: [*]Meshes3D.MetaData = @ptrCast(@alignCast(alloc_data.meshes.metadata.mapped));
             for (self.edited_meshes.items) |id| {
@@ -193,7 +199,7 @@ pub const SystemsData = struct {
         }
     }
 
-    pub fn markMeshEdited(
+    fn markMeshEdited(
         self: *@This(),
         allocator: std.mem.Allocator,
         entity_id: u32,
@@ -201,6 +207,114 @@ pub const SystemsData = struct {
         if (std.mem.indexOfScalar(u32, self.edited_meshes.items, entity_id) == null) {
             self.edited_meshes.append(allocator, entity_id) catch @panic("OOM");
         }
+    }
+
+    pub fn drawImgui(
+        self: *@This(),
+        a: std.mem.Allocator,
+        pipeline: *Self,
+        ecs: *core.engine.data.Ecs,
+    ) void {
+        var open = true;
+        const shown = imgui.Begin("Mesh Pipeline", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+        defer imgui.End();
+
+        if (!shown) return;
+
+        const current_pipeline_name = @tagName(pipeline.current_pipeline);
+
+        if (imgui.BeginCombo("Selected Pipeline", current_pipeline_name.ptr, 0)) {
+            defer imgui.EndCombo();
+
+            for (std.meta.tags(PipelineOptions)) |tag| {
+                const name = @tagName(tag);
+                if (imgui.Selectable(name))
+                    pipeline.current_pipeline = tag;
+            }
+        }
+
+        var idx: usize = 0;
+        const query = core.engine.data.Ecs.Query{ .is = .{ .rule = .at_least, .sig = s: {
+            var s = core.engine.data.Ecs.Signature.initEmpty();
+            s.set(@intFromEnum(core.engine.data.Ecs.Meta.ComponentTag.mesh3D));
+            break :s s;
+        } } };
+        var mesh_entities_iter = ecs.queryEntities(query);
+        imgui.Text("Meshes");
+
+        while (mesh_entities_iter.next()) |handle| : (idx += 1) {
+            var mutable_handle = handle;
+
+            const mesh_component =
+                mutable_handle.accessComponent(.mesh3D) catch unreachable;
+
+            const mesh: core.engine.data.Mesh3DComponent = mesh_component.mesh3D;
+
+            const ranges = mesh.handle.ranges;
+            const mesh_metadatas =
+                self.mesh_metadatas[ranges.metadata.offset .. ranges.metadata.offset + ranges.metadata.range];
+
+            var transform = mesh_metadatas[0].model_transform;
+
+            const label = std.fmt.allocPrintSentinel(
+                std.heap.c_allocator,
+                "Mesh {d}",
+                .{idx},
+                0,
+            ) catch @panic("OOM");
+            defer std.heap.c_allocator.free(label);
+
+            if (imgui.TreeNode(label)) {
+                defer imgui.TreePop();
+
+                var mat_idx: c_int = @intCast(mesh_metadatas[0].material_index);
+                imgui.Text("Material Name: %s", self.material_names[@as(usize, @intCast(mat_idx))].ptr);
+
+                if (imgui.InputInt("Material Index", &mat_idx)) {
+                    mesh_metadatas[0].material_index = @as(u32, @intCast(mat_idx));
+                    self.markMeshEdited(a, handle.identifier);
+                }
+
+                var translation: [3]f32 = .{
+                    transform.t.x,
+                    transform.t.y,
+                    transform.t.z,
+                };
+
+                if (imgui.DragFloat3("Position", &translation)) {
+                    transform.t.x = translation[0];
+                    transform.t.y = translation[1];
+                    transform.t.z = translation[2];
+
+                    mesh_metadatas[0].model_transform = transform;
+
+                    self.markMeshEdited(
+                        a,
+                        handle.identifier,
+                    );
+                }
+
+                var scale_factor = blk: {
+                    const result = self.mesh_data.getOrPut(a, handle.identifier) catch @panic("OOM");
+                    break :blk if (result.found_existing)
+                        result.value_ptr.scale_factor
+                    else
+                        1.0;
+                };
+                if (imgui.SliderFloat("Scale", &scale_factor, 0.0, 10.0)) {
+                    if (scale_factor != 1.0) {
+                        self.mesh_data.put(a, handle.identifier, .{ .scale_factor = scale_factor }) catch @panic("OOM");
+                        const s = core.lib.math.Mat4.scale(core.lib.math.Vec3.make(scale_factor, scale_factor, scale_factor));
+                        const t = core.lib.math.Mat4.translation(core.lib.math.Vec3.make(translation[0], translation[1], translation[2]));
+                        mesh_metadatas[0].model_transform = core.lib.math.Mat4.mul(t, s);
+
+                        self.markMeshEdited(a, handle.identifier);
+                    }
+                }
+            }
+        }
+
+        imgui.Separator();
     }
 };
 
@@ -756,8 +870,7 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 
 pub fn recordCommands(
     self: Self,
-    ecs: *core.engine.Engine.Ecs,
-    // sys_data: SystemsData,
+    ecs: *core.engine.data.Ecs,
     global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     tx_set: vk.DescriptorSet,
@@ -785,9 +898,9 @@ pub fn recordCommands(
         null,
     );
 
-    const query = core.engine.Engine.Ecs.Query{ .is = .{ .rule = .at_least, .sig = s: {
-        var s = core.engine.Engine.Ecs.Signature.initEmpty();
-        s.set(@intFromEnum(core.engine.Engine.Ecs.Meta.ComponentTag.mesh3D));
+    const query = core.engine.data.Ecs.Query{ .is = .{ .rule = .at_least, .sig = s: {
+        var s = core.engine.data.Ecs.Signature.initEmpty();
+        s.set(@intFromEnum(core.engine.data.Ecs.Meta.ComponentTag.mesh3D));
         break :s s;
     } } };
     var mesh_entities_iter = ecs.queryEntities(query);
@@ -796,8 +909,7 @@ pub fn recordCommands(
     while (mesh_entities_iter.next()) |handle| : (idx += 1) {
         var mutable_handle = handle;
         const mesh_component = mutable_handle.accessComponent(.mesh3D) catch unreachable;
-        const mesh: core.engine.Engine.Mesh3DComponent = mesh_component.mesh3D;
-        // for (sys_data.meshes, 0..) |mesh, idx| {
+        const mesh: core.engine.data.Mesh3DComponent = mesh_component.mesh3D;
         const ranges = mesh.handle.ranges;
         // bind set 0: VB, IB, UBO for this submesh
         vk.CmdBindDescriptorSets(
@@ -818,94 +930,4 @@ pub fn recordCommands(
             @as(u32, @intCast(idx)), // first instance
         );
     }
-}
-
-pub fn drawImgui(
-    self: *Self,
-    a: std.mem.Allocator,
-    ecs: *core.engine.Engine.Ecs,
-    system_data: *SystemsData,
-) void {
-    var open = true;
-    const shown = imgui.Begin("Mesh Pipeline", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
-    defer imgui.End();
-
-    if (!shown) return;
-
-    const current_pipeline_name = @tagName(self.current_pipeline);
-
-    if (imgui.BeginCombo("Selected Pipeline", current_pipeline_name.ptr, 0)) {
-        defer imgui.EndCombo();
-
-        for (std.meta.tags(PipelineOptions)) |tag| {
-            const name = @tagName(tag);
-            if (imgui.Selectable(name))
-                self.current_pipeline = tag;
-        }
-    }
-
-    var idx: usize = 0;
-    const query = core.engine.Engine.Ecs.Query{ .is = .{ .rule = .at_least, .sig = s: {
-        var s = core.engine.Engine.Ecs.Signature.initEmpty();
-        s.set(@intFromEnum(core.engine.Engine.Ecs.Meta.ComponentTag.mesh3D));
-        break :s s;
-    } } };
-    var mesh_entities_iter = ecs.queryEntities(query);
-    imgui.Text("Meshes");
-
-    while (mesh_entities_iter.next()) |handle| : (idx += 1) {
-        var mutable_handle = handle;
-
-        const mesh_component =
-            mutable_handle.accessComponent(.mesh3D) catch unreachable;
-
-        const mesh: core.engine.Engine.Mesh3DComponent = mesh_component.mesh3D;
-
-        const ranges = mesh.handle.ranges;
-        const mesh_metadatas =
-            system_data.mesh_metadatas[ranges.metadata.offset .. ranges.metadata.offset + ranges.metadata.range];
-
-        var transform = mesh_metadatas[0].model_transform;
-
-        const label = std.fmt.allocPrintSentinel(
-            std.heap.c_allocator,
-            "Mesh {d}",
-            .{idx},
-            0,
-        ) catch @panic("OOM");
-        defer std.heap.c_allocator.free(label);
-
-        if (imgui.TreeNode(label)) {
-            defer imgui.TreePop();
-
-            var mat_idx: c_int = @intCast(mesh_metadatas[0].material_index);
-            imgui.Text("Material Name: %s", system_data.material_names[@as(usize, @intCast(mat_idx))].ptr);
-
-            if (imgui.InputInt("Material Index", &mat_idx)) {
-                mesh_metadatas[0].material_index = @as(u32, @intCast(mat_idx));
-                system_data.markMeshEdited(a, handle.identifier);
-            }
-
-            var translation: [3]f32 = .{
-                transform.t.x,
-                transform.t.y,
-                transform.t.z,
-            };
-
-            if (imgui.DragFloat3("Position", &translation)) {
-                transform.t.x = translation[0];
-                transform.t.y = translation[1];
-                transform.t.z = translation[2];
-
-                mesh_metadatas[0].model_transform = transform;
-
-                system_data.markMeshEdited(
-                    a,
-                    handle.identifier,
-                );
-            }
-        }
-    }
-
-    imgui.Separator();
 }

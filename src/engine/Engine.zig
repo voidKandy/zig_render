@@ -3,9 +3,9 @@ const core = @import("../root.zig");
 const c = core.clibs;
 const vki = core.bindings.vulkan_init;
 const frames_mod = core.engine.frames;
-const MeshPipeline = core.pipelines.MeshPipeline;
-const BackgroundPipeline = core.pipelines.BackgroundPipeline;
-const HudPipelines = core.pipelines.HudPipelines;
+const MeshPipeline = core.engine.pipelines.MeshPipeline;
+const BackgroundPipeline = core.engine.pipelines.BackgroundPipeline;
+const HudPipelines = core.engine.pipelines.HudPipelines;
 const Input = core.engine.Input;
 const vma_usage = core.bindings.vma_usage;
 const math_mod = core.lib.math;
@@ -45,7 +45,7 @@ imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
 global_data: core.engine.GlobalAllocatedData = undefined,
 
-ecs: Ecs,
+ecs: core.engine.data.Ecs,
 
 background_pipeline: BackgroundPipeline = undefined,
 background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
@@ -54,7 +54,7 @@ background_pipeline_description: BackgroundPipeline.Description = undefined,
 
 mesh_pipeline: MeshPipeline = undefined,
 mesh_pipeline_data: MeshPipeline.AllocatedData = undefined,
-mesh_pipeline_systems_data: MeshPipeline.SystemsData = undefined,
+mesh_pipeline_gui: MeshPipeline.Gui = undefined,
 
 mesh_descriptor_set: vk.DescriptorSet = undefined,
 mesh_texture_set: vk.DescriptorSet = undefined,
@@ -72,27 +72,6 @@ swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
-/// TODO REORGANIZE
-/// This stuff is for the ECS
-pub const Mesh3DComponent = struct {
-    handle: core.resources.Meshes3D.MeshHandle,
-    // metadatas: []const core.resources.Meshes3D.MetaData,
-    scale_factor: f32 = 1.0,
-};
-// pub const Mesh2DComponent = struct {
-//     handle: core.resources.Meshes2D.MeshHandle,
-// metadatas: []const core.resources.Meshes2D.MetaData,
-// };
-pub const Ecs =
-    core.lib.ecs_new.Ecs(.{
-        .max_entities = 64,
-        .components = struct {
-            camera: core.engine.Camera,
-            mesh3D: Mesh3DComponent,
-            // mesh2D: Mesh2DComponent,
-        },
-    });
-
 pub fn init(
     a: std.mem.Allocator,
     io: std.Io,
@@ -102,7 +81,7 @@ pub fn init(
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
         .io = io,
-        .ecs = Ecs.init(a) catch @panic("OOM"),
+        .ecs = core.engine.data.Ecs.init(a) catch @panic("OOM"),
     };
 
     self.initWindow();
@@ -132,7 +111,7 @@ pub fn deinit(self: *Self) void {
     log.debug("destroyed mesh pipeline", .{});
     self.mesh_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed mesh pipeline data", .{});
-    self.mesh_pipeline_systems_data.deinit(self.allocs);
+    self.mesh_pipeline_gui.deinit(self.allocs);
     log.debug("destroyed mesh pipeline systems data", .{});
 
     self.hud_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -207,7 +186,7 @@ pub fn run(self: *Self) void {
             self.swapchain.extent,
         );
 
-        self.mesh_pipeline_systems_data.update(
+        self.mesh_pipeline_gui.update(
             &self.ecs,
             self.mesh_pipeline_data,
         );
@@ -362,7 +341,7 @@ pub fn initPipelines(
     );
     self.initBackgroundPipeline();
 
-    self.mesh_pipeline_data, self.mesh_pipeline_systems_data = MeshPipeline.AllocatedData.create(
+    self.mesh_pipeline_data, self.mesh_pipeline_gui = MeshPipeline.AllocatedData.create(
         self.allocs,
         &self.ecs,
         &self.upload_context,
@@ -622,10 +601,10 @@ fn drawImgui(self: *Self) void {
         &self.hud_pipeline_systems_data,
         self.hud_descriptor_sets.ui,
     );
-    self.mesh_pipeline.drawImgui(
+    self.mesh_pipeline_gui.drawImgui(
         self.allocs.std,
+        &self.mesh_pipeline,
         &self.ecs,
-        &self.mesh_pipeline_systems_data,
     );
 
     c.imgui.Render();

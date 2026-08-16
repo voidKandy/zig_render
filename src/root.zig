@@ -14,11 +14,22 @@ pub const bindings = struct {
 
 pub const engine = struct {
     pub const Camera = @import("engine/Camera.zig");
+    pub const data = @import("engine/data.zig");
     pub const Engine = @import("engine/Engine.zig");
     pub const frames = @import("engine/frames.zig");
     pub const GlobalAllocatedData = @import("engine/GlobalAllocatedData.zig");
     pub const Input = @import("engine/Input.zig");
     pub const shaders = @import("engine/shaders.zig");
+
+    pub const pipelines = struct {
+        pub const MeshPipeline = @import("engine/pipelines/MeshPipeline.zig");
+        pub const HudPipelines = @import("engine/pipelines/HudPipelines.zig");
+        pub const BackgroundPipeline = @import("engine/pipelines/BackgroundPipeline.zig");
+        test {
+            std.testing.refAllDecls(@This());
+        }
+    };
+
     test {
         std.testing.refAllDecls(@This());
     }
@@ -26,7 +37,6 @@ pub const engine = struct {
 
 pub const lib = struct {
     pub const ecs = @import("lib/ecs.zig");
-    pub const ecs_new = @import("lib/ecs_new.zig");
     pub const math = @import("lib/math.zig");
     pub const Maze = @import("lib/Maze.zig");
     pub const mesh = @import("lib/mesh.zig");
@@ -41,15 +51,6 @@ pub const lib = struct {
 pub const loaders = struct {
     pub const obj = @import("loaders/obj.zig");
     pub const mtl = @import("loaders/mtl.zig");
-    test {
-        std.testing.refAllDecls(@This());
-    }
-};
-
-pub const pipelines = struct {
-    pub const MeshPipeline = @import("pipelines/MeshPipeline.zig");
-    pub const HudPipelines = @import("pipelines/HudPipelines.zig");
-    pub const BackgroundPipeline = @import("pipelines/BackgroundPipeline.zig");
     test {
         std.testing.refAllDecls(@This());
     }

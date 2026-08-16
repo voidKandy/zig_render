@@ -68,7 +68,7 @@ pub fn main(init: std.process.Init) void {
     };
 
     const meshes_objects = a.alloc(
-        core.pipelines.MeshPipeline.AllocatedData.CreateData.MeshCreateInfo,
+        core.engine.pipelines.MeshPipeline.AllocatedData.CreateData.MeshCreateInfo,
         // BAD
         amt_meshes_objects + 1,
     ) catch @panic("failed to alloc meshes_objects");
@@ -146,15 +146,15 @@ pub fn main(init: std.process.Init) void {
             },
         },
     };
-    const mesh_pipeline_create_data: core.pipelines.MeshPipeline.AllocatedData.CreateData =
+    const mesh_pipeline_create_data: core.engine.pipelines.MeshPipeline.AllocatedData.CreateData =
         .{
             .materials_files = &[_]core.loaders.mtl.MtlFile{ global_mat, debug_mat },
             .create_meshes = meshes_objects,
         };
 
-    const hud_pipeline_create_data: core.pipelines.HudPipelines.AllocatedData.CreateData =
+    const hud_pipeline_create_data: core.engine.pipelines.HudPipelines.AllocatedData.CreateData =
         .{
-            .meshes = &[_]core.pipelines.HudPipelines.AllocatedData.CreateData.HudMesh{
+            .meshes = &[_]core.engine.pipelines.HudPipelines.AllocatedData.CreateData.HudMesh{
                 .{
                     .maze = .{
                         .mesh = maze_quad,

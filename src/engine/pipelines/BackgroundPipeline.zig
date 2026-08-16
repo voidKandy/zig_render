@@ -1,6 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const core = @import("../root.zig");
+const core = @import("../../root.zig");
 const imgui = core.clibs.imgui;
 const log = std.log.scoped(.DescriptorIndexing);
 const mesh_mod = core.lib.mesh;
