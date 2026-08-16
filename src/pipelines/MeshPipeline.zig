@@ -47,6 +47,7 @@ pub const AllocatedData = struct {
 
     pub fn create(
         allocs: core.engine.Engine.Allocators,
+        ecs: *core.engine.Engine.Ecs,
         upload_ctx: *core.bindings.vulkan_init.UploadContext,
         logical_device: core.bindings.vulkan_init.LogicalDevice,
         physical_device: core.bindings.vulkan_init.PhysicalDevice,
@@ -116,19 +117,26 @@ pub const AllocatedData = struct {
 
         const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
 
+        for (meshes.meshes.items) |mesh_handle| {
+            var ent = try ecs.entities.register(null);
+            ent.addComponent(.mesh3D, core.engine.Engine.Mesh3DComponent{
+                .handle = mesh_handle,
+            });
+        }
+
         return .{
             @This(){
                 .materials = all_uploaded_materials,
                 .meshes = uploaded_meshes,
             },
             SystemsData{
-                .mesh_scale_factors = blk: {
-                    const scale_factors = try allocs.std.alloc(f32, meshes.meshes.items.len);
-                    for (0..meshes.meshes.items.len) |i|
-                        scale_factors[i] = 1.0;
-                    break :blk scale_factors;
-                },
-                .meshes = try meshes.meshes.toOwnedSlice(allocs.std),
+                // .mesh_scale_factors = blk: {
+                //     const scale_factors = try allocs.std.alloc(f32, meshes.meshes.items.len);
+                //     for (0..meshes.meshes.items.len) |i|
+                //         scale_factors[i] = 1.0;
+                //     break :blk scale_factors;
+                // },
+                // .meshes = try meshes.meshes.toOwnedSlice(allocs.std),
                 .mesh_metadatas = try meshes.meta_data.toOwnedSlice(allocs.std),
                 .material_names = try material_names.toOwnedSlice(allocs.std),
             },
@@ -137,16 +145,15 @@ pub const AllocatedData = struct {
 };
 
 pub const SystemsData = struct {
-    meshes: []Meshes3D.MeshHandle,
-    mesh_scale_factors: []f32,
+    // TODO FIX very leaky abstraction
     mesh_metadatas: []Meshes3D.MetaData,
-    edited_meshes: std.ArrayListUnmanaged(usize) = .empty,
+    edited_meshes: std.ArrayListUnmanaged(u32) = .empty,
     material_names: [][:0]u8,
 
     pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
         allocs.std.free(self.mesh_metadatas);
-        allocs.std.free(self.meshes);
-        allocs.std.free(self.mesh_scale_factors);
+        // allocs.std.free(self.meshes);
+        // allocs.std.free(self.mesh_scale_factors);
         for (self.material_names) |name|
             allocs.std.free(name);
         allocs.std.free(self.material_names);
@@ -155,15 +162,20 @@ pub const SystemsData = struct {
 
     pub fn update(
         self: *@This(),
+        ecs: *core.engine.Engine.Ecs,
         alloc_data: AllocatedData,
     ) void {
 
         // metadata system
         if (self.edited_meshes.items.len > 0) {
             const aligned_metadatas: [*]Meshes3D.MetaData = @ptrCast(@alignCast(alloc_data.meshes.metadata.mapped));
-            for (self.edited_meshes.items) |i| {
-                const mesh = self.meshes[i];
-                const mds = self.mesh_metadatas[mesh.ranges.metadata.offset .. mesh.ranges.metadata.offset + mesh.ranges.metadata.range];
+            for (self.edited_meshes.items) |id| {
+                var mesh_entity = ecs.entityHandle(id) catch std.debug.panic(
+                    \\ No entity matching id: {}
+                , .{id});
+                const mesh_component = mesh_entity.accessComponent(.mesh3D) catch @panic("mesh component access failed");
+                const mesh_handle = mesh_component.mesh3D.handle;
+                const mds = self.mesh_metadatas[mesh_handle.ranges.metadata.offset .. mesh_handle.ranges.metadata.offset + mesh_handle.ranges.metadata.range];
                 for (0..mds.len) |k| {
                     const md = mds[k];
                     const gpu_md: Meshes3D.MetaData = .{
@@ -173,11 +185,21 @@ pub const SystemsData = struct {
                         .vertex_offset = md.vertex_offset,
                         .model_transform = md.model_transform,
                     };
-                    aligned_metadatas[k + mesh.ranges.metadata.offset] = gpu_md;
+                    aligned_metadatas[k + mesh_handle.ranges.metadata.offset] = gpu_md;
                 }
             }
 
             self.edited_meshes.clearRetainingCapacity();
+        }
+    }
+
+    pub fn markMeshEdited(
+        self: *@This(),
+        allocator: std.mem.Allocator,
+        entity_id: u32,
+    ) void {
+        if (std.mem.indexOfScalar(u32, self.edited_meshes.items, entity_id) == null) {
+            self.edited_meshes.append(allocator, entity_id) catch @panic("OOM");
         }
     }
 };
@@ -734,7 +756,8 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 
 pub fn recordCommands(
     self: Self,
-    sys_data: SystemsData,
+    ecs: *core.engine.Engine.Ecs,
+    // sys_data: SystemsData,
     global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     tx_set: vk.DescriptorSet,
@@ -762,8 +785,20 @@ pub fn recordCommands(
         null,
     );
 
-    for (sys_data.meshes, 0..) |mesh, idx| {
-        const ranges = mesh.ranges;
+    const query = core.engine.Engine.Ecs.Query{ .is = .{ .rule = .at_least, .sig = s: {
+        var s = core.engine.Engine.Ecs.Signature.initEmpty();
+        s.set(@intFromEnum(core.engine.Engine.Ecs.Meta.ComponentTag.mesh3D));
+        break :s s;
+    } } };
+    var mesh_entities_iter = ecs.queryEntities(query);
+
+    var idx: usize = 0;
+    while (mesh_entities_iter.next()) |handle| : (idx += 1) {
+        var mutable_handle = handle;
+        const mesh_component = mutable_handle.accessComponent(.mesh3D) catch unreachable;
+        const mesh: core.engine.Engine.Mesh3DComponent = mesh_component.mesh3D;
+        // for (sys_data.meshes, 0..) |mesh, idx| {
+        const ranges = mesh.handle.ranges;
         // bind set 0: VB, IB, UBO for this submesh
         vk.CmdBindDescriptorSets(
             cmd,
@@ -788,6 +823,7 @@ pub fn recordCommands(
 pub fn drawImgui(
     self: *Self,
     a: std.mem.Allocator,
+    ecs: *core.engine.Engine.Ecs,
     system_data: *SystemsData,
 ) void {
     var open = true;
@@ -808,13 +844,35 @@ pub fn drawImgui(
         }
     }
 
+    var idx: usize = 0;
+    const query = core.engine.Engine.Ecs.Query{ .is = .{ .rule = .at_least, .sig = s: {
+        var s = core.engine.Engine.Ecs.Signature.initEmpty();
+        s.set(@intFromEnum(core.engine.Engine.Ecs.Meta.ComponentTag.mesh3D));
+        break :s s;
+    } } };
+    var mesh_entities_iter = ecs.queryEntities(query);
     imgui.Text("Meshes");
-    for (system_data.meshes, 0..) |*mesh, idx| {
-        const ranges = mesh.ranges;
-        const mesh_metadatas = system_data.mesh_metadatas[ranges.metadata.offset .. ranges.metadata.offset + ranges.metadata.range];
+
+    while (mesh_entities_iter.next()) |handle| : (idx += 1) {
+        var mutable_handle = handle;
+
+        const mesh_component =
+            mutable_handle.accessComponent(.mesh3D) catch unreachable;
+
+        const mesh: core.engine.Engine.Mesh3DComponent = mesh_component.mesh3D;
+
+        const ranges = mesh.handle.ranges;
+        const mesh_metadatas =
+            system_data.mesh_metadatas[ranges.metadata.offset .. ranges.metadata.offset + ranges.metadata.range];
+
         var transform = mesh_metadatas[0].model_transform;
 
-        const label = std.fmt.allocPrintSentinel(std.heap.c_allocator, "Mesh {d}", .{idx}, 0) catch @panic("OOM");
+        const label = std.fmt.allocPrintSentinel(
+            std.heap.c_allocator,
+            "Mesh {d}",
+            .{idx},
+            0,
+        ) catch @panic("OOM");
         defer std.heap.c_allocator.free(label);
 
         if (imgui.TreeNode(label)) {
@@ -825,13 +883,9 @@ pub fn drawImgui(
 
             if (imgui.InputInt("Material Index", &mat_idx)) {
                 mesh_metadatas[0].material_index = @as(u32, @intCast(mat_idx));
-                if (std.mem.indexOfScalar(usize, system_data.edited_meshes.items, idx) == null) {
-                    system_data.edited_meshes.append(a, idx) catch @panic("OOM");
-                }
+                system_data.markMeshEdited(a, handle.identifier);
             }
 
-            // Transform editing (better than raw matrix editing)
-            // NOTE: assumes you can derive T/R/S from matrix OR store separately later
             var translation: [3]f32 = .{
                 transform.t.x,
                 transform.t.y,
@@ -842,26 +896,16 @@ pub fn drawImgui(
                 transform.t.x = translation[0];
                 transform.t.y = translation[1];
                 transform.t.z = translation[2];
+
                 mesh_metadatas[0].model_transform = transform;
-                if (std.mem.indexOfScalar(usize, system_data.edited_meshes.items, idx) == null) {
-                    system_data.edited_meshes.append(a, idx) catch @panic("OOM");
-                }
-            }
 
-            var scale_factor = system_data.mesh_scale_factors[idx];
-            if (imgui.SliderFloat("Scale", &scale_factor, 0.0, 10.0)) {
-                const s = core.lib.math.Mat4.scale(core.lib.math.Vec3.make(scale_factor, scale_factor, scale_factor));
-                const t = core.lib.math.Mat4.translation(core.lib.math.Vec3.make(translation[0], translation[1], translation[2]));
-                mesh_metadatas[0].model_transform = core.lib.math.Mat4.mul(t, s);
-                if (std.mem.indexOfScalar(usize, system_data.edited_meshes.items, idx) == null) {
-                    system_data.edited_meshes.append(a, idx) catch @panic("OOM");
-                }
+                system_data.markMeshEdited(
+                    a,
+                    handle.identifier,
+                );
             }
-
-            imgui.Text("Index Offset: %d", ranges.index.offset);
-            imgui.Text("Index Count: %d", ranges.index.range);
-            imgui.Text("Vertex Offset: %d", ranges.vertex.offset);
         }
     }
+
     imgui.Separator();
 }

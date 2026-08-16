@@ -26,11 +26,12 @@ pub const engine = struct {
 
 pub const lib = struct {
     pub const ecs = @import("lib/ecs.zig");
+    pub const ecs_new = @import("lib/ecs_new.zig");
     pub const math = @import("lib/math.zig");
     pub const Maze = @import("lib/Maze.zig");
     pub const mesh = @import("lib/mesh.zig");
     pub const terrain = @import("lib/terrain.zig");
-    pub const alpha_wrapping = @import("lib/alpha_wrapping.zig");
+    // pub const alpha_wrapping = @import("lib/alpha_wrapping.zig");
     pub const delaunay = @import("lib/delaunay.zig");
     test {
         std.testing.refAllDecls(@This());

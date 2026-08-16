@@ -45,6 +45,8 @@ imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
 global_data: core.engine.GlobalAllocatedData = undefined,
 
+ecs: Ecs,
+
 background_pipeline: BackgroundPipeline = undefined,
 background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
 background_descriptor_set: vk.DescriptorSet = undefined,
@@ -70,6 +72,27 @@ swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
+/// TODO REORGANIZE
+/// This stuff is for the ECS
+pub const Mesh3DComponent = struct {
+    handle: core.resources.Meshes3D.MeshHandle,
+    // metadatas: []const core.resources.Meshes3D.MetaData,
+    scale_factor: f32 = 1.0,
+};
+// pub const Mesh2DComponent = struct {
+//     handle: core.resources.Meshes2D.MeshHandle,
+// metadatas: []const core.resources.Meshes2D.MetaData,
+// };
+pub const Ecs =
+    core.lib.ecs_new.Ecs(.{
+        .max_entities = 64,
+        .components = struct {
+            camera: core.engine.Camera,
+            mesh3D: Mesh3DComponent,
+            // mesh2D: Mesh2DComponent,
+        },
+    });
+
 pub fn init(
     a: std.mem.Allocator,
     io: std.Io,
@@ -79,6 +102,7 @@ pub fn init(
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
         .io = io,
+        .ecs = Ecs.init(a) catch @panic("OOM"),
     };
 
     self.initWindow();
@@ -184,6 +208,7 @@ pub fn run(self: *Self) void {
         );
 
         self.mesh_pipeline_systems_data.update(
+            &self.ecs,
             self.mesh_pipeline_data,
         );
         self.hud_pipeline_systems_data.update(
@@ -339,6 +364,7 @@ pub fn initPipelines(
 
     self.mesh_pipeline_data, self.mesh_pipeline_systems_data = MeshPipeline.AllocatedData.create(
         self.allocs,
+        &self.ecs,
         &self.upload_context,
         self.logical_device,
         self.physical_device,
@@ -598,6 +624,7 @@ fn drawImgui(self: *Self) void {
     );
     self.mesh_pipeline.drawImgui(
         self.allocs.std,
+        &self.ecs,
         &self.mesh_pipeline_systems_data,
     );
 
@@ -752,7 +779,8 @@ fn recordCommandBuffer(
 
     self.mesh_pipeline.bind(frame.main_command_buffer);
     self.mesh_pipeline.recordCommands(
-        self.mesh_pipeline_systems_data,
+        &self.ecs,
+        // self.mesh_pipeline_systems_data,
         self.global_data.set,
         self.mesh_descriptor_set,
         self.mesh_texture_set,

@@ -70,9 +70,11 @@ pub const AllocatedData = struct {
     maze_sampler: vk.Sampler,
     maze_state: vma_usage.MappedBuffer,
 
-    /// this is not alloc data
-    /// should be moved to some kind of struct for maze
-    /// maybe like metadata for meshes?
+    // this is not alloc data
+    // should be moved to some kind of struct for maze
+    // maybe like metadata for meshes?
+    // the reason it is included here is because this is the push constants
+    // for the compute pipeline
     maze_mesh_idx: u32,
     maze_dimensions: vk.Extent2D,
     pixels_per_cell: u32,
@@ -241,6 +243,8 @@ pub const SystemsData = struct {
                 c.walls = .{};
 
             self.maze.generate(a, self.maze.threshold.?, self.maze.seed.?);
+
+            // alloc_data.maze_mesh_idx
             const cells = GPUMazeCell.arrayFromCellArray(a, self.maze.cells) catch @panic("OOM");
             defer a.free(cells);
 

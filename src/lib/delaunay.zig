@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const Vec3 = math_mod.Vec3;
 const Mat3 = math_mod.Mat3;
 
+pub const EPSILON: f32 = 1e-5;
 const DelaunayError = error{
     PointOutsideTriangulation,
     DegenerateTetrahedron,
@@ -90,42 +91,49 @@ pub const Tetrahedron = struct {
     /// we store vertices indices
     vertices: [4]usize,
 
-    pub fn vertex(self: Tetrahedron, mesh: *const Triangulation, i: usize) Vec3 {
-        return mesh.vertices.items[self.vertices[i]];
+    pub fn actualVertices(self: Tetrahedron, tri: *const Triangulation) [4]Vec3 {
+        return [4]Vec3{
+            tri.vertices.items[self.vertices[0]],
+            tri.vertices.items[self.vertices[1]],
+            tri.vertices.items[self.vertices[2]],
+            tri.vertices.items[self.vertices[3]],
+        };
     }
 
     pub fn containsPoint(
         self: Tetrahedron,
-        mesh: *const Triangulation,
-        p: Vec3,
+        tri: *const Triangulation,
+        point: Vec3,
     ) bool {
-        const a = self.vertex(mesh, 0);
-        const b = self.vertex(mesh, 1);
-        const c = self.vertex(mesh, 2);
-        const d = self.vertex(mesh, 3);
+        const verts = self.actualVertices(tri);
 
-        const eps: f32 = 1e-5;
+        const myVolume = signedVolume(verts[0], verts[1], verts[2], verts[3]);
 
-        const v = signedVolume(a, b, c, d);
+        // measure volume for each of the possible
+        // tets that may be made from adding the new point
+        const v0 = signedVolume(point, verts[1], verts[2], verts[3]);
+        const v1 = signedVolume(verts[0], point, verts[2], verts[3]);
+        const v2 = signedVolume(verts[0], verts[1], point, verts[3]);
+        const v3 = signedVolume(verts[0], verts[1], verts[2], point);
 
-        const v0 = signedVolume(p, b, c, d);
-        const v1 = signedVolume(a, p, c, d);
-        const v2 = signedVolume(a, b, p, d);
-        const v3 = signedVolume(a, b, c, p);
-
-        if (v > 0) {
-            return v0 >= -eps and
-                v1 >= -eps and
-                v2 >= -eps and
-                v3 >= -eps;
-        } else {
-            return v0 <= eps and
-                v1 <= eps and
-                v2 <= eps and
-                v3 <= eps;
-        }
+        // if the original volume and all the new volumes have the same winding order
+        // the point is within the volume
+        return if (myVolume > 0)
+            v0 >= -EPSILON and
+                v1 >= -EPSILON and
+                v2 >= -EPSILON and
+                v3 >= -EPSILON
+        else
+            return v0 <= EPSILON and
+                v1 <= EPSILON and
+                v2 <= EPSILON and
+                v3 <= EPSILON;
     }
 
+    /// Signed volume (×6) of tetrahedron a-b-c-d. Sign encodes winding:
+    /// positive means right-handed orientation, negative means reversed,
+    /// near-zero means the 4 points are coplanar (degenerate). Used by
+    /// containsPoint (per-face side tests) and fillCavity (winding fixup).
     fn signedVolume(
         a: Vec3,
         b: Vec3,
@@ -141,6 +149,17 @@ pub const Tetrahedron = struct {
         );
     }
 
+    fn faceVertices(
+        self: @This(),
+        tri: *const Triangulation,
+    ) [3]Vec3 {
+        return .{
+            tri.vertices.items[self.vertices[0]],
+            tri.vertices.items[self.vertices[1]],
+            tri.vertices.items[self.vertices[2]],
+        };
+    }
+
     pub fn faces(tet: @This()) [4]Triangulation.Face {
         return .{
             .{ .vertices = .{ tet.vertices[0], tet.vertices[2], tet.vertices[1] } },
@@ -154,12 +173,7 @@ pub const Tetrahedron = struct {
         self: @This(),
         triangulation: *const Triangulation,
     ) DelaunayError!Circumsphere {
-        const center = try Circumsphere.circumcenter(
-            triangulation.vertices.items[self.vertices[0]],
-            triangulation.vertices.items[self.vertices[1]],
-            triangulation.vertices.items[self.vertices[2]],
-            triangulation.vertices.items[self.vertices[3]],
-        );
+        const center = try Circumsphere.circumcenter(self.actualVertices(triangulation));
 
         return .{
             .center = center,
@@ -175,31 +189,28 @@ pub const Tetrahedron = struct {
             self: Circumsphere,
             p: Vec3,
         ) bool {
-            return self.center.eucDist(p) <= self.radius + 1e-5;
+            return self.center.eucDist(p) <= self.radius + EPSILON;
         }
 
         fn circumcenter(
-            a: Vec3,
-            b: Vec3,
-            c: Vec3,
-            d: Vec3,
+            tet: [4]Vec3,
         ) DelaunayError!Vec3 {
-            const row0 = b.sub(a);
-            const row1 = c.sub(a);
-            const row2 = d.sub(a);
+            const row0 = tet[1].sub(tet[0]);
+            const row1 = tet[2].sub(tet[0]);
+            const row2 = tet[3].sub(tet[0]);
 
             const matrix = Mat3.make(row0, row1, row2);
 
             const rhs = Vec3.make(
-                (b.squaredNorm() - a.squaredNorm()) * 0.5,
-                (c.squaredNorm() - a.squaredNorm()) * 0.5,
-                (d.squaredNorm() - a.squaredNorm()) * 0.5,
+                (tet[1].squaredNorm() - tet[0].squaredNorm()) * 0.5,
+                (tet[2].squaredNorm() - tet[0].squaredNorm()) * 0.5,
+                (tet[3].squaredNorm() - tet[0].squaredNorm()) * 0.5,
             );
 
             const det = matrix.determinant();
 
             // Degenerate tetrahedron
-            if (@abs(det) < 1e-6)
+            if (@abs(det) < EPSILON)
                 return error.DegenerateTetrahedron;
 
             const dx = Mat3.make(
@@ -241,19 +252,19 @@ pub const Triangulation = struct {
         vertices: [3]usize,
 
         /// canonical form for equality checks, independent of winding
-        fn key(self: Triangulation.Face) [3]usize {
+        fn key(self: @This()) [3]usize {
             var k = self.vertices;
             std.mem.sort(usize, &k, {}, std.sort.asc(usize));
             return k;
         }
 
-        fn eql(a: Triangulation.Face, b: Triangulation.Face) bool {
+        fn eql(a: @This(), b: @This()) bool {
             return std.mem.eql(usize, &a.key(), &b.key());
         }
 
         /// Radius of the circle passing through all 3 vertices of this
         /// face. Used to rank gates during alpha-wrapping traversal.
-        pub fn circumradius(self: Triangulation.Face, tri: *const Triangulation) DelaunayError!f32 {
+        pub fn circumradius(self: @This(), tri: *const Triangulation) DelaunayError!f32 {
             const a = tri.vertices.items[self.vertices[0]];
             const b = tri.vertices.items[self.vertices[1]];
             const c = tri.vertices.items[self.vertices[2]];
@@ -264,7 +275,7 @@ pub const Triangulation = struct {
 
             const double_area = Vec3.cross(ab, ac).norm();
 
-            if (double_area < 1e-9)
+            if (double_area < EPSILON)
                 return error.DegenerateTriangle;
 
             return (ab.norm() * ac.norm() * bc.norm()) / (2.0 * double_area);
@@ -336,6 +347,33 @@ pub const Triangulation = struct {
         }
     };
 
+    pub fn tetrahedronIterator(self: *const Triangulation) TetrahedronIterator {
+        return .{
+            .tri = self,
+            .index = 0,
+        };
+    }
+
+    pub const TetrahedronIterator = struct {
+        tri: *const Triangulation,
+        index: usize,
+
+        pub fn next(self: *@This()) ?struct { index: usize, tet: Tetrahedron } {
+            while (self.index < self.tri.tetrahedra.items.len) {
+                const idx = self.index;
+                self.index += 1;
+
+                if (self.tri.tetrahedra.items[idx]) |tet|
+                    return .{
+                        .index = idx,
+                        .tet = tet,
+                    };
+            }
+
+            return null;
+        }
+    };
+
     pub fn deinit(self: *@This(), a: Allocator) void {
         self.tetrahedra.deinit(a);
         self.vertices.deinit(a);
@@ -372,29 +410,56 @@ pub const Triangulation = struct {
 
     /// TODO OPTIMIZE
     fn findContainingTetrahedron(self: *const @This(), point: Vec3) ?usize {
-        for (self.tetrahedra.items, 0..) |tet, i| {
-            // BAD
-            if (tet == null) continue;
-            if (tet.?.containsPoint(self, point)) return i;
+        var iter = self.tetrahedronIterator();
+        while (iter.next()) |entry| {
+            if (entry.tet.containsPoint(self, point)) return entry.index;
         }
         return null;
     }
 
-    /// TODO OPTIMIZE
+    /// Finds the set of tetrahedra whose circumsphere contains `point`,
+    /// via adjacency-based flood-fill starting from a tetrahedron known
+    /// to contain `point` directly. This guarantees the resulting cavity
+    /// is connected and star-shaped around `point` — a property that
+    /// independent per-tetrahedron circumsphere testing does NOT
+    /// guarantee, and which is required for `findBoundaryFaces` to
+    /// produce a valid (2-manifold) cavity boundary.
     fn findCavity(self: *const @This(), a: Allocator, point: Vec3) Allocator.Error!?[]usize {
+        const start = self.findContainingTetrahedron(point) orelse return null;
+
         var cavity: std.ArrayList(usize) = try .initCapacity(a, 8);
         errdefer cavity.deinit(a);
 
-        for (self.tetrahedra.items, 0..) |tet, i| {
-            // BAD
-            if (tet == null) continue;
-            const sphere = tet.?.circumsphere(self) catch continue; // skip degenerate tets
-            if (sphere.containsPoint(point)) {
-                try cavity.append(a, i);
+        var visited = std.AutoHashMapUnmanaged(usize, void){};
+        defer visited.deinit(a);
+
+        var frontier: std.ArrayList(usize) = try .initCapacity(a, 8);
+        defer frontier.deinit(a);
+
+        try frontier.append(a, start);
+        try visited.put(a, start, {});
+
+        while (frontier.pop()) |tet_idx| {
+            try cavity.append(a, tet_idx);
+
+            const tet = self.tetrahedra.items[tet_idx].?; // always alive: only ever pushed from a live tet's neighbor
+            for (tet.faces(), 0..) |_, face_idx| {
+                const loc = self.adjacency.neighborLocation(tet_idx, face_idx, tet) orelse continue;
+                if (visited.contains(loc.tet)) continue;
+
+                const neighbor = self.tetrahedra.items[loc.tet] orelse continue;
+                const sphere = neighbor.circumsphere(self) catch continue; // degenerate: don't expand through it
+                if (!sphere.containsPoint(point)) continue;
+
+                try visited.put(a, loc.tet, {});
+                try frontier.append(a, loc.tet);
             }
         }
 
-        if (cavity.items.len == 0) return null;
+        if (cavity.items.len == 0) {
+            cavity.deinit(a);
+            return null;
+        }
 
         return try cavity.toOwnedSlice(a);
     }
@@ -409,10 +474,9 @@ pub const Triangulation = struct {
         defer all_faces.deinit(a);
 
         for (cavity) |tet_index| {
-            if (self.tetrahedra.items[tet_index]) |tet| {
-                for (tet.faces()) |face| {
-                    try all_faces.append(a, face);
-                }
+            const tet = self.tetrahedra.items[tet_index] orelse @panic("Cavity contains invalid tet index");
+            for (tet.faces()) |face| {
+                try all_faces.append(a, face);
             }
         }
 
@@ -438,13 +502,13 @@ pub const Triangulation = struct {
         var to_remove: std.ArrayList(usize) = .{};
         defer to_remove.deinit(a);
 
-        for (self.tetrahedra.items, 0..) |maybe_tet, i| {
-            const tet = maybe_tet orelse continue;
-            const touches_super = tet.vertices[0] < 4 or
-                tet.vertices[1] < 4 or
-                tet.vertices[2] < 4 or
-                tet.vertices[3] < 4;
-            if (touches_super) try to_remove.append(a, i);
+        var iter = self.tetrahedronIterator();
+        while (iter.next()) |entry| {
+            const touches_super = entry.tet.vertices[0] < 4 or
+                entry.tet.vertices[1] < 4 or
+                entry.tet.vertices[2] < 4 or
+                entry.tet.vertices[3] < 4;
+            if (touches_super) try to_remove.append(a, entry.index);
         }
 
         for (to_remove.items) |idx| {
@@ -671,4 +735,183 @@ test "Triangulation.Face.circumradius returns error for degenerate (collinear) t
 
     const face = Triangulation.Face{ .vertices = .{ base + 0, base + 1, base + 2 } };
     try std.testing.expectError(error.DegenerateTriangle, face.circumradius(&tri));
+}
+
+test "all tetrahedra have positive volume after insertions" {
+    const a = std.testing.allocator;
+
+    var tri = try Triangulation.init(a, .{
+        .min = Vec3.make(-5, -5, -5),
+        .max = Vec3.make(5, 5, 5),
+    });
+    defer tri.deinit(a);
+
+    const points = [_]Vec3{
+        .make(0, 0, 0),
+        .make(1, 0, 0),
+        .make(0, 1, 0),
+        .make(0, 0, 1),
+        .make(0.5, 0.5, 0.5),
+        .make(-0.5, -0.5, 0.25),
+    };
+
+    for (points) |p|
+        _ = try tri.addVertex(a, p);
+
+    var iter = tri.tetrahedronIterator();
+    while (iter.next()) |entry| {
+        const verts = entry.tet.actualVertices(&tri);
+
+        try std.testing.expect(
+            Tetrahedron.signedVolume(
+                verts[0],
+                verts[1],
+                verts[2],
+                verts[3],
+            ) > 0,
+        );
+    }
+}
+
+test "every face belongs to at most two tetrahedra" {
+    const a = std.testing.allocator;
+
+    var tri = try Triangulation.init(a, .{
+        .min = Vec3.make(-5, -5, -5),
+        .max = Vec3.make(5, 5, 5),
+    });
+    defer tri.deinit(a);
+
+    const points = [_]Vec3{
+        .make(0, 0, 0),
+        .make(1, 0, 0),
+        .make(0, 1, 0),
+        .make(0, 0, 1),
+        .make(0.2, 0.3, 0.4),
+        .make(-0.5, 0.4, -0.2),
+        .make(0.8, -0.6, 0.1),
+    };
+
+    for (points) |p|
+        _ = try tri.addVertex(a, p);
+
+    var it = tri.adjacency.map.iterator();
+
+    while (it.next()) |entry| {
+        const face = entry.value_ptr.*;
+
+        const owners: usize =
+            @as(usize, @intFromBool(face.first != null)) +
+            @as(usize, @intFromBool(face.second != null));
+
+        try std.testing.expect(owners == 1 or owners == 2);
+    }
+}
+
+test "adjacency entries reference valid tetrahedra" {
+    const a = std.testing.allocator;
+
+    var tri = try Triangulation.init(a, .{
+        .min = Vec3.make(-5, -5, -5),
+        .max = Vec3.make(5, 5, 5),
+    });
+    defer tri.deinit(a);
+
+    for ([_]Vec3{
+        .make(0, 0, 0),
+        .make(1, 0, 0),
+        .make(0, 1, 0),
+        .make(0, 0, 1),
+        .make(0.4, 0.3, 0.2),
+    }) |p|
+        _ = try tri.addVertex(a, p);
+
+    var it = tri.adjacency.map.iterator();
+
+    while (it.next()) |entry| {
+        const locs = entry.value_ptr.*;
+
+        inline for (.{ locs.first, locs.second }) |maybe_loc| {
+            if (maybe_loc) |loc| {
+                const tet = tri.tetrahedra.items[loc.tet] orelse
+                    return error.TestUnexpectedResult;
+
+                try std.testing.expect(
+                    tet.faces()[loc.face].eql(.{ .vertices = entry.key_ptr.* }),
+                );
+            }
+        }
+    }
+}
+
+test "100 random insertions remain valid" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rand = prng.random();
+
+    const a = std.testing.allocator;
+
+    var tri = try Triangulation.init(a, .{
+        .min = Vec3.make(-10, -10, -10),
+        .max = Vec3.make(10, 10, 10),
+    });
+    defer tri.deinit(a);
+
+    for (0..100) |_| {
+        const p = Vec3.make(
+            rand.float(f32) * 8 - 4,
+            rand.float(f32) * 8 - 4,
+            rand.float(f32) * 8 - 4,
+        );
+
+        _ = try tri.addVertex(a, p);
+
+        var iter = tri.tetrahedronIterator();
+        while (iter.next()) |entry| {
+            const verts = entry.tet.actualVertices(&tri);
+
+            try std.testing.expect(
+                Tetrahedron.signedVolume(
+                    verts[0],
+                    verts[1],
+                    verts[2],
+                    verts[3],
+                ) > 0,
+            );
+        }
+    }
+}
+
+test "triangulation satisfies delaunay condition" {
+    const a = std.testing.allocator;
+
+    var tri = try Triangulation.init(a, .{
+        .min = Vec3.make(-5, -5, -5),
+        .max = Vec3.make(5, 5, 5),
+    });
+    defer tri.deinit(a);
+
+    var prng = std.Random.DefaultPrng.init(12345);
+    const rand = prng.random();
+
+    for (0..100) |_| {
+        _ = try tri.addVertex(a, Vec3.make(
+            rand.float(f32) * 8 - 4,
+            rand.float(f32) * 8 - 4,
+            rand.float(f32) * 8 - 4,
+        ));
+    }
+
+    var iter = tri.tetrahedronIterator();
+    while (iter.next()) |entry| {
+        const sphere = try entry.tet.circumsphere(&tri);
+
+        for (tri.vertices.items, 0..) |p, i| {
+            if (std.mem.indexOfScalar(usize, &entry.tet.vertices, i) != null)
+                continue;
+
+            try std.testing.expect(
+                !sphere.containsPoint(p),
+            );
+        }
+    }
 }
