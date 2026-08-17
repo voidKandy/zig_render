@@ -8,10 +8,6 @@ const vki = core.bindings.vulkan_init;
 const checkVk = vki.checkVk;
 const vma_usage = core.bindings.vma_usage;
 
-/// Instead of writing the methods for managing materials in ResourceManager,
-/// I decided to use this struct directly. Mostly for clear separation of concerns,
-/// which follows from the decision to write a this instead of adding a
-/// material-specific field to ResourceManager
 const Self = @This();
 
 const Metadata = struct {
@@ -223,149 +219,198 @@ pub const MaterialData = struct {
     }
 };
 
-metadata: std.StringHashMapUnmanaged(struct { usize, Metadata }),
-materials_blob: []u8,
-library_name: []u8,
-
-const Error = std.fmt.BufPrintError || error{FailedToLoadImage};
-const ASSETS_PATH = "assets/";
-
-pub const AllocatedData = struct {
-    textures: []Texture,
-
-    pub fn deinit(
-        self: *@This(),
-        allocs: core.engine.Engine.Allocators,
-        device: vk.Device,
-        alloc_cbs: ?*vk.AllocationCallbacks,
-    ) void {
-        for (self.textures) |*tx| {
-            tx.deinit(allocs.vma, device, alloc_cbs);
-        }
-        allocs.std.free(self.textures);
-    }
+const MaterialEntry = struct {
+    library: MaterialLibrary,
+    offset: u32,
 };
 
+libraries: std.StringHashMapUnmanaged(MaterialEntry),
+all_material_names: [][:0]const u8,
+
 pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
-    a.free(self.materials_blob);
-    a.free(self.library_name);
-    self.metadata.deinit(a);
+    var iter = self.libraries.valueIterator();
+    while (iter.next()) |m| {
+        m.library.deinit(a);
+    }
+
+    a.free(self.all_material_names);
 }
 
-pub fn getMaterialData(self: Self, name: []const u8) ?MaterialData {
-    return if (self.metadata.get(name)) |tup|
-        .{
-            .name = name,
-            .data = self.materials_blob[tup.@"1".offset .. tup.@"1".offset + tup.@"1".range],
-            .width = tup.@"1".width,
-            .height = tup.@"1".height,
-            .channels = tup.@"1".channels,
-        }
-    else
-        null;
+pub fn initFromMaterialsFiles(a: std.mem.Allocator, files: []const core.loaders.mtl.MtlFile) std.mem.Allocator.Error!@This() {
+    var all_libs = std.StringHashMapUnmanaged(MaterialEntry).empty;
+    var all_names = try std.ArrayList([:0]const u8).initCapacity(a, 16);
+
+    var current_mtl_offset: u32 = 0;
+    for (files) |mtl| {
+        const lib = MaterialLibrary.initFromMaterialFile(a, mtl) catch @panic("failed to create MTL");
+        current_mtl_offset += @as(u32, @intCast(lib.metadata.size));
+        try all_names.appendSlice(a, lib.material_names);
+        try all_libs.put(a, mtl.name, .{
+            .library = lib,
+            .offset = current_mtl_offset,
+        });
+    }
+
+    return .{
+        .libraries = all_libs,
+        .all_material_names = try all_names.toOwnedSlice(a),
+    };
 }
 
-pub fn initFromMaterialFile(
-    a: std.mem.Allocator,
-    mtl: core.loaders.mtl.MtlFile,
-) anyerror!@This() {
-    var materials = std.ArrayList(u8).empty;
-    var metadatas = std.StringHashMapUnmanaged(struct { usize, Metadata }){};
+pub const MaterialLibrary = struct {
+    metadata: std.StringHashMapUnmanaged(struct { usize, Metadata }),
+    material_names: [][:0]const u8,
+    materials_blob: []u8,
+    library_name: []u8,
 
-    for (mtl.materials) |mat| {
-        if (mat.map_Kd) |basename| {
-            const path = try std.fmt.allocPrint(a, ASSETS_PATH ++ "{s}", .{basename});
-            defer a.free(path);
+    const Error = std.fmt.BufPrintError || error{FailedToLoadImage};
+    const ASSETS_PATH = "assets/";
 
-            var width: c_int = undefined;
-            var height: c_int = undefined;
-            var channels: c_int = undefined;
+    pub const AllocatedData = struct {
+        textures: []Texture,
 
-            // This is just to make the API more zig friendly. Convert to C 0-term string
-            // on the stack.
-            var buffer: [512]u8 = undefined;
-            const filepathz = try std.fmt.bufPrintZ(buffer[0..], ASSETS_PATH ++ "{s}", .{basename});
-
-            log.info("Attempting to load image from: {s}", .{filepathz});
-
-            const image_data = core.clibs.stbi.load(
-                filepathz.ptr,
-                &width,
-                &height,
-                &channels,
-                core.clibs.stbi.rgb_alpha,
-            );
-            if (image_data == null) {
-                return error.FailedToLoadImage;
+        pub fn deinit(
+            self: *@This(),
+            allocs: core.engine.Engine.Allocators,
+            device: vk.Device,
+            alloc_cbs: ?*vk.AllocationCallbacks,
+        ) void {
+            for (self.textures) |*tx| {
+                tx.deinit(allocs.vma, device, alloc_cbs);
             }
-            const byte_count: usize = @intCast(width * height * core.clibs.stbi.rgb_alpha);
-            const md = Metadata{
-                .offset = materials.items.len,
-                .range = byte_count,
-                .channels = channels,
-                .height = height,
-                .width = width,
-            };
-            defer core.clibs.stbi.image_free(image_data);
-            log.debug(
-                \\ Material '{s}' loaded
-            , .{mat.name});
-
-            try materials.appendSlice(a, image_data[0..byte_count]);
-            try metadatas.put(a, mat.name, .{ metadatas.size, md });
-        } else if (mat.Kd) |kd| {
-            const pixel = [4]u8{
-                @intFromFloat(kd[0] * 255.0),
-                @intFromFloat(kd[1] * 255.0),
-                @intFromFloat(kd[2] * 255.0),
-                255,
-            };
-            const md = Metadata{
-                .offset = materials.items.len,
-                .range = 4,
-                .channels = 4,
-                .height = 1,
-                .width = 1,
-            };
-            try materials.appendSlice(a, &pixel);
-            try metadatas.put(a, mat.name, .{ metadatas.size, md });
-            log.debug("Material '{s}' loaded as flat color", .{mat.name});
+            allocs.std.free(self.textures);
         }
-    }
-    return .{
-        .materials_blob = try materials.toOwnedSlice(a),
-        .metadata = metadatas,
-        .library_name = try a.dupe(u8, mtl.name),
     };
-}
 
-pub fn upload(
-    self: @This(),
-    allocs: core.engine.Engine.Allocators,
-    upload_ctx: *core.bindings.vulkan_init.UploadContext,
-    logical_device: vki.LogicalDevice,
-    physical_device: vki.PhysicalDevice,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) AllocatedData {
-    var iter = self.metadata.iterator();
-    const textures = allocs.std.alloc(core.resources.Materials.Texture, self.metadata.size) catch @panic("OOM");
-    while (iter.next()) |entry| {
-        const mat = self.getMaterialData(entry.key_ptr.*) orelse @panic("No material found?");
-        const idx = entry.value_ptr.@"0";
-        const mat_texture = mat.upload(
-            allocs.vma,
-            upload_ctx,
-            logical_device,
-            physical_device,
-            alloc_cbs,
-        ) catch @panic("failed to upload material");
-        log.debug(
-            \\ Adding {s} as {d}
-        , .{ mat.name, idx });
-        textures[idx] = mat_texture;
+    pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
+        a.free(self.materials_blob);
+        a.free(self.library_name);
+        for (self.material_names) |n| {
+            a.free(n);
+        }
+        a.free(self.material_names);
+        self.metadata.deinit(a);
     }
 
-    return .{
-        .textures = textures,
-    };
-}
+    pub fn getMaterialData(self: @This(), name: []const u8) ?MaterialData {
+        return if (self.metadata.get(name)) |tup|
+            .{
+                .name = name,
+                .data = self.materials_blob[tup.@"1".offset .. tup.@"1".offset + tup.@"1".range],
+                .width = tup.@"1".width,
+                .height = tup.@"1".height,
+                .channels = tup.@"1".channels,
+            }
+        else
+            null;
+    }
+
+    fn initFromMaterialFile(
+        a: std.mem.Allocator,
+        mtl: core.loaders.mtl.MtlFile,
+    ) anyerror!@This() {
+        var materials = std.ArrayList(u8).empty;
+        var metadatas = std.StringHashMapUnmanaged(struct { usize, Metadata }){};
+        var material_names = std.ArrayList([:0]const u8).empty;
+
+        for (mtl.materials) |mat| {
+            if (mat.map_Kd) |basename| {
+                const path = try std.fmt.allocPrint(a, ASSETS_PATH ++ "{s}", .{basename});
+                defer a.free(path);
+
+                var width: c_int = undefined;
+                var height: c_int = undefined;
+                var channels: c_int = undefined;
+
+                // This is just to make the API more zig friendly. Convert to C 0-term string
+                // on the stack.
+                var buffer: [512]u8 = undefined;
+                const filepathz = try std.fmt.bufPrintZ(buffer[0..], ASSETS_PATH ++ "{s}", .{basename});
+
+                log.info("Attempting to load image from: {s}", .{filepathz});
+
+                const image_data = core.clibs.stbi.load(
+                    filepathz.ptr,
+                    &width,
+                    &height,
+                    &channels,
+                    core.clibs.stbi.rgb_alpha,
+                );
+                if (image_data == null) {
+                    return error.FailedToLoadImage;
+                }
+                const byte_count: usize = @intCast(width * height * core.clibs.stbi.rgb_alpha);
+                const md = Metadata{
+                    .offset = materials.items.len,
+                    .range = byte_count,
+                    .channels = channels,
+                    .height = height,
+                    .width = width,
+                };
+                defer core.clibs.stbi.image_free(image_data);
+                log.debug(
+                    \\ Material '{s}' loaded
+                , .{mat.name});
+
+                try materials.appendSlice(a, image_data[0..byte_count]);
+                try metadatas.put(a, mat.name, .{ metadatas.size, md });
+                try material_names.append(a, try a.dupeZ(u8, mat.name));
+            } else if (mat.Kd) |kd| {
+                const pixel = [4]u8{
+                    @intFromFloat(kd[0] * 255.0),
+                    @intFromFloat(kd[1] * 255.0),
+                    @intFromFloat(kd[2] * 255.0),
+                    255,
+                };
+                const md = Metadata{
+                    .offset = materials.items.len,
+                    .range = 4,
+                    .channels = 4,
+                    .height = 1,
+                    .width = 1,
+                };
+                try materials.appendSlice(a, &pixel);
+                try metadatas.put(a, mat.name, .{ metadatas.size, md });
+                try material_names.append(a, try a.dupeZ(u8, mat.name));
+                log.debug("Material '{s}' loaded as flat color", .{mat.name});
+            }
+        }
+        return .{
+            .materials_blob = try materials.toOwnedSlice(a),
+            .metadata = metadatas,
+            .material_names = try material_names.toOwnedSlice(a),
+            .library_name = try a.dupe(u8, mtl.name),
+        };
+    }
+
+    pub fn upload(
+        self: @This(),
+        allocs: core.engine.Engine.Allocators,
+        upload_ctx: *core.bindings.vulkan_init.UploadContext,
+        logical_device: vki.LogicalDevice,
+        physical_device: vki.PhysicalDevice,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) AllocatedData {
+        var iter = self.metadata.iterator();
+        const textures = allocs.std.alloc(core.resources.Materials.Texture, self.metadata.size) catch @panic("OOM");
+        while (iter.next()) |entry| {
+            const mat = self.getMaterialData(entry.key_ptr.*) orelse @panic("No material found?");
+            const idx = entry.value_ptr.@"0";
+            const mat_texture = mat.upload(
+                allocs.vma,
+                upload_ctx,
+                logical_device,
+                physical_device,
+                alloc_cbs,
+            ) catch @panic("failed to upload material");
+            log.debug(
+                \\ Adding {s} as {d}
+            , .{ mat.name, idx });
+            textures[idx] = mat_texture;
+        }
+
+        return .{
+            .textures = textures,
+        };
+    }
+};

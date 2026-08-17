@@ -81,11 +81,7 @@ pub const resources = struct {
             meshes3D: ?[]const Mesh3DCreateInfo,
         };
 
-        const MaterialEntry = struct {
-            materials: Materials,
-            offset: u32,
-        };
-        materials: std.StringHashMapUnmanaged(MaterialEntry),
+        materials: Materials,
         meshes2D: Meshes2D,
         meshes3D: Meshes3D,
 
@@ -93,29 +89,16 @@ pub const resources = struct {
             self: *@This(),
             a: std.mem.Allocator,
         ) void {
-            var iter = self.materials.valueIterator();
-            while (iter.next()) |m| {
-                m.materials.deinit(a);
-            }
             self.materials.deinit(a);
             self.meshes3D.deinit(a);
             self.meshes2D.deinit(a);
         }
 
         pub fn create(a: std.mem.Allocator, ci: CreateInfo) !@This() {
-            var all_materials = std.StringHashMapUnmanaged(MaterialEntry).empty;
+            var materials: Materials = undefined;
 
-            var current_mtl_offset: u32 = 0;
             if (ci.materials_files) |mtlfls| {
-                for (mtlfls) |mtl| {
-                    const materials = resources.Materials.initFromMaterialFile(a, mtl) catch @panic("failed to create MTL");
-                    current_mtl_offset += @as(u32, @intCast(materials.metadata.size));
-
-                    try all_materials.put(a, mtl.name, .{
-                        .materials = materials,
-                        .offset = current_mtl_offset,
-                    });
-                }
+                materials = try .initFromMaterialsFiles(a, mtlfls);
             }
 
             var meshes3D = try Meshes3D.init(a);
@@ -124,7 +107,7 @@ pub const resources = struct {
                 for (m3ds) |cm3d| {
                     switch (cm3d.create_mesh) {
                         .obj => |obj| {
-                            const this_mat_lib = all_materials.get(obj.material_library_name) orelse std.debug.panic(
+                            const this_mat_lib = materials.libraries.get(obj.material_library_name) orelse std.debug.panic(
                                 \\ Failed to get material library "{s}"
                             , .{obj.material_library_name});
 
@@ -135,7 +118,7 @@ pub const resources = struct {
                                 mesh,
                                 cm3d.transform,
                                 this_mat_lib.offset,
-                                this_mat_lib.materials,
+                                this_mat_lib.library,
                                 obj.objects[0].material_ranges,
                             ) catch @panic("OOM");
                         },
@@ -164,14 +147,14 @@ pub const resources = struct {
             }
 
             return @This(){
-                .materials = all_materials,
+                .materials = materials,
                 .meshes3D = meshes3D,
                 .meshes2D = meshes2D,
             };
         }
 
         pub const AllocatedData = struct {
-            materials: std.StringHashMapUnmanaged(Materials.AllocatedData),
+            materials: std.StringHashMapUnmanaged(Materials.MaterialLibrary.AllocatedData),
             meshes3D: Meshes3D.AllocatedData,
             meshes2D: Meshes2D.AllocatedData,
 
@@ -199,10 +182,10 @@ pub const resources = struct {
             physical_device: bindings.vulkan_init.PhysicalDevice,
             alloc_cbs: ?*clibs.vk.AllocationCallbacks,
         ) AllocatedData {
-            var materials = std.StringHashMapUnmanaged(Materials.AllocatedData).empty;
-            var mat_iter = self.materials.iterator();
-            while (mat_iter.next()) |mat| {
-                const uploaded = mat.value_ptr.materials.upload(
+            var materials = std.StringHashMapUnmanaged(Materials.MaterialLibrary.AllocatedData).empty;
+            var mat_libs_iter = self.materials.libraries.iterator();
+            while (mat_libs_iter.next()) |mat| {
+                const uploaded = mat.value_ptr.library.upload(
                     allocs,
                     upload_ctx,
                     logical_device,

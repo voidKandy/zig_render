@@ -108,7 +108,7 @@ pub fn appendMeshWithMaterialLookup(
     mesh: core.lib.mesh.Mesh3D,
     transform: core.lib.math.Mat4,
     material_lookup_offset: u32,
-    materials: core.resources.Materials,
+    mat_lib: core.resources.Materials.MaterialLibrary,
     material_infos: []core.loaders.obj.MaterialInfo,
 ) std.mem.Allocator.Error!void {
     defer self.amt_meshes += 1;
@@ -131,7 +131,7 @@ pub fn appendMeshWithMaterialLookup(
     try self.indices.appendSlice(a, mesh.indices);
 
     for (material_infos) |mat_info| {
-        const material_entry = materials.metadata.get(mat_info.material_name) orelse std.debug.panic(
+        const material_entry = mat_lib.metadata.get(mat_info.material_name) orelse std.debug.panic(
             \\ Material not found: {s}
         , .{mat_info.material_name}) + material_lookup_offset;
 

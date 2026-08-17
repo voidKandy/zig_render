@@ -18,8 +18,9 @@ const Meshes2D = core.resources.Meshes2D;
 /// shoudl just be called MeshManipulationSystem or something like that and live in
 /// engine/Systems.zig or something like that
 pub const Gui = struct {
-    /// passed from `resources.Materials` upon startup
-    material_names: [][:0]u8,
+    /// Names of each material by their offset
+    /// created from resources upon creation
+    // material_names: std.AutoHashMapUnmanaged(usize, [:0]u8),
 
     /// system side data associated with meshes
     mesh_data: std.AutoHashMapUnmanaged(u32, struct {
@@ -31,9 +32,6 @@ pub const Gui = struct {
 
     pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
         self.mesh_data.deinit(allocs.std);
-        for (self.material_names) |name|
-            allocs.std.free(name);
-        allocs.std.free(self.material_names);
         self.edited_meshes.deinit(allocs.std);
     }
 
@@ -41,22 +39,10 @@ pub const Gui = struct {
         allocs: core.engine.Engine.Allocators,
         resources: core.resources.ResourceManager,
     ) std.mem.Allocator.Error!Gui {
-        var material_names = std.ArrayList([:0]u8).empty;
+        _ = allocs;
+        _ = resources;
 
-        var iter =
-            resources.materials.iterator();
-        while (iter.next()) |entry| {
-            log.warn("libarry name: {s}", .{entry.key_ptr.*});
-            var child_iter = entry.value_ptr.*.materials.metadata.keyIterator();
-            while (child_iter.next()) |name| {
-                log.warn("material name: {s}", .{name.*});
-                try material_names.append(allocs.std, try allocs.std.dupeZ(u8, name.*));
-            }
-        }
-
-        return Gui{
-            .material_names = try material_names.toOwnedSlice(allocs.std),
-        };
+        return Gui{};
     }
 
     pub fn update(
@@ -105,7 +91,7 @@ pub const Gui = struct {
         self: *@This(),
         a: std.mem.Allocator,
         pipeline: *Self,
-        ecs: *core.engine.world.GameWorld,
+        world: *core.engine.world.GameWorld,
         resources: core.resources.ResourceManager,
     ) void {
         var open = true;
@@ -132,7 +118,7 @@ pub const Gui = struct {
             s.set(@intFromEnum(core.engine.world.GameWorld.Meta.ComponentTag.mesh3D));
             break :s s;
         } } };
-        var mesh_entities_iter = ecs.queryEntities(query);
+        var mesh_entities_iter = world.queryEntities(query);
         imgui.Text("Meshes");
 
         while (mesh_entities_iter.next()) |handle| : (idx += 1) {
@@ -161,7 +147,9 @@ pub const Gui = struct {
                 defer imgui.TreePop();
 
                 var mat_idx: c_int = @intCast(mesh_metadatas[0].material_index);
-                imgui.Text("Material Name: %s", self.material_names[@as(usize, @intCast(mat_idx))].ptr);
+
+                const mat_name = resources.materials.all_material_names[@as(usize, @intCast(mat_idx))];
+                imgui.Text("Material Name: %s", mat_name.ptr);
 
                 if (imgui.InputInt("Material Index", &mat_idx)) {
                     mesh_metadatas[0].material_index = @as(u32, @intCast(mat_idx));
