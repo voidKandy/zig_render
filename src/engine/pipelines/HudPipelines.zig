@@ -47,24 +47,12 @@ const GPUMazeCell = extern struct {
 };
 
 pub const AllocatedData = struct {
-    pub const CreateData = struct {
-        pub const MeshCreateInfo = struct {
-            mesh: core.lib.mesh.Mesh2D,
-            screen_coordinates: core.lib.math.Vec2,
-        };
-        pub const HudMesh = union(enum) {
-            maze: MeshCreateInfo,
-        };
-
-        meshes: []const HudMesh,
-
+    pub const CreateInfo = struct {
         maze: core.lib.Maze,
         pixels_per_cell: u32,
         cell_size: f32,
         maze_origin: core.lib.math.Vec3,
     };
-
-    meshes: core.resources.Meshes2D.AllocatedData,
 
     maze_image: vma_usage.AllocatedImage,
     maze_sampler: vk.Sampler,
@@ -83,12 +71,13 @@ pub const AllocatedData = struct {
 
     pub fn create(
         allocs: core.engine.Engine.Allocators,
+        resources: core.resources.ResourceManager,
         upload_ctx: *vki.UploadContext,
         logical_device: vki.LogicalDevice,
         physical_device: vki.PhysicalDevice,
-        cd: CreateData,
+        cd: CreateInfo,
         alloc_cbs: ?*vk.AllocationCallbacks,
-    ) std.mem.Allocator.Error!struct { @This(), SystemsData } {
+    ) std.mem.Allocator.Error!struct { @This(), Gui } {
         // output image — STORAGE_BIT for compute write, SAMPLED_BIT for HUD read
         const maze_extent = vk.Extent3D{
             .width = cd.maze.width * cd.pixels_per_cell,
@@ -165,26 +154,7 @@ pub const AllocatedData = struct {
 
         _ = physical_device;
 
-        var meshes = try core.resources.Meshes2D.init(allocs.std);
-        defer meshes.deinit(allocs.std);
-
-        for (cd.meshes) |mesh| {
-            switch (mesh) {
-                .maze => |maze| {
-                    try meshes.appendMesh(
-                        allocs.std,
-                        maze.mesh,
-                        maze.screen_coordinates,
-                        // BAD
-                        // we have to use a dummy 0 for material index since the material is a sampled image not stored in a materails
-                        0,
-                    );
-                },
-            }
-        }
-
-        const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
-
+        var ranges_clone = try resources.meshes2D.ranges.clone(allocs.std);
         return .{
             .{
                 .maze_image = image,
@@ -194,15 +164,14 @@ pub const AllocatedData = struct {
                     .width = cd.maze.width,
                     .height = cd.maze.height,
                 },
-                .meshes = uploaded_meshes,
                 // BAD
                 .maze_mesh_idx = 0,
                 .cell_size = cd.cell_size,
                 .pixels_per_cell = cd.pixels_per_cell,
                 .maze_origin = cd.maze_origin,
             },
-            SystemsData{
-                .mesh_ranges = try meshes.ranges.toOwnedSlice(allocs.std),
+            Gui{
+                .mesh_ranges = try ranges_clone.toOwnedSlice(allocs.std),
                 .maze = cd.maze,
             },
         };
@@ -217,13 +186,11 @@ pub const AllocatedData = struct {
         self.maze_state.deinit(allocs.vma);
         self.maze_image.deinit(allocs.vma, device, alloc_cbs);
         vk.DestroySampler(device, self.maze_sampler, alloc_cbs);
-        self.meshes.deinit(allocs);
     }
 };
 
-pub const SystemsData = struct {
+pub const Gui = struct {
     mesh_ranges: []core.resources.Meshes2D.MeshRanges,
-
     maze: core.lib.Maze,
     maze_update: bool = false,
 
@@ -253,6 +220,22 @@ pub const SystemsData = struct {
 
             self.maze_update = false;
         }
+    }
+
+    pub fn drawImgui(
+        self: *Gui,
+        ui_set: vk.DescriptorSet,
+    ) void {
+        var open = true;
+        const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+        var seed: c_int = @intCast(self.maze.seed.?);
+        if (imgui.InputInt("seed", &seed)) {
+            self.maze.seed = @as(u64, @intCast(seed));
+            self.maze_update = true;
+        }
+        defer imgui.End();
+        if (!shown) return;
+        imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });
     }
 };
 
@@ -637,6 +620,7 @@ pub fn allocateDescriptorSets(self: Self, device: vk.Device, alloc_data: Allocat
 /// does nothing with graphics set?
 pub fn updateDescriptorSets(
     device: vk.Device,
+    resource_alloc_data: core.resources.ResourceManager.AllocatedData,
     alloc_data: AllocatedData,
     sets: DescriptorSets,
 ) void {
@@ -655,7 +639,7 @@ pub fn updateDescriptorSets(
         .range = vk.WHOLE_SIZE,
     };
     const metadata_buffer_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.meshes.metadata.allocation.buffer,
+        .buffer = resource_alloc_data.meshes2D.metadata.allocation.buffer,
         .offset = 0,
         .range = vk.WHOLE_SIZE,
     };
@@ -775,9 +759,9 @@ pub fn recordCommandsCompute(
 
 pub fn recordCommandsGraphics(
     self: Self,
+    world: *core.engine.world.GameWorld,
     window_extent: vk.Extent2D,
-    sys_data: SystemsData,
-    alloc_data: AllocatedData,
+    alloc_resources: core.resources.ResourceManager.AllocatedData,
     global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
@@ -812,35 +796,29 @@ pub fn recordCommandsGraphics(
         &pc,
     );
     const offsets = [_]vk.DeviceSize{0};
-    vk.CmdBindVertexBuffers(cmd, 0, 1, &alloc_data.meshes.vertex_buffer.buffer, &offsets);
-    vk.CmdBindIndexBuffer(cmd, alloc_data.meshes.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT32);
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &alloc_resources.meshes2D.vertex_buffer.buffer, &offsets);
+    vk.CmdBindIndexBuffer(cmd, alloc_resources.meshes2D.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT32);
 
-    for (sys_data.mesh_ranges, 0..) |range, idx| {
+    const query = core.engine.world.GameWorld.Query{ .is = .{ .rule = .at_least, .sig = s: {
+        var s = core.engine.world.GameWorld.Signature.initEmpty();
+        s.set(@intFromEnum(core.engine.world.GameWorld.Meta.ComponentTag.mesh2D));
+        break :s s;
+    } } };
+    var mesh_entities_iter = world.queryEntities(query);
+
+    var idx: usize = 0;
+    while (mesh_entities_iter.next()) |handle| : (idx += 1) {
+        var mutable_handle = handle;
+        const mesh_component = mutable_handle.accessComponent(.mesh2D) catch unreachable;
+        const mesh: core.engine.world.Mesh2DComponent = mesh_component.mesh2D;
+
         vk.CmdDrawIndexed(
             cmd,
-            @intCast(range.index.range), // index count
+            @intCast(mesh.ranges.index.range), // index count
             1, // instance count
-            @intCast(range.index.offset), // first index
+            @intCast(mesh.ranges.index.offset), // first index
             0, // vertex offset (already baked in during appendMesh)
             @intCast(idx), // first instance — used to look up MetaData in shader
         );
     }
-}
-
-pub fn drawImgui(
-    self: *Self,
-    system_data: *SystemsData,
-    ui_set: vk.DescriptorSet,
-) void {
-    _ = self;
-    var open = true;
-    const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
-    var seed: c_int = @intCast(system_data.maze.seed.?);
-    if (imgui.InputInt("seed", &seed)) {
-        system_data.maze.seed = @as(u64, @intCast(seed));
-        system_data.maze_update = true;
-    }
-    defer imgui.End();
-    if (!shown) return;
-    imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });
 }

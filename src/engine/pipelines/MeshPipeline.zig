@@ -13,135 +13,12 @@ const Mesh = mesh_mod.Mesh3D;
 const Meshes3D = core.resources.Meshes3D;
 const Meshes2D = core.resources.Meshes2D;
 
-pub const AllocatedData = struct {
-    pub const CreateData = struct {
-        const CreateMesh = union(enum) {
-            obj: core.loaders.obj.ObjFile,
-            info: struct {
-                mesh: Mesh,
-                material_idx: u32,
-            },
-        };
-        pub const MeshCreateInfo = struct {
-            create_mesh: CreateMesh,
-            transform: core.lib.math.Mat4 = .IDENTITY,
-        };
-        materials_files: []const core.loaders.mtl.MtlFile,
-        create_meshes: []const MeshCreateInfo,
-    };
-
-    const MaterialEntry = struct {
-        alloc_data: core.resources.Materials.AllocatedData,
-        offset: u32,
-    };
-    materials: std.StringHashMap(MaterialEntry),
-    meshes: Meshes3D.AllocatedData,
-
-    pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-        self.meshes.deinit(allocs);
-        var iter = self.materials.valueIterator();
-        while (iter.next()) |mt|
-            mt.alloc_data.deinit(allocs, device, alloc_cbs);
-        self.materials.deinit();
-    }
-
-    pub fn create(
-        allocs: core.engine.Engine.Allocators,
-        world: *core.engine.world.GameWorld,
-        upload_ctx: *core.bindings.vulkan_init.UploadContext,
-        logical_device: core.bindings.vulkan_init.LogicalDevice,
-        physical_device: core.bindings.vulkan_init.PhysicalDevice,
-        cd: CreateData,
-        alloc_cbs: ?*vk.AllocationCallbacks,
-    ) std.mem.Allocator.Error!struct {
-        @This(),
-        Gui,
-    } {
-        var all_uploaded_materials = std.StringHashMap(MaterialEntry).init(allocs.std);
-        var material_names = std.ArrayList([:0]u8).empty;
-
-        var current_mtl_offset: u32 = 0;
-        for (cd.materials_files) |mtl| {
-            var materials = core.resources.Materials.initFromMaterialFile(allocs.std, mtl) catch @panic("failed to create MTL");
-            defer materials.deinit(allocs.std);
-            const uploaded = materials.upload(
-                allocs,
-                upload_ctx,
-                logical_device,
-                physical_device,
-                alloc_cbs,
-            );
-
-            var iter = uploaded.indices.keyIterator();
-            while (iter.next()) |name| {
-                log.warn("material name: {s}", .{name.*});
-                try material_names.append(allocs.std, try allocs.std.dupeZ(u8, name.*));
-            }
-
-            try all_uploaded_materials.put(mtl.name, .{ .alloc_data = uploaded, .offset = current_mtl_offset });
-            current_mtl_offset += @as(u32, @intCast(uploaded.textures.len));
-        }
-
-        var meshes = try Meshes3D.init(allocs.std);
-        defer meshes.deinit(allocs.std);
-
-        for (cd.create_meshes) |create_mesh| {
-            switch (create_mesh.create_mesh) {
-                .obj => |obj| {
-                    const this_mat_lib =
-                        all_uploaded_materials.get(obj.material_library_name) orelse std.debug.panic(
-                            \\ Failed to get material library "{s}"
-                        , .{obj.material_library_name});
-
-                    const mesh = core.lib.mesh.Mesh3D.fromObjFile(allocs.std, obj) catch @panic("failed to load mesh");
-                    defer mesh.deinit(allocs.std);
-                    meshes.appendMeshWithMaterialLookup(
-                        allocs.std,
-                        mesh,
-                        create_mesh.transform,
-                        this_mat_lib.offset,
-                        this_mat_lib.alloc_data.indices,
-                        obj.objects[0].material_ranges,
-                    ) catch @panic("OOM");
-                },
-                .info => |info| {
-                    meshes.appendMeshWithMaterialIndex(
-                        allocs.std,
-                        info.mesh,
-                        create_mesh.transform,
-                        info.material_idx,
-                    ) catch @panic("OOM");
-                },
-            }
-        }
-
-        const uploaded_meshes = meshes.upload(allocs, upload_ctx, logical_device);
-
-        for (meshes.meshes.items) |mesh_handle| {
-            var ent = try world.entities.register(null);
-            ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
-                .handle = mesh_handle,
-            });
-        }
-
-        return .{
-            @This(){
-                .materials = all_uploaded_materials,
-                .meshes = uploaded_meshes,
-            },
-            Gui{
-                .mesh_metadatas = try meshes.meta_data.toOwnedSlice(allocs.std),
-                .material_names = try material_names.toOwnedSlice(allocs.std),
-            },
-        };
-    }
-};
-
+/// TODO
+/// there is no reason for this to be encapsulated in MeshPipeline
+/// shoudl just be called MeshManipulationSystem or something like that and live in
+/// engine/Systems.zig or something like that
 pub const Gui = struct {
-    /// ALL mesh metadatas, passed from `Meshes3D` upon startup
-    /// slices into this are used when creating draw calls
-    mesh_metadatas: []Meshes3D.MetaData,
-    /// passed from `Materials` upon startup
+    /// passed from `resources.Materials` upon startup
     material_names: [][:0]u8,
 
     /// system side data associated with meshes
@@ -153,7 +30,6 @@ pub const Gui = struct {
     edited_meshes: std.ArrayListUnmanaged(u32) = .empty,
 
     pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
-        allocs.std.free(self.mesh_metadatas);
         self.mesh_data.deinit(allocs.std);
         for (self.material_names) |name|
             allocs.std.free(name);
@@ -161,20 +37,43 @@ pub const Gui = struct {
         self.edited_meshes.deinit(allocs.std);
     }
 
+    pub fn create(
+        allocs: core.engine.Engine.Allocators,
+        resources: core.resources.ResourceManager,
+    ) std.mem.Allocator.Error!Gui {
+        var material_names = std.ArrayList([:0]u8).empty;
+
+        var iter =
+            resources.materials.iterator();
+        while (iter.next()) |entry| {
+            log.warn("libarry name: {s}", .{entry.key_ptr.*});
+            var child_iter = entry.value_ptr.*.materials.metadata.keyIterator();
+            while (child_iter.next()) |name| {
+                log.warn("material name: {s}", .{name.*});
+                try material_names.append(allocs.std, try allocs.std.dupeZ(u8, name.*));
+            }
+        }
+
+        return Gui{
+            .material_names = try material_names.toOwnedSlice(allocs.std),
+        };
+    }
+
     pub fn update(
         self: *@This(),
+        resources: core.resources.ResourceManager,
+        alloc_resources: core.resources.ResourceManager.AllocatedData,
         ecs: *core.engine.world.GameWorld,
-        alloc_data: AllocatedData,
     ) void {
         if (self.edited_meshes.items.len > 0) {
-            const aligned_metadatas: [*]Meshes3D.MetaData = @ptrCast(@alignCast(alloc_data.meshes.metadata.mapped));
+            const aligned_metadatas: [*]Meshes3D.MetaData = @ptrCast(@alignCast(alloc_resources.meshes3D.metadata.mapped));
             for (self.edited_meshes.items) |id| {
                 var mesh_entity = ecs.entityHandle(id) catch std.debug.panic(
                     \\ No entity matching id: {}
                 , .{id});
                 const mesh_component = mesh_entity.accessComponent(.mesh3D) catch @panic("mesh component access failed");
                 const mesh_handle = mesh_component.mesh3D.handle;
-                const mds = self.mesh_metadatas[mesh_handle.ranges.metadata.offset .. mesh_handle.ranges.metadata.offset + mesh_handle.ranges.metadata.range];
+                const mds = resources.meshes3D.meta_data.items[mesh_handle.ranges.metadata.offset .. mesh_handle.ranges.metadata.offset + mesh_handle.ranges.metadata.range];
                 for (0..mds.len) |k| {
                     const md = mds[k];
                     const gpu_md: Meshes3D.MetaData = .{
@@ -207,6 +106,7 @@ pub const Gui = struct {
         a: std.mem.Allocator,
         pipeline: *Self,
         ecs: *core.engine.world.GameWorld,
+        resources: core.resources.ResourceManager,
     ) void {
         var open = true;
         const shown = imgui.Begin("Mesh Pipeline", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
@@ -245,7 +145,7 @@ pub const Gui = struct {
 
             const ranges = mesh.handle.ranges;
             const mesh_metadatas =
-                self.mesh_metadatas[ranges.metadata.offset .. ranges.metadata.offset + ranges.metadata.range];
+                resources.meshes3D.meta_data.items[ranges.metadata.offset .. ranges.metadata.offset + ranges.metadata.range];
 
             var transform = mesh_metadatas[0].model_transform;
 
@@ -721,21 +621,21 @@ pub fn allocateTextureDescriptorSet(self: Self, device: vk.Device) vk.Descriptor
 pub fn updateDescriptorSets(
     device: vk.Device,
     a: mem.Allocator,
-    alloc_data: AllocatedData,
+    alloc_data: core.resources.ResourceManager.AllocatedData,
     set: vk.DescriptorSet,
     textures_set: vk.DescriptorSet,
 ) mem.Allocator.Error!void {
     try updateTextureDescriptorSet(device, a, alloc_data, textures_set);
 
     const vertex_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.meshes.vertex_buffer.buffer,
+        .buffer = alloc_data.meshes3D.vertex_buffer.buffer,
         .offset = 0,
-        .range = alloc_data.meshes.vertex_buffer.size,
+        .range = alloc_data.meshes3D.vertex_buffer.size,
     };
     const index_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.meshes.index_buffer.buffer,
+        .buffer = alloc_data.meshes3D.index_buffer.buffer,
         .offset = 0,
-        .range = alloc_data.meshes.index_buffer.size,
+        .range = alloc_data.meshes3D.index_buffer.size,
     };
 
     const write_sets =
@@ -772,14 +672,14 @@ pub fn updateDescriptorSets(
 fn updateTextureDescriptorSet(
     device: vk.Device,
     a: mem.Allocator,
-    alloc_data: AllocatedData,
+    alloc_data: core.resources.ResourceManager.AllocatedData,
     texture_set: vk.DescriptorSet,
 ) mem.Allocator.Error!void {
     const texture_count = blk: {
         var i: usize = 0;
         var iter = alloc_data.materials.valueIterator();
         while (iter.next()) |val| {
-            i += val.alloc_data.textures.len;
+            i += val.textures.len;
         }
         break :blk i;
     };
@@ -792,7 +692,7 @@ fn updateTextureDescriptorSet(
     var iter = alloc_data.materials.valueIterator();
     var i: usize = 0;
     while (iter.next()) |val| {
-        for (val.alloc_data.textures) |tx| {
+        for (val.textures) |tx| {
             image_infos[i] = .{
                 .sampler = tx.sampler,
                 .imageView = tx.image_alloc.view,
@@ -805,7 +705,7 @@ fn updateTextureDescriptorSet(
     std.debug.assert(i == texture_count);
 
     const buffer_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.meshes.metadata.allocation.buffer,
+        .buffer = alloc_data.meshes3D.metadata.allocation.buffer,
         .offset = 0,
         .range = vk.WHOLE_SIZE,
     };
@@ -863,7 +763,7 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 
 pub fn recordCommands(
     self: Self,
-    ecs: *core.engine.world.GameWorld,
+    world: *core.engine.world.GameWorld,
     global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     tx_set: vk.DescriptorSet,
@@ -896,7 +796,7 @@ pub fn recordCommands(
         s.set(@intFromEnum(core.engine.world.GameWorld.Meta.ComponentTag.mesh3D));
         break :s s;
     } } };
-    var mesh_entities_iter = ecs.queryEntities(query);
+    var mesh_entities_iter = world.queryEntities(query);
 
     var idx: usize = 0;
     while (mesh_entities_iter.next()) |handle| : (idx += 1) {

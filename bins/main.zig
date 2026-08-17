@@ -33,6 +33,7 @@ pub fn main(init: std.process.Init) void {
             vk.API_VERSION_PATCH(api_version),
         },
     );
+
     // var cwd_buff: [1024]u8 = undefined;
     // const cwd = std.process.getCwd(cwd_buff[0..]) catch @panic("cwd_buff too small");
     // const cwd = std.Io.Dir.cwd();
@@ -68,7 +69,7 @@ pub fn main(init: std.process.Init) void {
     };
 
     const meshes_objects = a.alloc(
-        core.engine.pipelines.MeshPipeline.AllocatedData.CreateData.MeshCreateInfo,
+        core.resources.ResourceManager.Mesh3DCreateInfo,
         // BAD
         amt_meshes_objects + 1,
     ) catch @panic("failed to alloc meshes_objects");
@@ -85,13 +86,6 @@ pub fn main(init: std.process.Init) void {
         }
         k += files.len;
     }
-
-    var engine = core.engine.Engine.init(
-        a,
-        init.io,
-        null,
-    );
-    defer engine.deinit();
 
     // var maze = core.Maze.initHallwaySquare(
     //     a,
@@ -146,30 +140,67 @@ pub fn main(init: std.process.Init) void {
             },
         },
     };
-    const mesh_pipeline_create_data: core.engine.pipelines.MeshPipeline.AllocatedData.CreateData =
-        .{
-            .materials_files = &[_]core.loaders.mtl.MtlFile{ global_mat, debug_mat },
-            .create_meshes = meshes_objects,
-        };
+    // const mesh_pipeline_create_data: core.engine.pipelines.MeshPipeline.AllocatedData.CreateData =
+    //     .{
+    //         .materials_files = &[_]core.loaders.mtl.MtlFile{ global_mat, debug_mat },
+    //         .create_meshes = meshes_objects,
+    //     };
 
-    const hud_pipeline_create_data: core.engine.pipelines.HudPipelines.AllocatedData.CreateData =
+    const hud_pipeline_create_data: core.engine.pipelines.HudPipelines.AllocatedData.CreateInfo =
         .{
-            .meshes = &[_]core.engine.pipelines.HudPipelines.AllocatedData.CreateData.HudMesh{
-                .{
-                    .maze = .{
-                        .mesh = maze_quad,
-                        .screen_coordinates = maze_quad_coords,
-                    },
-                },
-            },
             .maze = maze,
             .pixels_per_cell = pixels_per_cell,
             .cell_size = maze_mesh_options.cell_size,
             .maze_origin = maze_mesh_options.origin,
         };
 
+    var engine = core.engine.Engine.init(
+        a,
+        init.io,
+
+        core.resources.ResourceManager.CreateInfo{
+            .materials_files = &[_]core.loaders.mtl.MtlFile{
+                global_mat,
+                debug_mat,
+            },
+            .meshes2D = &[_]core.resources.ResourceManager.Mesh2DCreateInfo{
+                .{
+                    .mesh = maze_quad,
+                    .screen_coordinates = maze_quad_coords,
+                    // BAD
+                    // using dummy because this is read from
+                    // a buffer
+                    .material_index = 0,
+                },
+            },
+            .meshes3D = meshes_objects,
+        },
+        null,
+    );
+    defer engine.deinit();
+
+    for (engine.resources.meshes3D.meshes.items) |handle| {
+        var ent = engine.world.entities.register(null) catch @panic("OOM");
+        ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+            .handle = handle,
+        });
+    }
+    for (engine.resources.meshes2D.ranges.items) |ranges| {
+        var ent = engine.world.entities.register(null) catch @panic("OOM");
+        ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
+            .ranges = ranges,
+        });
+    }
+
+    engine.allocated_resources = engine.resources.upload(
+        engine.allocs,
+        &engine.upload_context,
+        engine.logical_device,
+        engine.physical_device,
+        engine.alloc_cbs,
+    );
+
     engine.initPipelines(
-        mesh_pipeline_create_data,
         hud_pipeline_create_data,
     );
 

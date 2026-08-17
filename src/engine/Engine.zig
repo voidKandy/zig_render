@@ -23,6 +23,8 @@ const INITIAL_WINDOW_EXTENT = vk.Extent2D{ .width = 1600, .height = 900 };
 
 const Self = @This();
 
+/// TODO
+/// move to `engine.Allocators`
 pub const Allocators = struct {
     std: std.mem.Allocator,
     vma: c.vma.Allocator = undefined,
@@ -44,6 +46,8 @@ upload_context: vki.UploadContext = .{},
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
 global_data: core.engine.GlobalAllocatedData = undefined,
+allocated_resources: core.resources.ResourceManager.AllocatedData = undefined,
+resources: core.resources.ResourceManager = undefined,
 
 world: core.engine.world.GameWorld,
 
@@ -53,7 +57,6 @@ background_descriptor_set: vk.DescriptorSet = undefined,
 background_pipeline_description: BackgroundPipeline.Description = undefined,
 
 mesh_pipeline: MeshPipeline = undefined,
-mesh_pipeline_data: MeshPipeline.AllocatedData = undefined,
 mesh_pipeline_gui: MeshPipeline.Gui = undefined,
 
 mesh_descriptor_set: vk.DescriptorSet = undefined,
@@ -62,7 +65,7 @@ mesh_pipeline_description: MeshPipeline.Description = undefined,
 
 hud_pipeline: HudPipelines = undefined,
 hud_pipeline_data: HudPipelines.AllocatedData = undefined,
-hud_pipeline_systems_data: HudPipelines.SystemsData = undefined,
+hud_pipeline_gui: HudPipelines.Gui = undefined,
 hud_descriptor_sets: HudPipelines.DescriptorSets = undefined,
 hud_pipeline_description: HudPipelines.Description = undefined,
 
@@ -75,6 +78,7 @@ frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 pub fn init(
     a: std.mem.Allocator,
     io: std.Io,
+    resources_ci: core.resources.ResourceManager.CreateInfo,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     var self = @This(){
@@ -82,6 +86,10 @@ pub fn init(
         .alloc_cbs = alloc_cbs,
         .io = io,
         .world = core.engine.world.GameWorld.init(a) catch @panic("OOM"),
+        .resources = core.resources.ResourceManager.create(
+            a,
+            resources_ci,
+        ) catch @panic("failed resources init"),
     };
 
     self.initWindow();
@@ -106,11 +114,11 @@ pub fn deinit(self: *Self) void {
     log.debug("destroyed imgui descriptor pool", .{});
 
     self.global_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+    self.resources.deinit(self.allocs.std);
+    self.allocated_resources.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     self.mesh_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed mesh pipeline", .{});
-    self.mesh_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed mesh pipeline data", .{});
     self.mesh_pipeline_gui.deinit(self.allocs);
     log.debug("destroyed mesh pipeline systems data", .{});
 
@@ -118,7 +126,7 @@ pub fn deinit(self: *Self) void {
     log.debug("destroyed hud pipeline", .{});
     self.hud_pipeline_data.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed hud pipeline data", .{});
-    self.hud_pipeline_systems_data.deinit(self.allocs);
+    self.hud_pipeline_gui.deinit(self.allocs);
     log.debug("destroyed hud pipeline systems data", .{});
 
     self.background_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -187,10 +195,11 @@ pub fn run(self: *Self) void {
         );
 
         self.mesh_pipeline_gui.update(
+            self.resources,
+            self.allocated_resources,
             &self.world,
-            self.mesh_pipeline_data,
         );
-        self.hud_pipeline_systems_data.update(
+        self.hud_pipeline_gui.update(
             self.allocs.std,
             self.hud_pipeline_data,
         );
@@ -323,8 +332,7 @@ fn initGlobalData(
 
 pub fn initPipelines(
     self: *Self,
-    mesh_pipeline_cd: MeshPipeline.AllocatedData.CreateData,
-    hud_pipeline_cd: HudPipelines.AllocatedData.CreateData,
+    hud_pipeline_ci: HudPipelines.AllocatedData.CreateInfo,
 ) void {
     self.initImgui();
 
@@ -341,24 +349,17 @@ pub fn initPipelines(
     );
     self.initBackgroundPipeline();
 
-    self.mesh_pipeline_data, self.mesh_pipeline_gui = MeshPipeline.AllocatedData.create(
-        self.allocs,
-        &self.world,
-        &self.upload_context,
-        self.logical_device,
-        self.physical_device,
-        mesh_pipeline_cd,
-        self.alloc_cbs,
-    ) catch @panic("OOM");
+    self.mesh_pipeline_gui = MeshPipeline.Gui.create(self.allocs, self.resources) catch @panic("failed to create mesh gui");
 
     self.initMeshPipeline();
 
-    self.hud_pipeline_data, self.hud_pipeline_systems_data = HudPipelines.AllocatedData.create(
+    self.hud_pipeline_data, self.hud_pipeline_gui = HudPipelines.AllocatedData.create(
         self.allocs,
+        self.resources,
         &self.upload_context,
         self.logical_device,
         self.physical_device,
-        hud_pipeline_cd,
+        hud_pipeline_ci,
         self.alloc_cbs,
     ) catch @panic("OOM");
 
@@ -471,7 +472,7 @@ fn initMeshPipeline(self: *Self) void {
     MeshPipeline.updateDescriptorSets(
         self.logical_device.handle,
         self.allocs.std,
-        self.mesh_pipeline_data,
+        self.allocated_resources,
         self.mesh_descriptor_set,
         self.mesh_texture_set,
     ) catch @panic("OOM");
@@ -512,6 +513,7 @@ fn initHudPipeline(self: *Self) void {
     self.hud_descriptor_sets = self.hud_pipeline.allocateDescriptorSets(self.logical_device.handle, self.hud_pipeline_data);
     HudPipelines.updateDescriptorSets(
         self.logical_device.handle,
+        self.allocated_resources,
         self.hud_pipeline_data,
         self.hud_descriptor_sets,
     );
@@ -597,14 +599,14 @@ fn drawImgui(self: *Self) void {
 
     self.global_data.drawImgui();
     self.background_pipeline.drawImgui();
-    self.hud_pipeline.drawImgui(
-        &self.hud_pipeline_systems_data,
+    self.hud_pipeline_gui.drawImgui(
         self.hud_descriptor_sets.ui,
     );
     self.mesh_pipeline_gui.drawImgui(
         self.allocs.std,
         &self.mesh_pipeline,
         &self.world,
+        self.resources,
     );
 
     c.imgui.Render();
@@ -759,7 +761,6 @@ fn recordCommandBuffer(
     self.mesh_pipeline.bind(frame.main_command_buffer);
     self.mesh_pipeline.recordCommands(
         &self.world,
-        // self.mesh_pipeline_systems_data,
         self.global_data.set,
         self.mesh_descriptor_set,
         self.mesh_texture_set,
@@ -768,9 +769,9 @@ fn recordCommandBuffer(
 
     self.hud_pipeline.bindGraphics(frame.main_command_buffer);
     self.hud_pipeline.recordCommandsGraphics(
+        &self.world,
         self.swapchain.extent,
-        self.hud_pipeline_systems_data,
-        self.hud_pipeline_data,
+        self.allocated_resources,
         self.global_data.set,
         self.hud_descriptor_sets.graphics,
         frame.main_command_buffer,

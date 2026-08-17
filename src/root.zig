@@ -57,6 +57,179 @@ pub const loaders = struct {
 };
 
 pub const resources = struct {
+    pub const ResourceManager = struct {
+        pub const Mesh3DCreateInfo = struct {
+            create_mesh: union(enum) {
+                obj: loaders.obj.ObjFile,
+                info: struct {
+                    mesh: lib.mesh.Mesh3D,
+                    material_idx: u32,
+                },
+            },
+            transform: lib.math.Mat4 = .IDENTITY,
+        };
+
+        pub const Mesh2DCreateInfo = struct {
+            mesh: lib.mesh.Mesh2D,
+            material_index: u32,
+            screen_coordinates: lib.math.Vec2,
+        };
+
+        pub const CreateInfo = struct {
+            materials_files: ?[]const loaders.mtl.MtlFile,
+            meshes2D: ?[]const Mesh2DCreateInfo,
+            meshes3D: ?[]const Mesh3DCreateInfo,
+        };
+
+        const MaterialEntry = struct {
+            materials: Materials,
+            offset: u32,
+        };
+        materials: std.StringHashMapUnmanaged(MaterialEntry),
+        meshes2D: Meshes2D,
+        meshes3D: Meshes3D,
+
+        pub fn deinit(
+            self: *@This(),
+            a: std.mem.Allocator,
+        ) void {
+            var iter = self.materials.valueIterator();
+            while (iter.next()) |m| {
+                m.materials.deinit(a);
+            }
+            self.materials.deinit(a);
+            self.meshes3D.deinit(a);
+            self.meshes2D.deinit(a);
+        }
+
+        pub fn create(a: std.mem.Allocator, ci: CreateInfo) !@This() {
+            var all_materials = std.StringHashMapUnmanaged(MaterialEntry).empty;
+
+            var current_mtl_offset: u32 = 0;
+            if (ci.materials_files) |mtlfls| {
+                for (mtlfls) |mtl| {
+                    const materials = resources.Materials.initFromMaterialFile(a, mtl) catch @panic("failed to create MTL");
+                    current_mtl_offset += @as(u32, @intCast(materials.metadata.size));
+
+                    try all_materials.put(a, mtl.name, .{
+                        .materials = materials,
+                        .offset = current_mtl_offset,
+                    });
+                }
+            }
+
+            var meshes3D = try Meshes3D.init(a);
+
+            if (ci.meshes3D) |m3ds| {
+                for (m3ds) |cm3d| {
+                    switch (cm3d.create_mesh) {
+                        .obj => |obj| {
+                            const this_mat_lib = all_materials.get(obj.material_library_name) orelse std.debug.panic(
+                                \\ Failed to get material library "{s}"
+                            , .{obj.material_library_name});
+
+                            const mesh = lib.mesh.Mesh3D.fromObjFile(a, obj) catch @panic("failed to load mesh");
+                            defer mesh.deinit(a);
+                            meshes3D.appendMeshWithMaterialLookup(
+                                a,
+                                mesh,
+                                cm3d.transform,
+                                this_mat_lib.offset,
+                                this_mat_lib.materials,
+                                obj.objects[0].material_ranges,
+                            ) catch @panic("OOM");
+                        },
+                        .info => |info| {
+                            meshes3D.appendMeshWithMaterialIndex(
+                                a,
+                                info.mesh,
+                                cm3d.transform,
+                                info.material_idx,
+                            ) catch @panic("OOM");
+                        },
+                    }
+                }
+            }
+
+            var meshes2D = try resources.Meshes2D.init(a);
+            if (ci.meshes2D) |m2ds| {
+                for (m2ds) |cm2d| {
+                    try meshes2D.appendMesh(
+                        a,
+                        cm2d.mesh,
+                        cm2d.screen_coordinates,
+                        cm2d.material_index,
+                    );
+                }
+            }
+
+            return @This(){
+                .materials = all_materials,
+                .meshes3D = meshes3D,
+                .meshes2D = meshes2D,
+            };
+        }
+
+        pub const AllocatedData = struct {
+            materials: std.StringHashMapUnmanaged(Materials.AllocatedData),
+            meshes3D: Meshes3D.AllocatedData,
+            meshes2D: Meshes2D.AllocatedData,
+
+            pub fn deinit(
+                self: *@This(),
+                allocs: engine.Engine.Allocators,
+                device: clibs.vk.Device,
+                alloc_cbs: ?*clibs.vk.AllocationCallbacks,
+            ) void {
+                var iter = self.materials.valueIterator();
+                while (iter.next()) |m| {
+                    m.deinit(allocs, device, alloc_cbs);
+                }
+                self.materials.deinit(allocs.std);
+                self.meshes3D.deinit(allocs);
+                self.meshes2D.deinit(allocs);
+            }
+        };
+
+        pub fn upload(
+            self: *@This(),
+            allocs: engine.Engine.Allocators,
+            upload_ctx: *bindings.vulkan_init.UploadContext,
+            logical_device: bindings.vulkan_init.LogicalDevice,
+            physical_device: bindings.vulkan_init.PhysicalDevice,
+            alloc_cbs: ?*clibs.vk.AllocationCallbacks,
+        ) AllocatedData {
+            var materials = std.StringHashMapUnmanaged(Materials.AllocatedData).empty;
+            var mat_iter = self.materials.iterator();
+            while (mat_iter.next()) |mat| {
+                const uploaded = mat.value_ptr.materials.upload(
+                    allocs,
+                    upload_ctx,
+                    logical_device,
+                    physical_device,
+                    alloc_cbs,
+                );
+                materials.put(allocs.std, mat.key_ptr.*, uploaded) catch @panic("OOM");
+            }
+            const meshes3D = self.meshes3D.upload(
+                allocs,
+                upload_ctx,
+                logical_device,
+            );
+            const meshes2D = self.meshes2D.upload(
+                allocs,
+                upload_ctx,
+                logical_device,
+            );
+
+            return .{
+                .meshes3D = meshes3D,
+                .meshes2D = meshes2D,
+                .materials = materials,
+            };
+        }
+    };
+
     pub const Materials = @import("resources/Materials.zig");
     pub const Meshes2D = @import("resources/Meshes2D.zig");
     pub const Meshes3D = @import("resources/Meshes3D.zig");

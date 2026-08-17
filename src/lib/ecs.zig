@@ -308,9 +308,6 @@ pub fn EntityStore(
             return @typeInfo(Options.components).@"struct".fields[idx].type;
         }
 
-        /// TODO OPTIMIZE
-        /// This currently is 0(n) n=entities
-        /// There is also an ArrayList allocated
         pub fn queryEntities(self: *ThisStore, query: Query) QueryIterator {
             return .{
                 .ecs = self,

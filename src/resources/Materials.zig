@@ -223,7 +223,7 @@ pub const MaterialData = struct {
     }
 };
 
-metadata: std.StringHashMapUnmanaged(Metadata),
+metadata: std.StringHashMapUnmanaged(struct { usize, Metadata }),
 materials_blob: []u8,
 library_name: []u8,
 
@@ -232,7 +232,6 @@ const ASSETS_PATH = "assets/";
 
 pub const AllocatedData = struct {
     textures: []Texture,
-    indices: std.StringHashMapUnmanaged(u32),
 
     pub fn deinit(
         self: *@This(),
@@ -244,7 +243,6 @@ pub const AllocatedData = struct {
             tx.deinit(allocs.vma, device, alloc_cbs);
         }
         allocs.std.free(self.textures);
-        self.indices.deinit(allocs.std);
     }
 };
 
@@ -255,13 +253,13 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
 }
 
 pub fn getMaterialData(self: Self, name: []const u8) ?MaterialData {
-    return if (self.metadata.get(name)) |met|
+    return if (self.metadata.get(name)) |tup|
         .{
             .name = name,
-            .data = self.materials_blob[met.offset .. met.offset + met.range],
-            .width = met.width,
-            .height = met.height,
-            .channels = met.channels,
+            .data = self.materials_blob[tup.@"1".offset .. tup.@"1".offset + tup.@"1".range],
+            .width = tup.@"1".width,
+            .height = tup.@"1".height,
+            .channels = tup.@"1".channels,
         }
     else
         null;
@@ -272,7 +270,7 @@ pub fn initFromMaterialFile(
     mtl: core.loaders.mtl.MtlFile,
 ) anyerror!@This() {
     var materials = std.ArrayList(u8).empty;
-    var metadatas = std.StringHashMapUnmanaged(Metadata){};
+    var metadatas = std.StringHashMapUnmanaged(struct { usize, Metadata }){};
 
     for (mtl.materials) |mat| {
         if (mat.map_Kd) |basename| {
@@ -301,7 +299,7 @@ pub fn initFromMaterialFile(
                 return error.FailedToLoadImage;
             }
             const byte_count: usize = @intCast(width * height * core.clibs.stbi.rgb_alpha);
-            const offset = Metadata{
+            const md = Metadata{
                 .offset = materials.items.len,
                 .range = byte_count,
                 .channels = channels,
@@ -314,7 +312,7 @@ pub fn initFromMaterialFile(
             , .{mat.name});
 
             try materials.appendSlice(a, image_data[0..byte_count]);
-            try metadatas.put(a, mat.name, offset);
+            try metadatas.put(a, mat.name, .{ metadatas.size, md });
         } else if (mat.Kd) |kd| {
             const pixel = [4]u8{
                 @intFromFloat(kd[0] * 255.0),
@@ -322,7 +320,7 @@ pub fn initFromMaterialFile(
                 @intFromFloat(kd[2] * 255.0),
                 255,
             };
-            const offset = Metadata{
+            const md = Metadata{
                 .offset = materials.items.len,
                 .range = 4,
                 .channels = 4,
@@ -330,7 +328,7 @@ pub fn initFromMaterialFile(
                 .width = 1,
             };
             try materials.appendSlice(a, &pixel);
-            try metadatas.put(a, mat.name, offset);
+            try metadatas.put(a, mat.name, .{ metadatas.size, md });
             log.debug("Material '{s}' loaded as flat color", .{mat.name});
         }
     }
@@ -349,12 +347,11 @@ pub fn upload(
     physical_device: vki.PhysicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) AllocatedData {
-    var iter = self.metadata.keyIterator();
-    var material_indices = std.StringHashMapUnmanaged(u32){};
+    var iter = self.metadata.iterator();
     const textures = allocs.std.alloc(core.resources.Materials.Texture, self.metadata.size) catch @panic("OOM");
-    var i: u32 = 0;
-    while (iter.next()) |key| : (i += 1) {
-        const mat = self.getMaterialData(key.*) orelse @panic("No material found?");
+    while (iter.next()) |entry| {
+        const mat = self.getMaterialData(entry.key_ptr.*) orelse @panic("No material found?");
+        const idx = entry.value_ptr.@"0";
         const mat_texture = mat.upload(
             allocs.vma,
             upload_ctx,
@@ -364,13 +361,11 @@ pub fn upload(
         ) catch @panic("failed to upload material");
         log.debug(
             \\ Adding {s} as {d}
-        , .{ mat.name, i });
-        material_indices.put(allocs.std, mat.name, i) catch @panic("OOM");
-        textures[i] = mat_texture;
+        , .{ mat.name, idx });
+        textures[idx] = mat_texture;
     }
 
     return .{
-        .indices = material_indices,
         .textures = textures,
     };
 }
