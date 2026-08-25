@@ -219,42 +219,47 @@ pub const MaterialData = struct {
     }
 };
 
-const MaterialEntry = struct {
+const MaterialLibraryEntry = struct {
     library: MaterialLibrary,
     offset: u32,
 };
 
-libraries: std.StringHashMapUnmanaged(MaterialEntry),
-all_material_names: [][:0]const u8,
+pub const CreateTextureEntry = struct {
+    extent: vk.Extent3D,
+    format: vk.Format,
+    usages: vk.ImageUsageFlags,
+    aspect_flags: vk.ImageAspectFlags,
+    /// expected to call immediateSubmit
+    initial_transition_function: *const fn (vki.LogicalDevice, *vki.UploadContext, vk.Image) void,
+    sampler_ci: vk.SamplerCreateInfo,
+};
 
-pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
-    var iter = self.libraries.valueIterator();
-    while (iter.next()) |m| {
+libraries: std.StringHashMapUnmanaged(MaterialLibraryEntry) = .empty,
+/// these are textures that are written to via compute shaders
+/// or other means
+/// specifically for non-static data
+textures: std.StringHashMapUnmanaged(CreateTextureEntry) = .empty,
+amt_materials: usize = 0,
+
+pub fn deinit(
+    self: *@This(),
+    a: std.mem.Allocator,
+) void {
+    var libs_iter = self.libraries.valueIterator();
+    while (libs_iter.next()) |m| {
         m.library.deinit(a);
     }
 
-    a.free(self.all_material_names);
+    self.textures.deinit(a);
 }
 
-pub fn initFromMaterialsFiles(a: std.mem.Allocator, files: []const core.loaders.mtl.MtlFile) std.mem.Allocator.Error!@This() {
-    var all_libs = std.StringHashMapUnmanaged(MaterialEntry).empty;
-    var all_names = try std.ArrayList([:0]const u8).initCapacity(a, 16);
-
-    var current_mtl_offset: u32 = 0;
-    for (files) |mtl| {
-        const lib = MaterialLibrary.initFromMaterialFile(a, mtl) catch @panic("failed to create MTL");
-        current_mtl_offset += @as(u32, @intCast(lib.metadata.size));
-        try all_names.appendSlice(a, lib.material_names);
-        try all_libs.put(a, mtl.name, .{
-            .library = lib,
-            .offset = current_mtl_offset,
-        });
-    }
-
-    return .{
-        .libraries = all_libs,
-        .all_material_names = try all_names.toOwnedSlice(a),
-    };
+pub fn addMaterialsFile(self: *@This(), a: std.mem.Allocator, file: core.loaders.mtl.MtlFile) std.mem.Allocator.Error!void {
+    const lib = MaterialLibrary.initFromMaterialFile(a, file) catch @panic("failed to create MTL");
+    self.amt_materials += @as(u32, @intCast(lib.metadata.size));
+    try self.libraries.put(a, file.name, .{
+        .library = lib,
+        .offset = @as(u32, @intCast(self.amt_materials)),
+    });
 }
 
 pub const MaterialLibrary = struct {
@@ -266,7 +271,7 @@ pub const MaterialLibrary = struct {
     const Error = std.fmt.BufPrintError || error{FailedToLoadImage};
     const ASSETS_PATH = "assets/";
 
-    pub const AllocatedData = struct {
+    const AllocatedData = struct {
         textures: []Texture,
 
         pub fn deinit(
@@ -292,7 +297,7 @@ pub const MaterialLibrary = struct {
         self.metadata.deinit(a);
     }
 
-    pub fn getMaterialData(self: @This(), name: []const u8) ?MaterialData {
+    fn getMaterialData(self: @This(), name: []const u8) ?MaterialData {
         return if (self.metadata.get(name)) |tup|
             .{
                 .name = name,
@@ -383,14 +388,14 @@ pub const MaterialLibrary = struct {
         };
     }
 
-    pub fn upload(
+    fn upload(
         self: @This(),
         allocs: core.engine.Engine.Allocators,
         upload_ctx: *core.bindings.vulkan_init.UploadContext,
         logical_device: vki.LogicalDevice,
         physical_device: vki.PhysicalDevice,
         alloc_cbs: ?*vk.AllocationCallbacks,
-    ) AllocatedData {
+    ) @This().AllocatedData {
         var iter = self.metadata.iterator();
         const textures = allocs.std.alloc(core.resources.Materials.Texture, self.metadata.size) catch @panic("OOM");
         while (iter.next()) |entry| {
@@ -412,5 +417,91 @@ pub const MaterialLibrary = struct {
         return .{
             .textures = textures,
         };
+    }
+};
+
+pub fn upload(
+    self: @This(),
+    allocs: core.engine.Engine.Allocators,
+    upload_ctx: *core.bindings.vulkan_init.UploadContext,
+    logical_device: vki.LogicalDevice,
+    physical_device: vki.PhysicalDevice,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) std.mem.Allocator.Error!AllocatedData {
+    var all_names = try std.ArrayList([:0]const u8).initCapacity(allocs.std, 16);
+
+    var libs = std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData).empty;
+    var mat_libs_iter = self.libraries.iterator();
+    while (mat_libs_iter.next()) |mat| {
+        const uploaded = mat.value_ptr.library.upload(
+            allocs,
+            upload_ctx,
+            logical_device,
+            physical_device,
+            alloc_cbs,
+        );
+        libs.put(allocs.std, mat.key_ptr.*, uploaded) catch @panic("OOM");
+        try all_names.appendSlice(allocs.std, mat.value_ptr.library.material_names);
+    }
+
+    var textures = std.StringHashMapUnmanaged(Texture).empty;
+    try textures.ensureTotalCapacity(allocs.std, self.textures.size);
+    var tx_iter = self.textures.iterator();
+    while (tx_iter.next()) |entry| {
+        const ci = entry.value_ptr;
+        var image = vma_usage.AllocatedImage.init(
+            allocs.vma,
+            ci.format,
+            ci.extent,
+            ci.usages,
+        );
+        const view_ci = vki.imageViewCreateInfo(image.format, image.image, ci.aspect_flags);
+        checkVk(vk.CreateImageView(logical_device.handle, &view_ci, alloc_cbs, &image.view)) catch
+            @panic("failed to create maze image view");
+
+        ci.initial_transition_function(logical_device, upload_ctx, image.image);
+
+        var sampler: vk.Sampler = undefined;
+        checkVk(vk.CreateSampler(logical_device.handle, &ci.sampler_ci, alloc_cbs, &sampler)) catch @panic("failed to create maze sampler");
+
+        textures.putAssumeCapacity(entry.key_ptr.*, Texture{
+            .image_alloc = image,
+            .sampler = sampler,
+        });
+        try all_names.append(allocs.std, try allocs.std.dupeZ(u8, entry.key_ptr.*));
+    }
+
+    return .{
+        .libraries = libs,
+        .textures = textures,
+        .all_material_names = try all_names.toOwnedSlice(allocs.std),
+    };
+}
+
+pub const AllocatedData = struct {
+    libraries: std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData),
+    textures: std.StringHashMapUnmanaged(Texture),
+    all_material_names: [][:0]const u8,
+
+    pub fn deinit(
+        self: *@This(),
+        allocs: core.engine.Engine.Allocators,
+        device: core.clibs.vk.Device,
+        alloc_cbs: ?*core.clibs.vk.AllocationCallbacks,
+    ) void {
+        var lib_iter = self.libraries.valueIterator();
+        while (lib_iter.next()) |m|
+            m.deinit(allocs, device, alloc_cbs);
+        self.libraries.deinit(allocs.std);
+
+        var tx_iter = self.textures.valueIterator();
+        while (tx_iter.next()) |t|
+            t.deinit(allocs.vma, device, alloc_cbs);
+        self.textures.deinit(allocs.std);
+
+        for (self.all_material_names) |n|
+            allocs.std.free(n);
+
+        allocs.std.free(self.all_material_names);
     }
 };

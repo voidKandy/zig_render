@@ -17,227 +17,57 @@ const Bindings = struct {
     const METADATA = 1;
 };
 
-const ComputePushConstants = extern struct {
-    width: u32,
-    height: u32,
-    pixels_per_cell: u32,
-    /// size of maze mesh cells in world scale
-    cell_size: f32,
-    maze_origin: core.lib.math.Vec3,
-};
-
 const GraphicsPushConstants = struct {
     inverse_window_resolution: core.lib.math.Vec2,
 };
 
-const GPUMazeCell = extern struct {
-    walls: u32,
+// pub const Gui = struct {
+//     maze: core.lib.Maze,
+//     maze_update: bool = false,
 
-    fn arrayFromCellArray(a: std.mem.Allocator, arr: []core.lib.Maze.Cell) std.mem.Allocator.Error![]GPUMazeCell {
-        var all = try a.alloc(GPUMazeCell, arr.len);
-        for (arr, 0..) |item, i| {
-            all[i].walls =
-                (@as(u32, @intFromBool(item.walls.north)) << 0) |
-                (@as(u32, @intFromBool(item.walls.south)) << 1) |
-                (@as(u32, @intFromBool(item.walls.east)) << 2) |
-                (@as(u32, @intFromBool(item.walls.west)) << 3);
-        }
-        return all;
-    }
-};
+//     pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
+//         allocs.std.free(self.mesh_ranges);
+//     }
 
-pub const AllocatedData = struct {
-    pub const CreateInfo = struct {
-        maze: core.lib.Maze,
-        pixels_per_cell: u32,
-        cell_size: f32,
-        maze_origin: core.lib.math.Vec3,
-    };
+//     pub fn update(
+//         self: *@This(),
+//         a: std.mem.Allocator,
+//         alloc_data: AllocatedData,
+//     ) void {
+//         if (self.maze_update) {
 
-    maze_image: vma_usage.AllocatedImage,
-    maze_sampler: vk.Sampler,
-    maze_state: vma_usage.MappedBuffer,
+//             // TEMP
+//             for (self.maze.cells) |*c|
+//                 c.walls = .{};
 
-    // this is not alloc data
-    // should be moved to some kind of struct for maze
-    // maybe like metadata for meshes?
-    // the reason it is included here is because this is the push constants
-    // for the compute pipeline
-    maze_mesh_idx: u32,
-    maze_dimensions: vk.Extent2D,
-    pixels_per_cell: u32,
-    cell_size: f32,
-    maze_origin: core.lib.math.Vec3,
+//             self.maze.generate(a, self.maze.threshold.?, self.maze.seed.?);
 
-    pub fn create(
-        allocs: core.engine.Engine.Allocators,
-        resources: core.resources.ResourceManager,
-        upload_ctx: *vki.UploadContext,
-        logical_device: vki.LogicalDevice,
-        physical_device: vki.PhysicalDevice,
-        cd: CreateInfo,
-        alloc_cbs: ?*vk.AllocationCallbacks,
-    ) std.mem.Allocator.Error!struct { @This(), Gui } {
-        // output image — STORAGE_BIT for compute write, SAMPLED_BIT for HUD read
-        const maze_extent = vk.Extent3D{
-            .width = cd.maze.width * cd.pixels_per_cell,
-            .height = cd.maze.height * cd.pixels_per_cell,
-            .depth = 1,
-        };
+//             const cells = core.lib.Maze.GPUMazeCell.arrayFromCellArray(a, self.maze.cells) catch @panic("OOM");
+//             defer a.free(cells);
 
-        log.warn(
-            \\ creating maze image: width={} height={} pixels_per_cell={}
-        , .{ maze_extent.width, maze_extent.height, cd.pixels_per_cell });
-        var image = vma_usage.AllocatedImage.init(
-            allocs.vma,
-            vk.FORMAT_R8G8B8A8_UNORM,
-            maze_extent,
-            vk.IMAGE_USAGE_STORAGE_BIT |
-                vk.IMAGE_USAGE_SAMPLED_BIT |
-                vk.IMAGE_USAGE_TRANSFER_DST_BIT,
-        );
-        const view_ci = vki.imageViewCreateInfo(image.format, image.image, vk.IMAGE_ASPECT_COLOR_BIT);
-        checkVk(vk.CreateImageView(logical_device.handle, &view_ci, alloc_cbs, &image.view)) catch
-            @panic("failed to create maze image view");
+//             const aligned_maze: [*]core.lib.Maze.GPUMazeCell = @ptrCast(@alignCast(alloc_data.maze_state.mapped));
+//             @memcpy(aligned_maze, cells);
 
-        // transition to GENERAL for compute writes
-        upload_ctx.immediateSubmit(logical_device, struct {
-            img: vk.Image,
-            pub fn submit(self: @This(), cmd: vk.CommandBuffer) void {
-                core.bindings.vulkan_util.transitionImageLayout(
-                    cmd,
-                    self.img,
-                    vk.IMAGE_LAYOUT_UNDEFINED,
-                    vk.IMAGE_LAYOUT_GENERAL,
-                    0,
-                    vk.ACCESS_SHADER_WRITE_BIT,
-                    vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                );
-            }
-        }{ .img = image.image });
+//             self.maze_update = false;
+//         }
+//     }
 
-        // nearest sampler for pixel-perfect maze display
-        var sampler: vk.Sampler = undefined;
-        checkVk(vk.CreateSampler(logical_device.handle, &vk.SamplerCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .magFilter = vk.FILTER_NEAREST,
-            .minFilter = vk.FILTER_NEAREST,
-            .addressModeU = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            .addressModeV = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            .addressModeW = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        }, alloc_cbs, &sampler)) catch @panic("failed to create maze sampler");
-
-        // persistently mapped maze state buffer — one u32 per cell
-        // const state_size = cd.maze_width * cd.maze_height * @sizeOf(u32);
-        const maze_alloc = vma_usage.AllocatedBuffer.create(
-            allocs.vma,
-            @sizeOf(GPUMazeCell) * cd.maze.width * cd.maze.height,
-            vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
-            0,
-        );
-        var maze_state = vma_usage.MappedBuffer{
-            .allocation = maze_alloc,
-        };
-
-        checkVk(core.clibs.vma.MapMemory(
-            allocs.vma,
-            maze_alloc.allocation,
-            &maze_state.mapped,
-        )) catch @panic("failed to map maze state buffer");
-
-        const aligned_maze: [*]GPUMazeCell = @ptrCast(@alignCast(maze_state.mapped));
-        const cells = try GPUMazeCell.arrayFromCellArray(allocs.std, cd.maze.cells);
-        defer allocs.std.free(cells);
-        @memcpy(aligned_maze, cells);
-
-        _ = physical_device;
-
-        var ranges_clone = try resources.meshes2D.ranges.clone(allocs.std);
-        return .{
-            .{
-                .maze_image = image,
-                .maze_sampler = sampler,
-                .maze_state = maze_state,
-                .maze_dimensions = vk.Extent2D{
-                    .width = cd.maze.width,
-                    .height = cd.maze.height,
-                },
-                // BAD
-                .maze_mesh_idx = 0,
-                .cell_size = cd.cell_size,
-                .pixels_per_cell = cd.pixels_per_cell,
-                .maze_origin = cd.maze_origin,
-            },
-            Gui{
-                .mesh_ranges = try ranges_clone.toOwnedSlice(allocs.std),
-                .maze = cd.maze,
-            },
-        };
-    }
-
-    pub fn deinit(
-        self: *@This(),
-        allocs: core.engine.Engine.Allocators,
-        device: vk.Device,
-        alloc_cbs: ?*vk.AllocationCallbacks,
-    ) void {
-        self.maze_state.deinit(allocs.vma);
-        self.maze_image.deinit(allocs.vma, device, alloc_cbs);
-        vk.DestroySampler(device, self.maze_sampler, alloc_cbs);
-    }
-};
-
-pub const Gui = struct {
-    mesh_ranges: []core.resources.Meshes2D.MeshRanges,
-    maze: core.lib.Maze,
-    maze_update: bool = false,
-
-    pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
-        allocs.std.free(self.mesh_ranges);
-    }
-
-    pub fn update(
-        self: *@This(),
-        a: std.mem.Allocator,
-        alloc_data: AllocatedData,
-    ) void {
-        if (self.maze_update) {
-
-            // TEMP
-            for (self.maze.cells) |*c|
-                c.walls = .{};
-
-            self.maze.generate(a, self.maze.threshold.?, self.maze.seed.?);
-
-            // alloc_data.maze_mesh_idx
-            const cells = GPUMazeCell.arrayFromCellArray(a, self.maze.cells) catch @panic("OOM");
-            defer a.free(cells);
-
-            const aligned_maze: [*]GPUMazeCell = @ptrCast(@alignCast(alloc_data.maze_state.mapped));
-            @memcpy(aligned_maze, cells);
-
-            self.maze_update = false;
-        }
-    }
-
-    pub fn drawImgui(
-        self: *Gui,
-        ui_set: vk.DescriptorSet,
-    ) void {
-        var open = true;
-        const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
-        var seed: c_int = @intCast(self.maze.seed.?);
-        if (imgui.InputInt("seed", &seed)) {
-            self.maze.seed = @as(u64, @intCast(seed));
-            self.maze_update = true;
-        }
-        defer imgui.End();
-        if (!shown) return;
-        imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });
-    }
-};
+//     pub fn drawImgui(
+//         self: *Gui,
+//         ui_set: vk.DescriptorSet,
+//     ) void {
+//         var open = true;
+//         const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+//         var seed: c_int = @intCast(self.maze.seed.?);
+//         if (imgui.InputInt("seed", &seed)) {
+//             self.maze.seed = @as(u64, @intCast(seed));
+//             self.maze_update = true;
+//         }
+//         defer imgui.End();
+//         if (!shown) return;
+//         imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });
+//     }
+// };
 
 pub const Description = struct {
     global_descriptor_set_layout: vk.DescriptorSetLayout,
@@ -371,7 +201,7 @@ fn initComputePipeline(
     defer vk.DestroyShaderModule(pd.device, maze_shader, alloc_cbs);
     const push_constant = vk.PushConstantRange{
         .offset = 0,
-        .size = @sizeOf(ComputePushConstants),
+        .size = @sizeOf(core.engine.systems.Maze.PushConstants),
         .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
     };
 
@@ -587,7 +417,7 @@ pub const DescriptorSets = struct {
     ui: vk.DescriptorSet,
 };
 
-pub fn allocateDescriptorSets(self: Self, device: vk.Device, alloc_data: AllocatedData) DescriptorSets {
+pub fn allocateDescriptorSets(self: Self, device: vk.Device, alloc_resources: core.resources.Manager.AllocatedData) DescriptorSets {
     var compute_set: vk.DescriptorSet = undefined;
     const cmpt_ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -609,7 +439,9 @@ pub fn allocateDescriptorSets(self: Self, device: vk.Device, alloc_data: Allocat
     checkVk(vk.AllocateDescriptorSets(device, &grphx_ai, &graphics_set)) catch
         @panic("failed to allocate main compute descriptor set");
 
-    const ui_set = imgui.impl_vulkan.AddTexture(alloc_data.maze_sampler, alloc_data.maze_image.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    const maze_tex = alloc_resources.materials.textures.get("maze").?;
+
+    const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     return .{
         .compute = compute_set,
         .graphics = graphics_set,
@@ -620,26 +452,29 @@ pub fn allocateDescriptorSets(self: Self, device: vk.Device, alloc_data: Allocat
 /// does nothing with graphics set?
 pub fn updateDescriptorSets(
     device: vk.Device,
-    resource_alloc_data: core.resources.ResourceManager.AllocatedData,
-    alloc_data: AllocatedData,
+    alloc_resources: core.resources.Manager.AllocatedData,
     sets: DescriptorSets,
 ) void {
+    const maze_tex = alloc_resources.materials.textures.get("maze").?;
     const compute_image_info = vk.DescriptorImageInfo{
         .imageLayout = vk.IMAGE_LAYOUT_GENERAL,
-        .imageView = alloc_data.maze_image.view,
+        .imageView = maze_tex.image_alloc.view,
     };
     const graphics_image_info = vk.DescriptorImageInfo{
-        .sampler = alloc_data.maze_sampler,
-        .imageView = alloc_data.maze_image.view,
+        .sampler = maze_tex.sampler,
+        .imageView = maze_tex.image_alloc.view,
         .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
     };
+
+    const maze_buf = alloc_resources.all_mapped_buffers.get("maze").?;
+
     const maze_state_buffer_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.maze_state.allocation.buffer,
+        .buffer = maze_buf.allocation.buffer,
         .offset = 0,
         .range = vk.WHOLE_SIZE,
     };
     const metadata_buffer_info = vk.DescriptorBufferInfo{
-        .buffer = resource_alloc_data.meshes2D.metadata.allocation.buffer,
+        .buffer = alloc_resources.meshes2D.metadata.allocation.buffer,
         .offset = 0,
         .range = vk.WHOLE_SIZE,
     };
@@ -694,9 +529,10 @@ pub fn bindGraphics(self: Self, cmd: vk.CommandBuffer) void {
 
 pub fn recordCommandsCompute(
     self: Self,
-    alloc_data: AllocatedData,
+    alloc_resources: core.resources.Manager.AllocatedData,
     global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
+    maze_system: core.engine.systems.Maze,
     cmd: vk.CommandBuffer,
 ) void {
     const sets = [_]vk.DescriptorSet{
@@ -713,26 +549,21 @@ pub fn recordCommandsCompute(
         null,
     );
 
-    const pc = ComputePushConstants{
-        .width = alloc_data.maze_dimensions.width,
-        .height = alloc_data.maze_dimensions.height,
-        .pixels_per_cell = alloc_data.pixels_per_cell,
-        .cell_size = alloc_data.cell_size,
-        .maze_origin = alloc_data.maze_origin,
-    };
     vk.CmdPushConstants(
         cmd,
         self.compute_pipeline_layout,
         vk.SHADER_STAGE_COMPUTE_BIT,
         0,
-        @sizeOf(ComputePushConstants),
-        &pc,
+        @sizeOf(core.engine.systems.Maze.PushConstants),
+        &maze_system.push_constants,
     );
+
+    const maze_image = alloc_resources.materials.textures.get("maze").?.image_alloc;
 
     // transition to GENERAL for compute write
     core.bindings.vulkan_util.transitionImageLayout(
         cmd,
-        alloc_data.maze_image.image,
+        maze_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
         vk.IMAGE_LAYOUT_GENERAL,
         0,
@@ -740,14 +571,14 @@ pub fn recordCommandsCompute(
         vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
         vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
     );
-    const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(alloc_data.maze_dimensions.width * alloc_data.pixels_per_cell)) / 8.0));
-    const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(alloc_data.maze_dimensions.height * alloc_data.pixels_per_cell)) / 8.0));
+    const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(maze_system.maze.width * maze_system.push_constants.pixels_per_cell)) / 8.0));
+    const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(maze_system.maze.height * maze_system.push_constants.pixels_per_cell)) / 8.0));
     vk.CmdDispatch(cmd, w, h, 1);
 
     // transition to SHADER_READ_ONLY so HUD can sample it
     core.bindings.vulkan_util.transitionImageLayout(
         cmd,
-        alloc_data.maze_image.image,
+        maze_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
         vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         vk.ACCESS_SHADER_WRITE_BIT,
@@ -761,7 +592,7 @@ pub fn recordCommandsGraphics(
     self: Self,
     world: *core.engine.world.GameWorld,
     window_extent: vk.Extent2D,
-    alloc_resources: core.resources.ResourceManager.AllocatedData,
+    alloc_resources: core.resources.Manager.AllocatedData,
     global_descriptor_set: vk.DescriptorSet,
     set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,

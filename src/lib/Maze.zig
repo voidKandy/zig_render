@@ -49,16 +49,21 @@ height: u32,
 cells: []Cell,
 /// flat array of all cell coordinates, partitioned as splits happen
 coords: []CellIndex,
-threshold: ?usize = null,
-seed: ?u64 = null,
 
 // TEMP
+// brute forced implementation to create openings in maze
 open_cells: []const CellIndex = &[_]CellIndex{
     .{
         .col = 0,
         .row = 0,
     },
 },
+
+/// scratch space for region-splitting during generation, allocated
+/// once so regenerate() can run without needing an allocator
+gen_stack: std.ArrayList(Region),
+threshold: ?usize = null,
+seed: ?u64 = null,
 
 /// minimum number of cells in a region before splitting
 /// should be moved to some builder struct
@@ -82,12 +87,14 @@ pub fn init(a: std.mem.Allocator, width: u32, height: u32) std.mem.Allocator.Err
         .height = height,
         .cells = cells,
         .coords = coords,
+        .gen_stack = try std.ArrayList(Region).initCapacity(a, count),
     };
 }
 
 pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
     a.free(self.coords);
     a.free(self.cells);
+    self.gen_stack.deinit(a);
 }
 
 fn cellAt(self: *@This(), row: u32, col: u32) *Cell {
@@ -132,19 +139,28 @@ pub fn initHallwaySquare(
     return self;
 }
 
-pub fn generate(self: *@This(), a: std.mem.Allocator, threshold: usize, seed: u64) void {
-    var ctx = self.createGenerationContext(a, threshold, seed) catch @panic("failed to init generation context");
-    defer ctx.deinit(a);
+pub fn generate(self: *@This(), threshold: usize, seed: u64) void {
+    // reset all cell state from any previous run
+    @memset(self.cells, .{});
+
+    self.gen_stack.clearRetainingCapacity();
+    self.gen_stack.appendAssumeCapacity(.{ .min = 0, .max = self.cells.len });
+
+    var ctx = GenerationContext{
+        .threshold = threshold,
+        .seed = seed,
+        .rng = std.Random.DefaultPrng.init(seed),
+        .stack = &self.gen_stack,
+    };
     while (ctx.step(self)) {}
 
     for (0..self.height) |row| {
         for (0..self.width) |col| {
             if (std.meta.eql(self.open_cells[0], CellIndex{
-                .col = @as(u32, @intCast(col)),
-                .row = @as(u32, @intCast(row)),
-            })) {
-                continue;
-            }
+                .col = @intCast(col),
+                .row = @intCast(row),
+            })) continue;
+
             const cell = &self.cells[row * self.width + col];
             if (row == 0) cell.walls.north = true;
             if (row == self.height - 1) cell.walls.south = true;
@@ -152,6 +168,7 @@ pub fn generate(self: *@This(), a: std.mem.Allocator, threshold: usize, seed: u6
             if (col == self.width - 1) cell.walls.east = true;
         }
     }
+
     self.threshold = threshold;
     self.seed = seed;
 }
@@ -365,12 +382,9 @@ pub const GenerationContext = struct {
     threshold: usize,
     seed: u64,
     rng: std.Random.DefaultPrng,
-    stack: std.ArrayList(Region),
+    /// borrowed from Maze.gen_stack
+    stack: *std.ArrayList(Region),
     current_mark: u8 = 0,
-
-    pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
-        self.stack.deinit(a);
-    }
 
     fn rand(self: *@This(), min: usize, max: usize) usize {
         return min + self.rng.random().uintLessThan(usize, max - min);
@@ -615,7 +629,7 @@ test "maze seeded display" {
     defer maze.deinit(a);
     const seed = 12345;
 
-    maze.generate(a, 16, seed);
+    maze.generate(16, seed);
 
     print(
         \\ SEEDED MAZE: {}

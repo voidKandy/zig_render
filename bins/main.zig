@@ -69,7 +69,7 @@ pub fn main(init: std.process.Init) void {
     };
 
     const meshes_objects = a.alloc(
-        core.resources.ResourceManager.Mesh3DCreateInfo,
+        core.resources.Manager.Mesh3DCreateInfo,
         // BAD
         amt_meshes_objects + 1,
     ) catch @panic("failed to alloc meshes_objects");
@@ -87,13 +87,26 @@ pub fn main(init: std.process.Init) void {
         k += files.len;
     }
 
+    const maze_push_constants = core.engine.systems.Maze.PushConstants{
+        .width = 10,
+        .height = 10,
+        .pixels_per_cell = 9,
+        .cell_size = 2.0,
+        .seed = 123456,
+        .threshold = 16,
+        .maze_origin = .{
+            .x = 4.0,
+            .y = 0.0,
+            .z = 0.0,
+        },
+    };
     // var maze = core.Maze.initHallwaySquare(
     //     a,
     //     10,
     // ) catch @panic("failed to create maze");
     var maze = core.lib.Maze.init(a, 10, 10) catch @panic("OOM");
     defer maze.deinit(a);
-    maze.generate(a, 16, 12345);
+    maze.generate(16, 12345);
 
     const pixels_per_cell = 9;
     // const window_aspect = @as(f32, @floatFromInt(engine.swapchain.extent.width)) / @as(f32, @floatFromInt(engine.swapchain.extent.height));
@@ -140,30 +153,66 @@ pub fn main(init: std.process.Init) void {
             },
         },
     };
-    // const mesh_pipeline_create_data: core.engine.pipelines.MeshPipeline.AllocatedData.CreateData =
-    //     .{
-    //         .materials_files = &[_]core.loaders.mtl.MtlFile{ global_mat, debug_mat },
-    //         .create_meshes = meshes_objects,
-    //     };
-
-    const hud_pipeline_create_data: core.engine.pipelines.HudPipelines.AllocatedData.CreateInfo =
-        .{
-            .maze = maze,
-            .pixels_per_cell = pixels_per_cell,
-            .cell_size = maze_mesh_options.cell_size,
-            .maze_origin = maze_mesh_options.origin,
-        };
 
     var engine = core.engine.Engine.init(
         a,
         init.io,
 
-        core.resources.ResourceManager.CreateInfo{
+        core.resources.Manager.CreateInfo{
             .materials_files = &[_]core.loaders.mtl.MtlFile{
                 global_mat,
                 debug_mat,
             },
-            .meshes2D = &[_]core.resources.ResourceManager.Mesh2DCreateInfo{
+            // these might be better abstracted or at least
+            // allow systems to encapsulate their creats elsewhere
+            //
+            .texture_creates = &[_]struct { []const u8, core.resources.Materials.CreateTextureEntry }{.{
+                "maze",
+                .{
+                    .extent = vk.Extent3D{
+                        .width = maze.width * pixels_per_cell,
+                        .height = maze.height * pixels_per_cell,
+                        .depth = 1,
+                    },
+                    .format = vk.FORMAT_R8G8B8A8_UNORM,
+                    .usages = vk.IMAGE_USAGE_STORAGE_BIT |
+                        vk.IMAGE_USAGE_SAMPLED_BIT |
+                        vk.IMAGE_USAGE_TRANSFER_DST_BIT,
+                    .aspect_flags = vk.IMAGE_ASPECT_COLOR_BIT,
+                    .initial_transition_function = &struct {
+                        pub fn submit(
+                            device: core.bindings.vulkan_init.LogicalDevice,
+                            upload_ctx: *core.bindings.vulkan_init.UploadContext,
+                            img: vk.Image,
+                        ) void {
+                            upload_ctx.immediateSubmit(device, struct {
+                                img: vk.Image,
+                                pub fn submit(this: @This(), cmd_buf: vk.CommandBuffer) void {
+                                    core.bindings.vulkan_util.transitionImageLayout(
+                                        cmd_buf,
+                                        this.img,
+                                        vk.IMAGE_LAYOUT_UNDEFINED,
+                                        vk.IMAGE_LAYOUT_GENERAL,
+                                        0,
+                                        vk.ACCESS_SHADER_WRITE_BIT,
+                                        vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                        vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                    );
+                                }
+                            }{ .img = img });
+                        }
+                    }.submit,
+                    .sampler_ci = vk.SamplerCreateInfo{
+                        .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                        .magFilter = vk.FILTER_NEAREST,
+                        .minFilter = vk.FILTER_NEAREST,
+                        .addressModeU = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                        .addressModeV = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                        .addressModeW = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                    },
+                },
+            }},
+            .meshes2D = &[_]core.resources.Manager.Mesh2DCreateInfo{
                 .{
                     .mesh = maze_quad,
                     .screen_coordinates = maze_quad_coords,
@@ -174,6 +223,15 @@ pub fn main(init: std.process.Init) void {
                 },
             },
             .meshes3D = meshes_objects,
+            .mapped_buffer_creates = &[_]struct { []const u8, core.resources.Manager.MappedBufferCreate }{.{
+                "maze",
+                .{
+                    .alloc_size = @sizeOf(core.engine.systems.Maze.GPUMazeCell) * maze.width * maze.height,
+                    .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                    .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+                    .flags = 0,
+                },
+            }},
         },
         null,
     );
@@ -198,11 +256,10 @@ pub fn main(init: std.process.Init) void {
         engine.logical_device,
         engine.physical_device,
         engine.alloc_cbs,
-    );
+    ) catch @panic("OOM");
 
-    engine.initPipelines(
-        hud_pipeline_create_data,
-    );
+    engine.initSystems(maze_push_constants);
+    engine.initPipelines();
 
     engine.run();
 }
