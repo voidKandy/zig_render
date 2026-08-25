@@ -27,8 +27,8 @@ pub const engine = struct {
     };
 
     pub const pipelines = struct {
-        pub const MeshPipeline = @import("engine/pipelines/MeshPipeline.zig");
-        pub const HudPipelines = @import("engine/pipelines/HudPipelines.zig");
+        pub const Mesh3DPipeline = @import("engine/pipelines/Mesh3DPipeline.zig");
+        pub const Mesh2DPipeline = @import("engine/pipelines/Mesh2DPipeline.zig");
         pub const BackgroundPipeline = @import("engine/pipelines/BackgroundPipeline.zig");
         test {
             std.testing.refAllDecls(@This());

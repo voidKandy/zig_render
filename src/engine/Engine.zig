@@ -3,9 +3,9 @@ const core = @import("../root.zig");
 const c = core.clibs;
 const vki = core.bindings.vulkan_init;
 const frames_mod = core.engine.frames;
-const MeshPipeline = core.engine.pipelines.MeshPipeline;
+const Mesh3DPipeline = core.engine.pipelines.Mesh3DPipeline;
 const BackgroundPipeline = core.engine.pipelines.BackgroundPipeline;
-const HudPipelines = core.engine.pipelines.HudPipelines;
+const Mesh2DPipeline = core.engine.pipelines.Mesh2DPipeline;
 const Input = core.engine.Input;
 const vma_usage = core.bindings.vma_usage;
 const math_mod = core.lib.math;
@@ -58,14 +58,14 @@ background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
 background_descriptor_set: vk.DescriptorSet = undefined,
 background_pipeline_description: BackgroundPipeline.Description = undefined,
 
-mesh_pipeline: MeshPipeline = undefined,
+mesh_pipeline: Mesh3DPipeline = undefined,
 mesh_descriptor_set: vk.DescriptorSet = undefined,
 mesh_texture_set: vk.DescriptorSet = undefined,
-mesh_pipeline_description: MeshPipeline.Description = undefined,
+mesh_pipeline_description: Mesh3DPipeline.Description = undefined,
 
-hud_pipeline: HudPipelines = undefined,
-hud_descriptor_sets: HudPipelines.DescriptorSets = undefined,
-hud_pipeline_description: HudPipelines.Description = undefined,
+hud_pipeline: Mesh2DPipeline = undefined,
+hud_descriptor_sets: Mesh2DPipeline.DescriptorSets = undefined,
+hud_pipeline_description: Mesh2DPipeline.Description = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
 
@@ -343,7 +343,7 @@ pub fn initSystems(self: *Self, maze_push_constants: core.engine.systems.Maze.Pu
 
 pub fn initPipelines(
     self: *Self,
-    // hud_pipeline_ci: HudPipelines.AllocatedData.CreateInfo,
+    // hud_pipeline_ci: Mesh2DPipeline.AllocatedData.CreateInfo,
 ) void {
     self.initImgui();
 
@@ -441,7 +441,7 @@ fn initMeshPipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.mesh_pipeline = MeshPipeline.init(
+    self.mesh_pipeline = Mesh3DPipeline.init(
         .{
             .global_descriptor_set_layout = self.global_data.layout,
             .device = self.logical_device.handle,
@@ -455,7 +455,7 @@ fn initMeshPipeline(self: *Self) void {
 
     self.mesh_pipeline.createDescriptorPool(
         self.logical_device.handle,
-        MeshPipeline.MAX_TEXTURES, // tex count
+        Mesh3DPipeline.MAX_TEXTURES, // tex count
         1, // uniform buffer count
         3, // storage buffer count
         3, // max sets
@@ -468,7 +468,7 @@ fn initMeshPipeline(self: *Self) void {
 
     self.mesh_texture_set = self.mesh_pipeline.allocateTextureDescriptorSet(self.logical_device.handle);
 
-    MeshPipeline.updateDescriptorSets(
+    Mesh3DPipeline.updateDescriptorSets(
         self.logical_device.handle,
         self.allocs.std,
         self.allocated_resources,
@@ -498,7 +498,7 @@ fn initHudPipeline(self: *Self) void {
         frag_shader,
         self.alloc_cbs,
     );
-    self.hud_pipeline = HudPipelines.init(
+    self.hud_pipeline = Mesh2DPipeline.init(
         .{
             .device = self.logical_device.handle,
             .global_descriptor_set_layout = self.global_data.layout,
@@ -510,7 +510,7 @@ fn initHudPipeline(self: *Self) void {
         self.alloc_cbs,
     );
     self.hud_descriptor_sets = self.hud_pipeline.allocateDescriptorSets(self.logical_device.handle, self.allocated_resources);
-    HudPipelines.updateDescriptorSets(
+    Mesh2DPipeline.updateDescriptorSets(
         self.logical_device.handle,
         self.allocated_resources,
         self.hud_descriptor_sets,
