@@ -13,6 +13,11 @@ pub const bindings = struct {
 };
 
 pub const engine = struct {
+    pub const Allocators = struct {
+        std: std.mem.Allocator,
+        vma: clibs.vma.Allocator = undefined,
+    };
+
     pub const Camera = @import("engine/Camera.zig");
     pub const world = @import("engine/world.zig");
     pub const Engine = @import("engine/Engine.zig");

@@ -25,7 +25,7 @@ const GraphicsPushConstants = struct {
 //     maze: core.lib.Maze,
 //     maze_update: bool = false,
 
-//     pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
+//     pub fn deinit(self: *@This(), allocs: core.engine.Allocators) void {
 //         allocs.std.free(self.mesh_ranges);
 //     }
 

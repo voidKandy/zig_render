@@ -237,27 +237,7 @@ pub fn main(init: std.process.Init) void {
     );
     defer engine.deinit();
 
-    for (engine.resources.meshes3D.meshes.items) |handle| {
-        var ent = engine.world.entities.register(null) catch @panic("OOM");
-        ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
-            .handle = handle,
-        });
-    }
-    for (engine.resources.meshes2D.ranges.items) |ranges| {
-        var ent = engine.world.entities.register(null) catch @panic("OOM");
-        ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
-            .ranges = ranges,
-        });
-    }
-
-    engine.allocated_resources = engine.resources.upload(
-        engine.allocs,
-        &engine.upload_context,
-        engine.logical_device,
-        engine.physical_device,
-        engine.alloc_cbs,
-    ) catch @panic("OOM");
-
+    engine.allocateResources();
     engine.initSystems(maze_push_constants);
     engine.initPipelines();
 

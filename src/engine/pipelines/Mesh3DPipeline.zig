@@ -14,25 +14,25 @@ const Meshes3D = core.resources.Meshes3D;
 const Meshes2D = core.resources.Meshes2D;
 
 pub const Description = struct {
-    global_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-    device: vk.Device = undefined,
-    render_pass: vk.RenderPass = undefined,
+    global_descriptor_set_layout: vk.DescriptorSetLayout,
+    texture_set_layout: vk.DescriptorSetLayout,
+    device: vk.Device,
+    render_pass: vk.RenderPass,
     window_extent: vk.Extent2D,
-    vertex_shader: vk.ShaderModule = undefined,
-    fragment_shader: vk.ShaderModule = undefined,
+    vertex_shader: vk.ShaderModule,
+    fragment_shader: vk.ShaderModule,
     depth_compare_op: vk.CompareOp = vk.COMPARE_OP_LESS,
 };
 
 const Bindings = struct {
-    /// Set 0
+    /// Set 0 is global set
+    /// Set 1
+    const TEXTURES = 0;
+    /// Set 2
     const VERTEX = 0;
     const INDEX = 1;
-    /// Set 1
-    const TEXTURE2D = 0;
-    const METADATA = 1;
+    const METADATA = 2;
 };
-
-pub const MAX_TEXTURES = 16;
 
 pub const PipelineOptions = enum {
     solid,
@@ -44,30 +44,28 @@ solid_pipeline: vk.Pipeline = undefined,
 /// for debugging
 line_pipeline: vk.Pipeline = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
-descriptor_pool: vk.DescriptorPool = undefined,
+// descriptor_pool: vk.DescriptorPool = undefined,
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-texture_set_layout: vk.DescriptorSetLayout = undefined,
+// texture_set_layout: vk.DescriptorSetLayout = undefined,
 
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
-    vk.DestroyDescriptorSetLayout(device, self.texture_set_layout, alloc_cbs);
+    // vk.DestroyDescriptorSetLayout(device, self.texture_set_layout, alloc_cbs);
     vk.DestroyPipeline(device, self.solid_pipeline, alloc_cbs);
     vk.DestroyPipeline(device, self.line_pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
-    vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
+    // vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
 }
 
-pub fn init(pd: Description, alloc_cbs: ?*vk.AllocationCallbacks) @This() {
+pub fn init(
+    pd: Description,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) @This() {
     var self = Self{};
 
     self.createDescriptorSetLayout(
-        pd.device,
-        alloc_cbs,
-    );
-
-    self.createDescriptorSetLayoutTextures(
         pd.device,
         alloc_cbs,
     );
@@ -186,7 +184,7 @@ fn initCommon(
 
     const set_layouts = [_]vk.DescriptorSetLayout{
         pd.global_descriptor_set_layout,
-        self.texture_set_layout,
+        pd.texture_set_layout,
         self.descriptor_set_layout,
     };
 
@@ -264,54 +262,54 @@ fn initCommon(
     self.line_pipeline = pipelines[1];
 }
 
-pub fn createDescriptorPool(
-    self: *Self,
-    device: vk.Device,
-    texture_count: u32,
-    uniform_buffer_count: u32,
-    storage_buffer_count: u32,
-    max_sets: u32,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    var sizes: [3]vk.DescriptorPoolSize = undefined;
-    var amt_sizes: usize = 0;
+// pub fn createDescriptorPool(
+//     self: *Self,
+//     device: vk.Device,
+//     texture_count: u32,
+//     uniform_buffer_count: u32,
+//     storage_buffer_count: u32,
+//     max_sets: u32,
+//     alloc_cbs: ?*vk.AllocationCallbacks,
+// ) void {
+//     var sizes: [3]vk.DescriptorPoolSize = undefined;
+//     var amt_sizes: usize = 0;
 
-    if (texture_count > 0) {
-        const size = vk.DescriptorPoolSize{
-            .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = texture_count,
-        };
-        sizes[amt_sizes] = size;
-        amt_sizes += 1;
-    }
-    if (uniform_buffer_count > 0) {
-        const size = vk.DescriptorPoolSize{
-            .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = uniform_buffer_count,
-        };
-        sizes[amt_sizes] = size;
-        amt_sizes += 1;
-    }
-    if (storage_buffer_count > 0) {
-        const size = vk.DescriptorPoolSize{
-            .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = storage_buffer_count,
-        };
-        sizes[amt_sizes] = size;
-        amt_sizes += 1;
-    }
+//     if (texture_count > 0) {
+//         const size = vk.DescriptorPoolSize{
+//             .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+//             .descriptorCount = texture_count,
+//         };
+//         sizes[amt_sizes] = size;
+//         amt_sizes += 1;
+//     }
+//     if (uniform_buffer_count > 0) {
+//         const size = vk.DescriptorPoolSize{
+//             .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+//             .descriptorCount = uniform_buffer_count,
+//         };
+//         sizes[amt_sizes] = size;
+//         amt_sizes += 1;
+//     }
+//     if (storage_buffer_count > 0) {
+//         const size = vk.DescriptorPoolSize{
+//             .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+//             .descriptorCount = storage_buffer_count,
+//         };
+//         sizes[amt_sizes] = size;
+//         amt_sizes += 1;
+//     }
 
-    const ci = vk.DescriptorPoolCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .flags = 0,
-        .maxSets = max_sets,
-        .poolSizeCount = @as(u32, @intCast(amt_sizes)),
-        .pPoolSizes = sizes[0..amt_sizes].ptr,
-    };
+//     const ci = vk.DescriptorPoolCreateInfo{
+//         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+//         .flags = 0,
+//         .maxSets = max_sets,
+//         .poolSizeCount = @as(u32, @intCast(amt_sizes)),
+//         .pPoolSizes = sizes[0..amt_sizes].ptr,
+//     };
 
-    checkVk(vk.CreateDescriptorPool(device, &ci, alloc_cbs, &self.descriptor_pool)) catch
-        @panic("failed to create descriptor pool");
-}
+//     checkVk(vk.CreateDescriptorPool(device, &ci, alloc_cbs, &self.descriptor_pool)) catch
+//         @panic("failed to create descriptor pool");
+// }
 
 fn createDescriptorSetLayout(
     self: *Self,
@@ -325,12 +323,18 @@ fn createDescriptorSetLayout(
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
-
         .{
             .binding = Bindings.INDEX,
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        },
+        .{
+            .binding = Bindings.METADATA,
+            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+            .pImmutableSamplers = null,
         },
     };
 
@@ -344,46 +348,36 @@ fn createDescriptorSetLayout(
         @panic("failed to create descriptor set layout");
 }
 
-fn createDescriptorSetLayoutTextures(
-    self: *Self,
-    device: vk.Device,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    const bindings = [_]vk.DescriptorSetLayoutBinding{
-        .{
-            .binding = Bindings.TEXTURE2D,
-            .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = MAX_TEXTURES,
-            .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
-            .pImmutableSamplers = null,
-        },
-        .{
-            .binding = Bindings.METADATA,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-            .pImmutableSamplers = null,
-        },
-    };
+// fn createDescriptorSetLayoutTextures(
+//     self: *Self,
+//     alloc_resources: core.resources.Manager.AllocatedData,
+//     device: vk.Device,
+//     alloc_cbs: ?*vk.AllocationCallbacks,
+// ) void {
+//     const texture_binding = alloc_resources.materials.textureDescriptorSetLayoutBinding(Bindings.TEXTURES);
+//     const bindings = [_]vk.DescriptorSetLayoutBinding{
+//         texture_binding,
+//     };
 
-    const ci = vk.DescriptorSetLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .pNext = null,
-        .flags = 0,
-        .pBindings = &bindings,
-        .bindingCount = bindings.len,
-    };
+//     const ci = vk.DescriptorSetLayoutCreateInfo{
+//         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+//         .pNext = null,
+//         .flags = 0,
+//         .pBindings = &bindings,
+//         .bindingCount = bindings.len,
+//     };
 
-    checkVk(vk.CreateDescriptorSetLayout(
-        device,
-        &ci,
-        alloc_cbs,
-        &self.texture_set_layout,
-    )) catch @panic("Failed to create descriptor set layout");
-}
+//     checkVk(vk.CreateDescriptorSetLayout(
+//         device,
+//         &ci,
+//         alloc_cbs,
+//         &self.texture_set_layout,
+//     )) catch @panic("Failed to create descriptor set layout");
+// }
 
 pub fn allocateDescriptorSet(
     self: Self,
+    pool: vk.DescriptorPool,
     device: vk.Device,
 ) mem.Allocator.Error!vk.DescriptorSet {
     var set: vk.DescriptorSet = undefined;
@@ -391,7 +385,7 @@ pub fn allocateDescriptorSet(
     const ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .pNext = null,
-        .descriptorPool = self.descriptor_pool,
+        .descriptorPool = pool,
         .descriptorSetCount = 1,
         .pSetLayouts = &self.descriptor_set_layout,
     };
@@ -402,32 +396,32 @@ pub fn allocateDescriptorSet(
     return set;
 }
 
-pub fn allocateTextureDescriptorSet(self: Self, device: vk.Device) vk.DescriptorSet {
-    var set: vk.DescriptorSet = undefined;
-    const ai = vk.DescriptorSetAllocateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .pNext = null,
-        .descriptorPool = self.descriptor_pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &self.texture_set_layout,
-    };
-    checkVk(vk.AllocateDescriptorSets(device, &ai, &set)) catch |e| {
-        log.err(
-            \\failed to allocate texture descriptor set: {s}
-        , .{@errorName(e)});
-        @panic("failed to allocate texture descriptor set");
-    };
-    return set;
-}
+// pub fn allocateTextureDescriptorSet(self: Self, device: vk.Device) vk.DescriptorSet {
+//     var set: vk.DescriptorSet = undefined;
+//     const ai = vk.DescriptorSetAllocateInfo{
+//         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+//         .pNext = null,
+//         .descriptorPool = self.descriptor_pool,
+//         .descriptorSetCount = 1,
+//         .pSetLayouts = &self.texture_set_layout,
+//     };
+//     checkVk(vk.AllocateDescriptorSets(device, &ai, &set)) catch |e| {
+//         log.err(
+//             \\failed to allocate texture descriptor set: {s}
+//         , .{@errorName(e)});
+//         @panic("failed to allocate texture descriptor set");
+//     };
+//     return set;
+// }
 
 pub fn updateDescriptorSets(
     device: vk.Device,
-    a: mem.Allocator,
+    // a: mem.Allocator,
     alloc_data: core.resources.Manager.AllocatedData,
     set: vk.DescriptorSet,
-    textures_set: vk.DescriptorSet,
+    // textures_set: vk.DescriptorSet,
 ) mem.Allocator.Error!void {
-    try updateTextureDescriptorSet(device, a, alloc_data, textures_set);
+    // try updateTextureDescriptorSet(device, a, alloc_data, textures_set);
 
     const vertex_info = vk.DescriptorBufferInfo{
         .buffer = alloc_data.meshes3D.vertex_buffer.buffer,
@@ -438,6 +432,11 @@ pub fn updateDescriptorSets(
         .buffer = alloc_data.meshes3D.index_buffer.buffer,
         .offset = 0,
         .range = alloc_data.meshes3D.index_buffer.size,
+    };
+    const buffer_info = vk.DescriptorBufferInfo{
+        .buffer = alloc_data.meshes3D.metadata.allocation.buffer,
+        .offset = 0,
+        .range = vk.WHOLE_SIZE,
     };
 
     const write_sets =
@@ -461,6 +460,19 @@ pub fn updateDescriptorSets(
                 .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .pBufferInfo = &index_info,
             },
+
+            .{
+                .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = null,
+                .dstSet = set,
+                .dstBinding = Bindings.METADATA,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pImageInfo = null,
+                .pBufferInfo = &buffer_info,
+                .pTexelBufferView = null,
+            },
         };
     vk.UpdateDescriptorSets(
         device,
@@ -472,88 +484,31 @@ pub fn updateDescriptorSets(
 }
 
 /// maybe materials should own its descriptor set creation?
-fn updateTextureDescriptorSet(
-    device: vk.Device,
-    a: mem.Allocator,
-    alloc_data: core.resources.Manager.AllocatedData,
-    texture_set: vk.DescriptorSet,
-) mem.Allocator.Error!void {
-    const texture_count =
-        alloc_data.materials.all_material_names.len;
+// fn updateTextureDescriptorSet(
+//     device: vk.Device,
+//     a: mem.Allocator,
+//     alloc_data: core.resources.Manager.AllocatedData,
+//     texture_set: vk.DescriptorSet,
+// ) mem.Allocator.Error!void {
+//     const texture_write = try alloc_data.materials.textureDescriptorSetWrite(
+//         a,
+//         Bindings.TEXTURES,
+//         texture_set,
+//     );
+//     defer a.free(texture_write.pImageInfo[0..texture_write.descriptorCount]);
 
-    log.debug(
-        \\ materials count: {}
-    , .{texture_count});
-    var image_infos = try a.alloc(vk.DescriptorImageInfo, texture_count);
-    defer a.free(image_infos);
+//     const write_sets = [_]vk.WriteDescriptorSet{
+//         texture_write,
+//     };
 
-    var lib_iter = alloc_data.materials.libraries.valueIterator();
-    var i: usize = 0;
-    while (lib_iter.next()) |val| {
-        for (val.textures) |tx| {
-            image_infos[i] = .{
-                .sampler = tx.sampler,
-                .imageView = tx.image_alloc.view,
-                .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            };
-            i += 1;
-        }
-    }
-
-    var tx_iter = alloc_data.materials.textures.iterator();
-    while (tx_iter.next()) |entry| {
-        const tx = entry.value_ptr;
-        image_infos[i] = .{
-            .sampler = tx.sampler,
-            .imageView = tx.image_alloc.view,
-            .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-        i += 1;
-    }
-
-    std.debug.assert(i == texture_count);
-
-    const buffer_info = vk.DescriptorBufferInfo{
-        .buffer = alloc_data.meshes3D.metadata.allocation.buffer,
-        .offset = 0,
-        .range = vk.WHOLE_SIZE,
-    };
-
-    const write_sets = [_]vk.WriteDescriptorSet{
-        .{
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = null,
-            .dstSet = texture_set,
-            .dstBinding = Bindings.TEXTURE2D,
-            .dstArrayElement = 0,
-            .descriptorCount = @as(u32, @intCast(texture_count)),
-            .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .pImageInfo = image_infos.ptr,
-            .pBufferInfo = null,
-            .pTexelBufferView = null,
-        },
-        .{
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = null,
-            .dstSet = texture_set,
-            .dstBinding = Bindings.METADATA,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pImageInfo = null,
-            .pBufferInfo = &buffer_info,
-            .pTexelBufferView = null,
-        },
-    };
-
-    vk.UpdateDescriptorSets(
-        device,
-        write_sets.len,
-        &write_sets,
-        0,
-        null,
-    );
-}
+//     vk.UpdateDescriptorSets(
+//         device,
+//         write_sets.len,
+//         &write_sets,
+//         0,
+//         null,
+//     );
+// }
 
 pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
     switch (self.current_pipeline) {
@@ -588,7 +543,7 @@ pub fn recordCommands(
         0,
         null,
     );
-    // bind set 1: textures + metadata (global, same for all submeshes)
+    // bind set 1: textures
     vk.CmdBindDescriptorSets(
         cmd,
         vk.PIPELINE_BIND_POINT_GRAPHICS,
@@ -596,6 +551,18 @@ pub fn recordCommands(
         1, // set index 1
         1,
         &tx_set,
+        0,
+        null,
+    );
+
+    // binding set 2 (VB+IDXB+MTDB)
+    vk.CmdBindDescriptorSets(
+        cmd,
+        vk.PIPELINE_BIND_POINT_GRAPHICS,
+        self.pipeline_layout,
+        2, // set index 0
+        1,
+        &set,
         0,
         null,
     );
@@ -614,16 +581,6 @@ pub fn recordCommands(
         const mesh: core.engine.world.Mesh3DComponent = mesh_component.mesh3D;
         const ranges = mesh.handle.ranges;
         // bind set 0: VB, IB, UBO for this submesh
-        vk.CmdBindDescriptorSets(
-            cmd,
-            vk.PIPELINE_BIND_POINT_GRAPHICS,
-            self.pipeline_layout,
-            2, // set index 0
-            1,
-            &set,
-            0,
-            null,
-        );
         vk.CmdDraw(
             cmd,
             @as(u32, @intCast(ranges.index.range)),

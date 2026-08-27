@@ -1,5 +1,7 @@
 const std = @import("std");
 const core = @import("../root.zig");
+const vk = core.clibs.vk;
+const checkVk = core.bindings.vulkan_init.checkVk;
 const Materials = @import("Materials.zig");
 const Meshes2D = @import("Meshes2D.zig");
 const Meshes3D = @import("Meshes3D.zig");
@@ -46,9 +48,11 @@ mapped_buffers: std.StringHashMapUnmanaged(MappedBufferCreate),
 pub fn deinit(
     self: *@This(),
     a: std.mem.Allocator,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    self.materials.deinit(a);
-    self.meshes3D.deinit(a);
+    self.materials.deinit(a, device, alloc_cbs);
+    self.meshes3D.deinit(a, device, alloc_cbs);
     self.meshes2D.deinit(a);
     self.mapped_buffers.deinit(a);
 }
@@ -134,9 +138,11 @@ pub const AllocatedData = struct {
     meshes2D: Meshes2D.AllocatedData,
     all_mapped_buffers: std.StringHashMapUnmanaged(core.bindings.vma_usage.MappedBuffer) = .empty,
 
+    descriptor_pool: core.clibs.vk.DescriptorPool,
+
     pub fn deinit(
         self: *@This(),
-        allocs: core.engine.Engine.Allocators,
+        allocs: core.engine.Allocators,
         device: core.clibs.vk.Device,
         alloc_cbs: ?*core.clibs.vk.AllocationCallbacks,
     ) void {
@@ -148,17 +154,57 @@ pub const AllocatedData = struct {
             entry.value_ptr.deinit(allocs.vma);
         }
         self.all_mapped_buffers.deinit(allocs.std);
+
+        vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
     }
 };
 
+fn createDescriptorPool(
+    self: @This(),
+    max_sets: u32,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) vk.DescriptorPool {
+    var pool: vk.DescriptorPool = undefined;
+    const materials_count = self.materials.amountTotalTextures();
+    const pool_sizes = [_]vk.DescriptorPoolSize{
+        .{
+            .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = self.mapped_buffers.size,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = materials_count,
+        },
+    };
+
+    const pool_ci = vk.DescriptorPoolCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = max_sets,
+        .poolSizeCount = pool_sizes.len,
+        .pPoolSizes = &pool_sizes,
+    };
+
+    checkVk(vk.CreateDescriptorPool(device, &pool_ci, alloc_cbs, &pool)) catch
+        @panic("failed to create main compute descriptor pool");
+
+    return pool;
+}
+
 pub fn upload(
     self: *@This(),
-    allocs: core.engine.Engine.Allocators,
+    allocs: core.engine.Allocators,
+    max_sets: u32,
     upload_ctx: *core.bindings.vulkan_init.UploadContext,
     logical_device: core.bindings.vulkan_init.LogicalDevice,
     physical_device: core.bindings.vulkan_init.PhysicalDevice,
     alloc_cbs: ?*core.clibs.vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!AllocatedData {
+    const pool = self.createDescriptorPool(
+        max_sets,
+        logical_device.handle,
+        alloc_cbs,
+    );
     const meshes3D = self.meshes3D.upload(
         allocs,
         upload_ctx,
@@ -171,6 +217,7 @@ pub fn upload(
     );
     const materials = try self.materials.upload(
         allocs,
+        pool,
         upload_ctx,
         logical_device,
         physical_device,
@@ -206,5 +253,6 @@ pub fn upload(
         .meshes2D = meshes2D,
         .materials = materials,
         .all_mapped_buffers = all_mapped_buffers,
+        .descriptor_pool = pool,
     };
 }

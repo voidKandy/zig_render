@@ -35,7 +35,7 @@ pub const AllocatedData = struct {
     draw_image: core.bindings.vma_usage.AllocatedImage,
 
     pub fn create(
-        allocs: core.engine.Engine.Allocators,
+        allocs: core.engine.Allocators,
         device: vk.Device,
         extent: vk.Extent3D,
         image_format: vk.Format,

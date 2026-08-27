@@ -18,7 +18,7 @@ pub const CreateData = struct {
 };
 
 pub fn initAndCreateData(
-    allocs: core.engine.Engine.Allocators,
+    allocs: core.engine.Allocators,
     cd: CreateData,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,

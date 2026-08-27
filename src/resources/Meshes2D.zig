@@ -24,7 +24,7 @@ pub const AllocatedData = struct {
     index_buffer: vma_usage.AllocatedBuffer = undefined,
     metadata: vma_usage.MappedBuffer = undefined,
 
-    pub fn deinit(self: @This(), allocs: core.engine.Engine.Allocators) void {
+    pub fn deinit(self: @This(), allocs: core.engine.Allocators) void {
         self.vertex_buffer.deinit(allocs.vma);
         self.index_buffer.deinit(allocs.vma);
         self.metadata.deinit(allocs.vma);
@@ -86,7 +86,7 @@ pub fn appendMesh(
 
 pub fn upload(
     self: *@This(),
-    allocs: core.engine.Engine.Allocators,
+    allocs: core.engine.Allocators,
     upload_ctx: *core.bindings.vulkan_init.UploadContext,
     device: core.bindings.vulkan_init.LogicalDevice,
 ) AllocatedData {

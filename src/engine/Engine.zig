@@ -23,14 +23,7 @@ const INITIAL_WINDOW_EXTENT = vk.Extent2D{ .width = 1600, .height = 900 };
 
 const Self = @This();
 
-/// TODO
-/// move to `engine.Allocators`
-pub const Allocators = struct {
-    std: std.mem.Allocator,
-    vma: c.vma.Allocator = undefined,
-};
-
-allocs: Allocators,
+allocs: core.engine.Allocators,
 alloc_cbs: ?*vk.AllocationCallbacks,
 io: std.Io,
 
@@ -58,14 +51,13 @@ background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
 background_descriptor_set: vk.DescriptorSet = undefined,
 background_pipeline_description: BackgroundPipeline.Description = undefined,
 
-mesh_pipeline: Mesh3DPipeline = undefined,
-mesh_descriptor_set: vk.DescriptorSet = undefined,
-mesh_texture_set: vk.DescriptorSet = undefined,
-mesh_pipeline_description: Mesh3DPipeline.Description = undefined,
+mesh3D_pipeline: Mesh3DPipeline = undefined,
+mesh3D_descriptor_set: vk.DescriptorSet = undefined,
+mesh3D_pipeline_description: Mesh3DPipeline.Description = undefined,
 
-hud_pipeline: Mesh2DPipeline = undefined,
-hud_descriptor_sets: Mesh2DPipeline.DescriptorSets = undefined,
-hud_pipeline_description: Mesh2DPipeline.Description = undefined,
+mesh2D_pipeline: Mesh2DPipeline = undefined,
+mesh2D_descriptor_sets: Mesh2DPipeline.DescriptorSets = undefined,
+mesh2D_pipeline_description: Mesh2DPipeline.Description = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
 
@@ -112,16 +104,16 @@ pub fn deinit(self: *Self) void {
     log.debug("destroyed imgui descriptor pool", .{});
 
     self.global_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
-    self.resources.deinit(self.allocs.std);
+    self.resources.deinit(self.allocs.std, self.logical_device.handle, self.alloc_cbs);
     self.allocated_resources.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
-    self.mesh_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    self.mesh3D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed mesh pipeline", .{});
     self.mesh_manipulation_system.deinit(self.allocs);
     self.maze_system.deinit(self.allocs.std);
     log.debug("destroyed mesh pipeline systems data", .{});
 
-    self.hud_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    self.mesh2D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed hud pipeline", .{});
 
     self.background_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -336,6 +328,47 @@ fn initGlobalData(
     self.global_data.updateSets(self.logical_device.handle);
 }
 
+const TEXTURE_SET_BINDING: u32 = 0;
+/// Allocates resources, creates descriptor layouts/pool
+/// AND associates meshes with entities.
+/// The latter half of this needs to be moved to its own function
+/// when entity/component management is figured out
+pub fn allocateResources(self: *Self) void {
+    self.resources.materials.createDescriptorSetLayout(
+        TEXTURE_SET_BINDING,
+        self.logical_device.handle,
+        self.alloc_cbs,
+    );
+
+    for (self.resources.meshes3D.meshes.items) |handle| {
+        var ent = self.world.entities.register(null) catch @panic("OOM");
+        ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+            .handle = handle,
+        });
+    }
+    for (self.resources.meshes2D.ranges.items) |ranges| {
+        var ent = self.world.entities.register(null) catch @panic("OOM");
+        ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
+            .ranges = ranges,
+        });
+    }
+
+    self.allocated_resources = self.resources.upload(
+        self.allocs,
+        3, // not sure how to derive this (max_sets)
+        &self.upload_context,
+        self.logical_device,
+        self.physical_device,
+        self.alloc_cbs,
+    ) catch @panic("OOM");
+
+    self.allocated_resources.materials.updateDescriptorSet(
+        self.allocs.std,
+        self.logical_device.handle,
+        TEXTURE_SET_BINDING,
+    ) catch @panic("OOM");
+}
+
 pub fn initSystems(self: *Self, maze_push_constants: core.engine.systems.Maze.PushConstants) void {
     self.mesh_manipulation_system = .{};
     self.maze_system = core.engine.systems.Maze.init(self.allocs.std, maze_push_constants) catch @panic("failed to create mesh maze");
@@ -343,7 +376,6 @@ pub fn initSystems(self: *Self, maze_push_constants: core.engine.systems.Maze.Pu
 
 pub fn initPipelines(
     self: *Self,
-    // hud_pipeline_ci: Mesh2DPipeline.AllocatedData.CreateInfo,
 ) void {
     self.initImgui();
 
@@ -358,11 +390,10 @@ pub fn initPipelines(
         MAIN_RENDER_PASS_IMAGE_FORMAT,
         self.alloc_cbs,
     );
+
     self.initBackgroundPipeline();
-
-    self.initMeshPipeline();
-
-    self.initHudPipeline();
+    self.initMesh3DPipeline();
+    self.initMesh2DPipeline();
 }
 
 fn initBackgroundPipeline(self: *Self) void {
@@ -417,9 +448,9 @@ fn initBackgroundPipeline(self: *Self) void {
     ) catch @panic("OOM");
 }
 
-fn initMeshPipeline(self: *Self) void {
+fn initMesh3DPipeline(self: *Self) void {
     const vert_shader = core.engine.shaders.createShaderModule(
-        "mesh.vert",
+        "mesh3D.vert",
         self.logical_device.handle,
         self.alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
@@ -430,7 +461,7 @@ fn initMeshPipeline(self: *Self) void {
     );
 
     const frag_shader = core.engine.shaders.createShaderModule(
-        "mesh.frag",
+        "mesh3D.frag",
         self.logical_device.handle,
         self.alloc_cbs,
     ) orelse @panic("failed to create frag shader module");
@@ -441,45 +472,46 @@ fn initMeshPipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.mesh_pipeline = Mesh3DPipeline.init(
+    self.mesh3D_pipeline = Mesh3DPipeline.init(
         .{
             .global_descriptor_set_layout = self.global_data.layout,
+            .texture_set_layout = self.resources.materials.descriptor_set_layout,
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
             .vertex_shader = vert_shader,
             .fragment_shader = frag_shader,
         },
+        // self.allocated_resources,
         self.alloc_cbs,
     );
 
-    self.mesh_pipeline.createDescriptorPool(
-        self.logical_device.handle,
-        Mesh3DPipeline.MAX_TEXTURES, // tex count
-        1, // uniform buffer count
-        3, // storage buffer count
-        3, // max sets
-        self.alloc_cbs,
-    );
+    // self.mesh3D_pipeline.createDescriptorPool(
+    // self.logical_device.handle,
+    // @as(u32, @intCast(self.allocated_resources.materials.all_material_names.len)),
+    // 1, // uniform buffer count
+    // 3, // storage buffer count
+    // 3, // max sets
+    // self.alloc_cbs,
+    // );
 
-    self.mesh_descriptor_set = self.mesh_pipeline.allocateDescriptorSet(
+    self.mesh3D_descriptor_set = self.mesh3D_pipeline.allocateDescriptorSet(
+        self.allocated_resources.descriptor_pool,
         self.logical_device.handle,
     ) catch @panic("OOM");
-
-    self.mesh_texture_set = self.mesh_pipeline.allocateTextureDescriptorSet(self.logical_device.handle);
 
     Mesh3DPipeline.updateDescriptorSets(
         self.logical_device.handle,
-        self.allocs.std,
+        // self.allocs.std,
         self.allocated_resources,
-        self.mesh_descriptor_set,
-        self.mesh_texture_set,
+        self.mesh3D_descriptor_set,
+        // self.allocated_resources.materials.descriptor_set,
     ) catch @panic("OOM");
 }
 
-fn initHudPipeline(self: *Self) void {
+fn initMesh2DPipeline(self: *Self) void {
     const vert_shader = core.engine.shaders.createShaderModule(
-        "hud.vert",
+        "mesh2D.vert",
         self.logical_device.handle,
         self.alloc_cbs,
     ) orelse @panic("failed to create hud vert shader module");
@@ -489,7 +521,7 @@ fn initHudPipeline(self: *Self) void {
         self.alloc_cbs,
     );
     const frag_shader = core.engine.shaders.createShaderModule(
-        "hud.frag",
+        "mesh2D.frag",
         self.logical_device.handle,
         self.alloc_cbs,
     ) orelse @panic("failed to create hud frag shader module");
@@ -498,7 +530,7 @@ fn initHudPipeline(self: *Self) void {
         frag_shader,
         self.alloc_cbs,
     );
-    self.hud_pipeline = Mesh2DPipeline.init(
+    self.mesh2D_pipeline = Mesh2DPipeline.init(
         .{
             .device = self.logical_device.handle,
             .global_descriptor_set_layout = self.global_data.layout,
@@ -509,11 +541,11 @@ fn initHudPipeline(self: *Self) void {
         },
         self.alloc_cbs,
     );
-    self.hud_descriptor_sets = self.hud_pipeline.allocateDescriptorSets(self.logical_device.handle, self.allocated_resources);
+    self.mesh2D_descriptor_sets = self.mesh2D_pipeline.allocateDescriptorSets(self.logical_device.handle, self.allocated_resources);
     Mesh2DPipeline.updateDescriptorSets(
         self.logical_device.handle,
         self.allocated_resources,
-        self.hud_descriptor_sets,
+        self.mesh2D_descriptor_sets,
     );
 }
 
@@ -602,13 +634,13 @@ fn drawImgui(self: *Self) void {
     // );
     self.mesh_manipulation_system.drawImgui(
         self.allocs.std,
-        &self.mesh_pipeline,
+        &self.mesh3D_pipeline,
         &self.world,
         self.resources,
         self.allocated_resources,
     );
     self.maze_system.drawImgui(
-        self.hud_descriptor_sets.ui,
+        self.mesh2D_descriptor_sets.ui,
     );
 
     c.imgui.Render();
@@ -709,11 +741,11 @@ fn recordCommandBuffer(
     checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
 
-    self.hud_pipeline.bindCompute(frame.main_command_buffer);
-    self.hud_pipeline.recordCommandsCompute(
+    self.mesh2D_pipeline.bindCompute(frame.main_command_buffer);
+    self.mesh2D_pipeline.recordCommandsCompute(
         self.allocated_resources,
         self.global_data.set,
-        self.hud_descriptor_sets.compute,
+        self.mesh2D_descriptor_sets.compute,
         self.maze_system,
         frame.main_command_buffer,
     );
@@ -761,22 +793,22 @@ fn recordCommandBuffer(
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
-    self.mesh_pipeline.bind(frame.main_command_buffer);
-    self.mesh_pipeline.recordCommands(
+    self.mesh3D_pipeline.bind(frame.main_command_buffer);
+    self.mesh3D_pipeline.recordCommands(
         &self.world,
         self.global_data.set,
-        self.mesh_descriptor_set,
-        self.mesh_texture_set,
+        self.mesh3D_descriptor_set,
+        self.allocated_resources.materials.descriptor_set,
         frame.main_command_buffer,
     );
 
-    self.hud_pipeline.bindGraphics(frame.main_command_buffer);
-    self.hud_pipeline.recordCommandsGraphics(
+    self.mesh2D_pipeline.bindGraphics(frame.main_command_buffer);
+    self.mesh2D_pipeline.recordCommandsGraphics(
         &self.world,
         self.swapchain.extent,
         self.allocated_resources,
         self.global_data.set,
-        self.hud_descriptor_sets.graphics,
+        self.mesh2D_descriptor_sets.graphics,
         frame.main_command_buffer,
     );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);

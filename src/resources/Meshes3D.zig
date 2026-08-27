@@ -33,7 +33,7 @@ pub const AllocatedData = struct {
 
     pub fn deinit(
         self: @This(),
-        allocs: core.engine.Engine.Allocators,
+        allocs: core.engine.Allocators,
     ) void {
         self.vertex_buffer.deinit(allocs.vma);
         self.index_buffer.deinit(allocs.vma);
@@ -47,6 +47,8 @@ meta_data: std.ArrayList(MetaData),
 meshes: std.ArrayList(MeshHandle),
 amt_meshes: usize = 0,
 
+descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+
 pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
     return .{
         .vertices = try std.ArrayList(core.lib.mesh.Vertex3D).initCapacity(a, 64),
@@ -58,10 +60,11 @@ pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
 
 /// DOES NOT FREE RANGES
 /// passes ownership to allocated data
-pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.vertices.deinit(a);
     self.indices.deinit(a);
     self.meta_data.deinit(a);
+    vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
 }
 
 pub fn appendMeshWithMaterialIndex(
@@ -148,9 +151,80 @@ pub fn appendMeshWithMaterialLookup(
     });
 }
 
+pub const Bindings = struct {
+    vertex: u32,
+    texture: u32,
+    metadata: u32,
+};
+
+pub fn createDescriptorSetLayoutAndPool(
+    self: *@This(),
+    bindings: Bindings,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    std.debug.assert(self.descriptor_set_layout == null);
+    std.debug.assert(self.descriptor_pool == null);
+
+    const layout_bindings = [_]vk.DescriptorSetLayoutBinding{
+        .{
+            .binding = bindings.vertex,
+            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        },
+        .{
+            .binding = bindings.index,
+            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        },
+        .{
+            .binding = bindings.metadata,
+            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+            .pImmutableSamplers = null,
+        },
+    };
+
+    const ci = vk.DescriptorSetLayoutCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .flags = 0,
+        .bindingCount = @as(u32, @intCast(layout_bindings.len)),
+        .pBindings = &layout_bindings,
+    };
+    checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.descriptor_set_layout)) catch
+        @panic("failed to create descriptor set layout");
+
+    const pool_sizes = [_]vk.DescriptorPoolSize{
+        // .{
+        //     .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        //     .descriptorCount = 1,
+        // },
+        // .{
+        //     .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        //     .descriptorCount = 2,
+        // },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = self.amt_materials,
+        },
+    };
+
+    const pool_ci = vk.DescriptorPoolCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = 2,
+        .poolSizeCount = pool_sizes.len,
+        .pPoolSizes = &pool_sizes,
+    };
+
+    checkVk(vk.CreateDescriptorPool(device, &pool_ci, alloc_cbs, &self.descriptor_pool)) catch
+        @panic("failed to create main compute descriptor pool");
+}
 pub fn upload(
     self: *@This(),
-    allocs: core.engine.Engine.Allocators,
+    allocs: core.engine.Allocators,
     upload_ctx: *core.bindings.vulkan_init.UploadContext,
     device: core.bindings.vulkan_init.LogicalDevice,
 ) AllocatedData {

@@ -14,7 +14,7 @@ mesh_data: std.AutoHashMapUnmanaged(u32, struct {
 /// edited meshes by entity id
 edited_meshes: std.ArrayListUnmanaged(u32) = .empty,
 
-pub fn deinit(self: *@This(), allocs: core.engine.Engine.Allocators) void {
+pub fn deinit(self: *@This(), allocs: core.engine.Allocators) void {
     self.mesh_data.deinit(allocs.std);
     self.edited_meshes.deinit(allocs.std);
 }
