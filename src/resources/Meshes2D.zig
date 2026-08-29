@@ -98,10 +98,12 @@ pub const VERTEX_INPUT_ATTRIBUTE_DESCRIPTIONS = [_]vk.VertexInputAttributeDescri
     },
 };
 
-pub const VERTEX_INPUT_BINDING_DESCRIPTION = vk.VertexInputBindingDescription{
-    .binding = 0,
-    .stride = @sizeOf(core.lib.mesh.Vertex2D),
-    .inputRate = vk.VERTEX_INPUT_RATE_VERTEX,
+pub const VERTEX_INPUT_BINDING_DESCRIPTIONS = [_]vk.VertexInputBindingDescription{
+    .{
+        .binding = 0,
+        .stride = @sizeOf(core.lib.mesh.Vertex2D),
+        .inputRate = vk.VERTEX_INPUT_RATE_VERTEX,
+    },
 };
 
 pub fn createDescriptorSetLayout(

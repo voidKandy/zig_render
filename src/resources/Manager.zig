@@ -6,6 +6,16 @@ const Materials = @import("Materials.zig");
 const Meshes2D = @import("Meshes2D.zig");
 const Meshes3D = @import("Meshes3D.zig");
 
+// TODO
+// currently mesh create infos utilize direct material index
+//
+// This is not ideal because upon creation of meshes these material
+// indexes cannot be reliably known
+// instead some way of referencing materials should be created
+// likely by human readable name
+// remember, there needs to be a way to know whether to look for a
+// material in a library or just in the flat textures map
+
 pub const Mesh3DCreateInfo = struct {
     create_mesh: union(enum) {
         obj: core.loaders.obj.ObjFile,

@@ -25,16 +25,6 @@ pub const Description = struct {
     depth_compare_op: vk.CompareOp = vk.COMPARE_OP_LESS,
 };
 
-const Bindings = struct {
-    /// Set 0 is global set
-    /// Set 1
-    const TEXTURES = 0;
-    /// Set 2
-    const VERTEX = 0;
-    const INDEX = 1;
-    const METADATA = 2;
-};
-
 pub const PipelineOptions = enum {
     solid,
     line,

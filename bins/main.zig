@@ -34,11 +34,6 @@ pub fn main(init: std.process.Init) void {
         },
     );
 
-    // var cwd_buff: [1024]u8 = undefined;
-    // const cwd = std.process.getCwd(cwd_buff[0..]) catch @panic("cwd_buff too small");
-    // const cwd = std.Io.Dir.cwd();
-    // std.log.info("Running from: {s}", .{cwd});
-
     var global_mat = core.loaders.mtl.parseFile(a, init.io, "assets/globals.mtl") catch @panic("failed to load materials file");
     defer global_mat.deinit();
     var debug_mat = core.loaders.mtl.parseFile(a, init.io, "assets/debug.mtl") catch @panic("failed to load materials file");
@@ -47,12 +42,9 @@ pub fn main(init: std.process.Init) void {
     var hud_mat = core.loaders.mtl.parseFile(a, init.io, "assets/hud.mtl") catch @panic("failed to load materials file");
     defer hud_mat.deinit();
 
-    const all_objects =
-        [_][]core.loaders.obj.ObjFile{
-            core.loaders.obj.readObjDirectory(a, init.io, "assets/meshes") catch @panic("failed to read objects"),
-            // core.obj_loader.readObjDirectory(a, "assets/widgets") catch @panic("failed to read objects"),
-            // core.obj_loader.readObjDirectory(a, "assets/primitives") catch @panic("failed to read objects"),
-        };
+    const all_objects = [_][]core.loaders.obj.ObjFile{
+        core.loaders.obj.readObjDirectory(a, init.io, "assets/meshes") catch @panic("failed to read objects"),
+    };
 
     defer {
         for (all_objects) |obj_files| {
@@ -163,6 +155,7 @@ pub fn main(init: std.process.Init) void {
                 global_mat,
                 debug_mat,
             },
+            // TODO
             // these might be better abstracted or at least
             // allow systems to encapsulate their creats elsewhere
             //

@@ -21,54 +21,6 @@ const GraphicsPushConstants = struct {
     inverse_window_resolution: core.lib.math.Vec2,
 };
 
-// pub const Gui = struct {
-//     maze: core.lib.Maze,
-//     maze_update: bool = false,
-
-//     pub fn deinit(self: *@This(), allocs: core.engine.Allocators) void {
-//         allocs.std.free(self.mesh_ranges);
-//     }
-
-//     pub fn update(
-//         self: *@This(),
-//         a: std.mem.Allocator,
-//         alloc_data: AllocatedData,
-//     ) void {
-//         if (self.maze_update) {
-
-//             // TEMP
-//             for (self.maze.cells) |*c|
-//                 c.walls = .{};
-
-//             self.maze.generate(a, self.maze.threshold.?, self.maze.seed.?);
-
-//             const cells = core.lib.Maze.GPUMazeCell.arrayFromCellArray(a, self.maze.cells) catch @panic("OOM");
-//             defer a.free(cells);
-
-//             const aligned_maze: [*]core.lib.Maze.GPUMazeCell = @ptrCast(@alignCast(alloc_data.maze_state.mapped));
-//             @memcpy(aligned_maze, cells);
-
-//             self.maze_update = false;
-//         }
-//     }
-
-//     pub fn drawImgui(
-//         self: *Gui,
-//         ui_set: vk.DescriptorSet,
-//     ) void {
-//         var open = true;
-//         const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
-//         var seed: c_int = @intCast(self.maze.seed.?);
-//         if (imgui.InputInt("seed", &seed)) {
-//             self.maze.seed = @as(u64, @intCast(seed));
-//             self.maze_update = true;
-//         }
-//         defer imgui.End();
-//         if (!shown) return;
-//         imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });
-//     }
-// };
-
 pub const Description = struct {
     global_descriptor_set_layout: vk.DescriptorSetLayout,
     texture_set_layout: vk.DescriptorSetLayout,
@@ -82,28 +34,24 @@ pub const Description = struct {
 
 graphics_pipeline: vk.Pipeline = undefined,
 graphics_pipeline_layout: vk.PipelineLayout = undefined,
-// graphics_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+
 compute_pipeline: vk.Pipeline = undefined,
 compute_pipeline_layout: vk.PipelineLayout = undefined,
 compute_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-// descriptor_pool: vk.DescriptorPool = undefined,
 
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyPipeline(device, self.graphics_pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.graphics_pipeline_layout, alloc_cbs);
-    // vk.DestroyDescriptorSetLayout(device, self.graphics_descriptor_set_layout, alloc_cbs);
     vk.DestroyPipeline(device, self.compute_pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.compute_pipeline_layout, alloc_cbs);
     vk.DestroyDescriptorSetLayout(device, self.compute_descriptor_set_layout, alloc_cbs);
-    // vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
 }
 
 pub fn init(pd: Description, alloc_cbs: ?*vk.AllocationCallbacks) Self {
     var self = Self{};
     self.createDescriptorSetLayout(pd.device, alloc_cbs);
-    // self.createDescriptorPool(pd.device, alloc_cbs);
     self.initComputePipeline(pd, alloc_cbs);
     self.initGraphicsPipeline(pd, alloc_cbs);
     return self;
@@ -128,64 +76,14 @@ fn createDescriptorSetLayout(
             .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
         },
     };
-    // const graphics_bindings = &[_]vk.DescriptorSetLayoutBinding{
-    //     .{
-    //         .binding = Bindings.TEXTURE2D,
-    //         .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-    //         .descriptorCount = 1,
-    //         .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
-    //         .pImmutableSamplers = null,
-    //     },
-    //     .{
-    //         .binding = Bindings.METADATA,
-    //         .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-    //         .descriptorCount = 1,
-    //         .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-    //         .pImmutableSamplers = null,
-    //     },
-    // };
-
-    // const all_bindings =
-    //     &[_][]const vk.DescriptorSetLayoutBinding{
-    //         compute_bindings,
-    // graphics_bindings,
-    // };
-
-    // for (all_bindings, 0..) |b, i| {
     const ci = vk.DescriptorSetLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = @as(u32, @intCast(compute_bindings.len)),
         .pBindings = compute_bindings.ptr,
     };
 
-    // if (i == 0)
     checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.compute_descriptor_set_layout)) catch
         @panic("failed to create main compute descriptor set layout");
-    // else
-    //     checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.graphics_descriptor_set_layout)) catch
-    //         @panic("failed to create main compute descriptor set layout");
-    // }
-}
-
-pub const MAX_TEXTURES = 16;
-fn createDescriptorPool(
-    self: *Self,
-    device: vk.Device,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    const pool_sizes = [_]vk.DescriptorPoolSize{
-        .{ .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 1 },
-        .{ .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 2 },
-        .{ .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MAX_TEXTURES },
-    };
-    const ci = vk.DescriptorPoolCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = 2,
-        .poolSizeCount = pool_sizes.len,
-        .pPoolSizes = &pool_sizes,
-    };
-    checkVk(vk.CreateDescriptorPool(device, &ci, alloc_cbs, &self.descriptor_pool)) catch
-        @panic("failed to create main compute descriptor pool");
 }
 
 /// instead of the user passing a shader module, this
@@ -257,14 +155,13 @@ fn initGraphicsPipeline(
         },
     };
 
-    // Vertex2D: vec2 position at offset 0, vec2 uv at offset 8
-    const binding_desc = core.resources.Meshes2D.VERTEX_INPUT_BINDING_DESCRIPTION;
+    const binding_descs = core.resources.Meshes2D.VERTEX_INPUT_BINDING_DESCRIPTIONS;
     const attr_descs = core.resources.Meshes2D.VERTEX_INPUT_ATTRIBUTE_DESCRIPTIONS;
 
     const vertex_input_ci = vk.PipelineVertexInputStateCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 1,
-        .pVertexBindingDescriptions = &binding_desc,
+        .vertexBindingDescriptionCount = binding_descs.len,
+        .pVertexBindingDescriptions = &binding_descs,
         .vertexAttributeDescriptionCount = attr_descs.len,
         .pVertexAttributeDescriptions = &attr_descs,
     };
@@ -423,23 +320,12 @@ pub fn allocateDescriptorSets(
         , .{@errorName(e)});
     };
 
-    // var graphics_set: vk.DescriptorSet = undefined;
-
-    // const grphx_ai = vk.DescriptorSetAllocateInfo{
-    //     .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-    //     .descriptorPool = self.descriptor_pool,
-    //     .descriptorSetCount = 1,
-    //     .pSetLayouts = &self.graphics_descriptor_set_layout,
-    // };
-    // checkVk(vk.AllocateDescriptorSets(device, &grphx_ai, &graphics_set)) catch
-    //     @panic("failed to allocate main compute descriptor set");
-
     const maze_tex = alloc_resources.materials.textures.get("maze").?;
 
     const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
     return .{
         .compute = compute_set,
-        // .graphics = graphics_set,
         .ui = ui_set,
     };
 }
