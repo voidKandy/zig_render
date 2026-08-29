@@ -26,10 +26,23 @@ pub const MeshHandle = struct {
     ranges: MeshRanges,
 };
 
+pub const Bindings = struct {
+    vertex: u32,
+    index: u32,
+    metadata: u32,
+};
+
+pub const DEFAULT_BINDINGS = Bindings{
+    .vertex = 0,
+    .index = 1,
+    .metadata = 2,
+};
+
 pub const AllocatedData = struct {
-    vertex_buffer: vma_usage.AllocatedBuffer = undefined,
-    index_buffer: vma_usage.AllocatedBuffer = undefined,
-    metadata: vma_usage.MappedBuffer = undefined,
+    vertex_buffer: vma_usage.AllocatedBuffer,
+    index_buffer: vma_usage.AllocatedBuffer,
+    metadata: vma_usage.MappedBuffer,
+    descriptor_set: vk.DescriptorSet,
 
     pub fn deinit(
         self: @This(),
@@ -38,6 +51,71 @@ pub const AllocatedData = struct {
         self.vertex_buffer.deinit(allocs.vma);
         self.index_buffer.deinit(allocs.vma);
         self.metadata.deinit(allocs.vma);
+    }
+
+    pub fn updateDescriptorSet(
+        self: @This(),
+        device: vk.Device,
+        bindings: Bindings,
+    ) std.mem.Allocator.Error!void {
+        const vertex_info = vk.DescriptorBufferInfo{
+            .buffer = self.vertex_buffer.buffer,
+            .offset = 0,
+            .range = self.vertex_buffer.size,
+        };
+        const index_info = vk.DescriptorBufferInfo{
+            .buffer = self.index_buffer.buffer,
+            .offset = 0,
+            .range = self.index_buffer.size,
+        };
+        const buffer_info = vk.DescriptorBufferInfo{
+            .buffer = self.metadata.allocation.buffer,
+            .offset = 0,
+            .range = vk.WHOLE_SIZE,
+        };
+
+        const write_sets =
+            &[_]vk.WriteDescriptorSet{
+                .{
+                    .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = self.descriptor_set,
+                    .dstBinding = bindings.vertex,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    .pBufferInfo = &vertex_info,
+                },
+
+                .{
+                    .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = self.descriptor_set,
+                    .dstBinding = bindings.index,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    .pBufferInfo = &index_info,
+                },
+
+                .{
+                    .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .pNext = null,
+                    .dstSet = self.descriptor_set,
+                    .dstBinding = bindings.metadata,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    .pImageInfo = null,
+                    .pBufferInfo = &buffer_info,
+                    .pTexelBufferView = null,
+                },
+            };
+        vk.UpdateDescriptorSets(
+            device,
+            @as(u32, @intCast(write_sets.len)),
+            write_sets.ptr,
+            0,
+            null,
+        );
     }
 };
 
@@ -151,21 +229,12 @@ pub fn appendMeshWithMaterialLookup(
     });
 }
 
-pub const Bindings = struct {
-    vertex: u32,
-    texture: u32,
-    metadata: u32,
-};
-
-pub fn createDescriptorSetLayoutAndPool(
+pub fn createDescriptorSetLayout(
     self: *@This(),
     bindings: Bindings,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    std.debug.assert(self.descriptor_set_layout == null);
-    std.debug.assert(self.descriptor_pool == null);
-
     const layout_bindings = [_]vk.DescriptorSetLayoutBinding{
         .{
             .binding = bindings.vertex,
@@ -196,39 +265,20 @@ pub fn createDescriptorSetLayoutAndPool(
     };
     checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.descriptor_set_layout)) catch
         @panic("failed to create descriptor set layout");
-
-    const pool_sizes = [_]vk.DescriptorPoolSize{
-        // .{
-        //     .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        //     .descriptorCount = 1,
-        // },
-        // .{
-        //     .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        //     .descriptorCount = 2,
-        // },
-        .{
-            .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = self.amt_materials,
-        },
-    };
-
-    const pool_ci = vk.DescriptorPoolCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = 2,
-        .poolSizeCount = pool_sizes.len,
-        .pPoolSizes = &pool_sizes,
-    };
-
-    checkVk(vk.CreateDescriptorPool(device, &pool_ci, alloc_cbs, &self.descriptor_pool)) catch
-        @panic("failed to create main compute descriptor pool");
 }
+
 pub fn upload(
     self: *@This(),
     allocs: core.engine.Allocators,
+    pool: vk.DescriptorPool,
     upload_ctx: *core.bindings.vulkan_init.UploadContext,
     device: core.bindings.vulkan_init.LogicalDevice,
 ) AllocatedData {
-    var alloc_data = AllocatedData{};
+    var vertex_buffer: vma_usage.AllocatedBuffer = undefined;
+    var index_buffer: vma_usage.AllocatedBuffer = undefined;
+    var metadata: vma_usage.MappedBuffer = undefined;
+    var desc_set: vk.DescriptorSet = undefined;
+
     const vert_alloc_size, const idx_alloc_size = .{
         self.vertices.items.len * @sizeOf(core.lib.mesh.Vertex3D),
         self.indices.items.len * @sizeOf(u32),
@@ -271,14 +321,14 @@ pub fn upload(
         @memcpy(idx_aligned_data, self.indices.items);
     }
 
-    alloc_data.vertex_buffer = vma_usage.AllocatedBuffer.create(
+    vertex_buffer = vma_usage.AllocatedBuffer.create(
         allocs.vma,
         vert_alloc_size,
         vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
         core.clibs.vma.MEMORY_USAGE_GPU_ONLY,
         0,
     );
-    alloc_data.index_buffer = vma_usage.AllocatedBuffer.create(
+    index_buffer = vma_usage.AllocatedBuffer.create(
         allocs.vma,
         vert_alloc_size,
         vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -301,13 +351,13 @@ pub fn upload(
         };
 
     upload_ctx.immediateSubmit(device, SubmitCtx{
-        .mesh_buffer = alloc_data.vertex_buffer.buffer,
+        .mesh_buffer = vertex_buffer.buffer,
         .staging_buffer = vert_staging_buffer.buffer,
         .size = vert_alloc_size,
     });
 
     upload_ctx.immediateSubmit(device, SubmitCtx{
-        .mesh_buffer = alloc_data.index_buffer.buffer,
+        .mesh_buffer = index_buffer.buffer,
         .staging_buffer = idx_staging_buffer.buffer,
         .size = idx_alloc_size,
     });
@@ -320,19 +370,35 @@ pub fn upload(
         0,
     );
 
-    alloc_data.metadata = vma_usage.MappedBuffer{
+    metadata = vma_usage.MappedBuffer{
         .allocation = metadata_alloc,
     };
 
     checkVk(core.clibs.vma.MapMemory(
         allocs.vma,
         metadata_alloc.allocation,
-        &alloc_data.metadata.mapped,
+        &metadata.mapped,
     )) catch @panic("Failed to map metadata");
 
-    const aligned_metadata: [*]MetaData = @ptrCast(@alignCast(alloc_data.metadata.mapped));
+    const aligned_metadata: [*]MetaData = @ptrCast(@alignCast(metadata.mapped));
 
     @memcpy(aligned_metadata, self.meta_data.items);
 
-    return alloc_data;
+    const ai = vk.DescriptorSetAllocateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .pNext = null,
+        .descriptorPool = pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &self.descriptor_set_layout,
+    };
+
+    checkVk(vk.AllocateDescriptorSets(device.handle, &ai, &desc_set)) catch
+        @panic("failed to allocate descriptor sets");
+
+    return .{
+        .index_buffer = index_buffer,
+        .metadata = metadata,
+        .vertex_buffer = vertex_buffer,
+        .descriptor_set = desc_set,
+    };
 }

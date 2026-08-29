@@ -53,7 +53,7 @@ pub fn deinit(
 ) void {
     self.materials.deinit(a, device, alloc_cbs);
     self.meshes3D.deinit(a, device, alloc_cbs);
-    self.meshes2D.deinit(a);
+    self.meshes2D.deinit(a, device, alloc_cbs);
     self.mapped_buffers.deinit(a);
 }
 
@@ -169,8 +169,16 @@ fn createDescriptorPool(
     const materials_count = self.materials.amountTotalTextures();
     const pool_sizes = [_]vk.DescriptorPoolSize{
         .{
+            .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            // BAD
+            .descriptorCount = 3,
+            // .descriptorCount = self.materials.textures.size,
+        },
+        .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = self.mapped_buffers.size,
+            // .descriptorCount = self.mapped_buffers.size * 2,
+            // BAD
+            .descriptorCount = 3,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -207,11 +215,13 @@ pub fn upload(
     );
     const meshes3D = self.meshes3D.upload(
         allocs,
+        pool,
         upload_ctx,
         logical_device,
     );
     const meshes2D = self.meshes2D.upload(
         allocs,
+        pool,
         upload_ctx,
         logical_device,
     );

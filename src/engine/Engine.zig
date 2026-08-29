@@ -52,7 +52,7 @@ background_descriptor_set: vk.DescriptorSet = undefined,
 background_pipeline_description: BackgroundPipeline.Description = undefined,
 
 mesh3D_pipeline: Mesh3DPipeline = undefined,
-mesh3D_descriptor_set: vk.DescriptorSet = undefined,
+// mesh3D_descriptor_set: vk.DescriptorSet = undefined,
 mesh3D_pipeline_description: Mesh3DPipeline.Description = undefined,
 
 mesh2D_pipeline: Mesh2DPipeline = undefined,
@@ -328,7 +328,10 @@ fn initGlobalData(
     self.global_data.updateSets(self.logical_device.handle);
 }
 
+// These bindings can be the same because they are not in the
+// same descriptor set
 const TEXTURE_SET_BINDING: u32 = 0;
+const MESHES_2D_METADATA_SET_BINDING: u32 = 0;
 /// Allocates resources, creates descriptor layouts/pool
 /// AND associates meshes with entities.
 /// The latter half of this needs to be moved to its own function
@@ -336,6 +339,18 @@ const TEXTURE_SET_BINDING: u32 = 0;
 pub fn allocateResources(self: *Self) void {
     self.resources.materials.createDescriptorSetLayout(
         TEXTURE_SET_BINDING,
+        self.logical_device.handle,
+        self.alloc_cbs,
+    );
+
+    self.resources.meshes3D.createDescriptorSetLayout(
+        core.resources.Meshes3D.DEFAULT_BINDINGS,
+        self.logical_device.handle,
+        self.alloc_cbs,
+    );
+
+    self.resources.meshes2D.createDescriptorSetLayout(
+        MESHES_2D_METADATA_SET_BINDING,
         self.logical_device.handle,
         self.alloc_cbs,
     );
@@ -353,9 +368,20 @@ pub fn allocateResources(self: *Self) void {
         });
     }
 
+    // BAD
+    const max_sets =
+        // global set
+        1 +
+        // tx set
+        1 +
+        // meshes2D
+        1 +
+        // meshes3D
+        1;
+
     self.allocated_resources = self.resources.upload(
         self.allocs,
-        3, // not sure how to derive this (max_sets)
+        max_sets,
         &self.upload_context,
         self.logical_device,
         self.physical_device,
@@ -476,6 +502,7 @@ fn initMesh3DPipeline(self: *Self) void {
         .{
             .global_descriptor_set_layout = self.global_data.layout,
             .texture_set_layout = self.resources.materials.descriptor_set_layout,
+            .meshes_set_layout = self.resources.meshes3D.descriptor_set_layout,
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
@@ -495,16 +522,17 @@ fn initMesh3DPipeline(self: *Self) void {
     // self.alloc_cbs,
     // );
 
-    self.mesh3D_descriptor_set = self.mesh3D_pipeline.allocateDescriptorSet(
-        self.allocated_resources.descriptor_pool,
-        self.logical_device.handle,
-    ) catch @panic("OOM");
+    // self.mesh3D_descriptor_set = self.mesh3D_pipeline.allocateDescriptorSet(
+    //     self.allocated_resources.descriptor_pool,
+    //     self.logical_device.handle,
+    // ) catch @panic("OOM");
 
-    Mesh3DPipeline.updateDescriptorSets(
+    self.allocated_resources.meshes3D.updateDescriptorSet(
         self.logical_device.handle,
+        core.resources.Meshes3D.DEFAULT_BINDINGS,
         // self.allocs.std,
-        self.allocated_resources,
-        self.mesh3D_descriptor_set,
+        // self.allocated_resources,
+        // self.mesh3D_descriptor_set,
         // self.allocated_resources.materials.descriptor_set,
     ) catch @panic("OOM");
 }
@@ -534,6 +562,8 @@ fn initMesh2DPipeline(self: *Self) void {
         .{
             .device = self.logical_device.handle,
             .global_descriptor_set_layout = self.global_data.layout,
+            .texture_set_layout = self.resources.materials.descriptor_set_layout,
+            .meshes_set_layout = self.resources.meshes2D.descriptor_set_layout,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
             .vert_shader = vert_shader,
@@ -541,8 +571,21 @@ fn initMesh2DPipeline(self: *Self) void {
         },
         self.alloc_cbs,
     );
-    self.mesh2D_descriptor_sets = self.mesh2D_pipeline.allocateDescriptorSets(self.logical_device.handle, self.allocated_resources);
-    Mesh2DPipeline.updateDescriptorSets(
+
+    self.mesh2D_descriptor_sets = self.mesh2D_pipeline.allocateDescriptorSets(
+        self.allocated_resources.descriptor_pool,
+        self.logical_device.handle,
+        self.allocated_resources,
+    );
+
+    self.allocated_resources.meshes2D.updateDescriptorSet(
+        self.logical_device.handle,
+        MESHES_2D_METADATA_SET_BINDING,
+        // self.allocated_resources,
+        // self.mesh2D_descriptor_sets,
+    ) catch @panic("OOM");
+
+    core.engine.pipelines.Mesh2DPipeline.updateDescriptorSets(
         self.logical_device.handle,
         self.allocated_resources,
         self.mesh2D_descriptor_sets,
@@ -797,7 +840,7 @@ fn recordCommandBuffer(
     self.mesh3D_pipeline.recordCommands(
         &self.world,
         self.global_data.set,
-        self.mesh3D_descriptor_set,
+        self.allocated_resources.meshes3D.descriptor_set,
         self.allocated_resources.materials.descriptor_set,
         frame.main_command_buffer,
     );
@@ -808,7 +851,8 @@ fn recordCommandBuffer(
         self.swapchain.extent,
         self.allocated_resources,
         self.global_data.set,
-        self.mesh2D_descriptor_sets.graphics,
+        self.allocated_resources.meshes2D.descriptor_set,
+        self.allocated_resources.materials.descriptor_set,
         frame.main_command_buffer,
     );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
