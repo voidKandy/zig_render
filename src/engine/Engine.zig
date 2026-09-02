@@ -375,7 +375,7 @@ pub fn allocateResources(self: *Self) void {
         // tx set
         1 +
         // meshes2D
-        1 +
+        2 +
         // meshes3D
         1;
 
@@ -569,6 +569,7 @@ fn initMesh2DPipeline(self: *Self) void {
             .vert_shader = vert_shader,
             .frag_shader = frag_shader,
         },
+        self.resources,
         self.alloc_cbs,
     );
 
@@ -788,7 +789,7 @@ fn recordCommandBuffer(
     self.mesh2D_pipeline.recordCommandsCompute(
         self.allocated_resources,
         self.global_data.set,
-        self.mesh2D_descriptor_sets.compute,
+        self.mesh2D_descriptor_sets,
         self.maze_system,
         frame.main_command_buffer,
     );

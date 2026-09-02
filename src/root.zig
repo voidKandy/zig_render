@@ -68,6 +68,7 @@ pub const loaders = struct {
 
 pub const resources = struct {
     pub const Manager = @import("resources/Manager.zig");
+    pub const MappedBuffers = @import("resources/MappedBuffers.zig");
     pub const Materials = @import("resources/Materials.zig");
     pub const Meshes2D = @import("resources/Meshes2D.zig");
     pub const Meshes3D = @import("resources/Meshes3D.zig");

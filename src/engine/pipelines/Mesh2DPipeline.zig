@@ -35,9 +35,11 @@ pub const Description = struct {
 graphics_pipeline: vk.Pipeline = undefined,
 graphics_pipeline_layout: vk.PipelineLayout = undefined,
 
+// this stuff should be moved to a system or something
 compute_pipeline: vk.Pipeline = undefined,
 compute_pipeline_layout: vk.PipelineLayout = undefined,
-compute_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+mapped_buffer_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+texture_write_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 
 const Self = @This();
 
@@ -46,12 +48,25 @@ pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallback
     vk.DestroyPipelineLayout(device, self.graphics_pipeline_layout, alloc_cbs);
     vk.DestroyPipeline(device, self.compute_pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.compute_pipeline_layout, alloc_cbs);
-    vk.DestroyDescriptorSetLayout(device, self.compute_descriptor_set_layout, alloc_cbs);
+    vk.DestroyDescriptorSetLayout(device, self.mapped_buffer_descriptor_set_layout, alloc_cbs);
+    vk.DestroyDescriptorSetLayout(device, self.texture_write_descriptor_set_layout, alloc_cbs);
 }
 
-pub fn init(pd: Description, alloc_cbs: ?*vk.AllocationCallbacks) Self {
+const TEXTURE_WRITE_NAMES =
+    [_][]const u8{"maze"};
+
+pub fn init(
+    pd: Description,
+    resources: core.resources.Manager,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) Self {
     var self = Self{};
-    self.createDescriptorSetLayout(pd.device, alloc_cbs);
+    self.createDescriptorSetLayout(pd.device, resources, alloc_cbs);
+    self.texture_write_descriptor_set_layout = resources.materials.createWritableTextureSetLayout(
+        &TEXTURE_WRITE_NAMES,
+        pd.device,
+        alloc_cbs,
+    );
     self.initComputePipeline(pd, alloc_cbs);
     self.initGraphicsPipeline(pd, alloc_cbs);
     return self;
@@ -60,21 +75,28 @@ pub fn init(pd: Description, alloc_cbs: ?*vk.AllocationCallbacks) Self {
 fn createDescriptorSetLayout(
     self: *Self,
     device: vk.Device,
+    resources: core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
+    const maze_buffer_binding = resources.mapped_buffers.createDescriptorSetLayoutBinding(
+        "maze",
+        0,
+        vk.SHADER_STAGE_COMPUTE_BIT,
+    );
     const compute_bindings = &[_]vk.DescriptorSetLayoutBinding{
-        .{
-            .binding = Bindings.OUTPUT_IMAGE,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            .descriptorCount = 1,
-            .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
-        },
-        .{
-            .binding = Bindings.MAZE_STATE,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
-        },
+        // .{
+        //     .binding = Bindings.OUTPUT_IMAGE,
+        //     .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        //     .descriptorCount = 1,
+        //     .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
+        // },
+        // .{
+        //     .binding = Bindings.MAZE_STATE,
+        //     .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        //     .descriptorCount = 1,
+        //     .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
+        // },
+        maze_buffer_binding,
     };
     const ci = vk.DescriptorSetLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -82,7 +104,7 @@ fn createDescriptorSetLayout(
         .pBindings = compute_bindings.ptr,
     };
 
-    checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.compute_descriptor_set_layout)) catch
+    checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.mapped_buffer_descriptor_set_layout)) catch
         @panic("failed to create main compute descriptor set layout");
 }
 
@@ -107,7 +129,8 @@ fn initComputePipeline(
 
     const set_layouts = [_]vk.DescriptorSetLayout{
         pd.global_descriptor_set_layout,
-        self.compute_descriptor_set_layout,
+        self.texture_write_descriptor_set_layout,
+        self.mapped_buffer_descriptor_set_layout,
     };
 
     const layout_ci = vk.PipelineLayoutCreateInfo{
@@ -296,7 +319,8 @@ fn initGraphicsPipeline(
 }
 
 pub const DescriptorSets = struct {
-    compute: vk.DescriptorSet,
+    mapped_buffer: vk.DescriptorSet,
+    write_texture: vk.DescriptorSet,
     // graphics: vk.DescriptorSet,
     ui: vk.DescriptorSet,
 };
@@ -307,25 +331,44 @@ pub fn allocateDescriptorSets(
     device: vk.Device,
     alloc_resources: core.resources.Manager.AllocatedData,
 ) DescriptorSets {
-    var compute_set: vk.DescriptorSet = undefined;
-    const cmpt_ai = vk.DescriptorSetAllocateInfo{
+    var mapped_buffer_set: vk.DescriptorSet = undefined;
+    const mp_bf_ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = pool,
         .descriptorSetCount = 1,
-        .pSetLayouts = &self.compute_descriptor_set_layout,
-    };
-    checkVk(vk.AllocateDescriptorSets(device, &cmpt_ai, &compute_set)) catch |e| {
-        std.debug.panic(
-            \\ failed to allocate main compute descriptor set: {s}
-        , .{@errorName(e)});
+        .pSetLayouts = &self.mapped_buffer_descriptor_set_layout,
     };
 
+    checkVk(vk.AllocateDescriptorSets(
+        device,
+        &mp_bf_ai,
+        &mapped_buffer_set,
+    )) catch
+        @panic("failed to allocate mapped buffer descriptor set");
+
+    var write_texture_set: vk.DescriptorSet = undefined;
+    const wr_tx_ai = vk.DescriptorSetAllocateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &self.texture_write_descriptor_set_layout,
+    };
+
+    checkVk(vk.AllocateDescriptorSets(
+        device,
+        &wr_tx_ai,
+        &write_texture_set,
+    )) catch |e|
+        std.debug.panic("failed to allocate writable-texture descriptor set: {s}", .{@errorName(e)});
+
+    // TODO
+    // some kind of system that adds all textures to the ui set
     const maze_tex = alloc_resources.materials.textures.get("maze").?;
-
     const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     return .{
-        .compute = compute_set,
+        .mapped_buffer = mapped_buffer_set,
+        .write_texture = write_texture_set,
         .ui = ui_set,
     };
 }
@@ -336,67 +379,24 @@ pub fn updateDescriptorSets(
     alloc_resources: core.resources.Manager.AllocatedData,
     sets: DescriptorSets,
 ) void {
-    const maze_tex = alloc_resources.materials.textures.get("maze").?;
-    const compute_image_info = vk.DescriptorImageInfo{
-        .imageLayout = vk.IMAGE_LAYOUT_GENERAL,
-        .imageView = maze_tex.image_alloc.view,
-    };
-    // const graphics_image_info = vk.DescriptorImageInfo{
-    //     .sampler = maze_tex.sampler,
-    //     .imageView = maze_tex.image_alloc.view,
-    //     .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    // };
+    alloc_resources.materials.updateWritableTextureSet(
+        device,
+        sets.write_texture,
+        &TEXTURE_WRITE_NAMES,
+    );
 
-    const maze_buf = alloc_resources.all_mapped_buffers.get("maze").?;
-
-    const maze_state_buffer_info = vk.DescriptorBufferInfo{
-        .buffer = maze_buf.allocation.buffer,
-        .offset = 0,
-        .range = vk.WHOLE_SIZE,
-    };
-    // const metadata_buffer_info = vk.DescriptorBufferInfo{
-    //     .buffer = alloc_resources.meshes2D.metadata.allocation.buffer,
-    //     .offset = 0,
-    //     .range = vk.WHOLE_SIZE,
-    // };
+    var maze_buf_info: vk.DescriptorBufferInfo = undefined;
     const writes = [_]vk.WriteDescriptorSet{
-        .{
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = sets.compute,
-            .dstBinding = Bindings.OUTPUT_IMAGE,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            .pImageInfo = &compute_image_info,
-        },
-        .{
-            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = sets.compute,
-            .dstBinding = Bindings.MAZE_STATE,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &maze_state_buffer_info,
-        },
-        // .{
-        //     .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        //     .dstSet = sets.graphics,
-        //     .dstBinding = Bindings.TEXTURE2D,
-        //     .dstArrayElement = 0,
-        //     .descriptorCount = 1,
-        //     .descriptorType = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        //     .pImageInfo = &graphics_image_info,
-        // },
-        // .{
-        //     .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        //     .dstSet = sets.graphics,
-        //     .dstBinding = Bindings.METADATA,
-        //     .dstArrayElement = 0,
-        //     .descriptorCount = 1,
-        //     .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        //     .pBufferInfo = &metadata_buffer_info,
-        // },
+        alloc_resources.mapped_buffers.createDescriptorSetWrite(
+            sets.mapped_buffer,
+            "maze",
+            0,
+            vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            0,
+            &maze_buf_info,
+        ),
     };
+
     vk.UpdateDescriptorSets(device, writes.len, &writes, 0, null);
 }
 
@@ -412,12 +412,12 @@ pub fn recordCommandsCompute(
     self: Self,
     alloc_resources: core.resources.Manager.AllocatedData,
     global_descriptor_set: vk.DescriptorSet,
-    set: vk.DescriptorSet,
+    my_sets: DescriptorSets,
     maze_system: core.engine.systems.Maze,
     cmd: vk.CommandBuffer,
 ) void {
     const sets = [_]vk.DescriptorSet{
-        global_descriptor_set, set,
+        global_descriptor_set, my_sets.write_texture, my_sets.mapped_buffer,
     };
     vk.CmdBindDescriptorSets(
         cmd,

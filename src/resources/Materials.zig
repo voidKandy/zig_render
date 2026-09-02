@@ -315,6 +315,46 @@ pub fn createDescriptorSetLayout(
     )) catch @panic("Failed to create descriptor set layout");
 }
 
+/// Builds a storage-image descriptor set layout with one binding per name,
+/// in the order given. Caller is responsible for remembering that order
+/// (e.g. index 0 = names[0]) to know which binding maps to which texture
+/// later, both for the write pass and for shader-side binding numbers.
+pub fn createWritableTextureSetLayout(
+    self: Self,
+    names: []const []const u8,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) vk.DescriptorSetLayout {
+    std.debug.assert(names.len <= 32); // or heap-alloc if you need more
+    var bindings_buf: [32]vk.DescriptorSetLayoutBinding = undefined;
+
+    for (names, 0..) |name, i| {
+        // fail fast if caller passed a name that doesn't exist —
+        // catches typos/renames at layout-creation time, not at draw time
+        if (!self.textures.contains(name)) std.debug.panic(
+            \\ did not find texture with name: '{s}'
+        , .{name});
+
+        bindings_buf[i] = .{
+            .binding = @intCast(i),
+            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
+        };
+    }
+
+    const ci = vk.DescriptorSetLayoutCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = @intCast(names.len),
+        .pBindings = &bindings_buf,
+    };
+
+    var layout: vk.DescriptorSetLayout = undefined;
+    checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &layout)) catch
+        @panic("failed to create writable-texture descriptor set layout");
+    return layout;
+}
+
 /// uploads data to GPU and allocates descriptor set
 /// `pool` should be passed from outer Manager.AllocatedData
 pub fn upload(
@@ -484,6 +524,37 @@ pub const AllocatedData = struct {
             0,
             null,
         );
+    }
+
+    pub fn updateWritableTextureSet(
+        self: @This(),
+        device: vk.Device,
+        set: vk.DescriptorSet,
+        names: []const []const u8,
+    ) void {
+        std.debug.assert(names.len <= 32); // or heap-alloc if you need more
+
+        var writes: [32]vk.WriteDescriptorSet = undefined;
+        var image_infos: [32]vk.DescriptorImageInfo = undefined;
+
+        for (names, 0..) |name, i| {
+            const tex = self.textures.get(name) orelse
+                std.debug.panic("writable texture \"{s}\" not uploaded", .{name});
+            image_infos[i] = .{
+                .imageLayout = vk.IMAGE_LAYOUT_GENERAL,
+                .imageView = tex.image_alloc.view,
+            };
+            writes[i] = .{
+                .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = set,
+                .dstBinding = @intCast(i),
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                .pImageInfo = &image_infos[i],
+            };
+        }
+        vk.UpdateDescriptorSets(device, @intCast(names.len), writes[0..names.len].ptr, 0, null);
     }
 };
 

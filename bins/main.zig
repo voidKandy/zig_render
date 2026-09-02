@@ -216,7 +216,7 @@ pub fn main(init: std.process.Init) void {
                 },
             },
             .meshes3D = meshes_objects,
-            .mapped_buffer_creates = &[_]struct { []const u8, core.resources.Manager.MappedBufferCreate }{.{
+            .mapped_buffer_creates = &[_]struct { []const u8, core.resources.MappedBuffers.CreateInfo }{.{
                 "maze",
                 .{
                     .alloc_size = @sizeOf(core.engine.systems.Maze.GPUMazeCell) * maze.width * maze.height,

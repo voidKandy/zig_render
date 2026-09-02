@@ -4,6 +4,7 @@ const vk = core.clibs.vk;
 const checkVk = core.bindings.vulkan_init.checkVk;
 const Materials = @import("Materials.zig");
 const Meshes2D = @import("Meshes2D.zig");
+const MappedBuffers = @import("MappedBuffers.zig");
 const Meshes3D = @import("Meshes3D.zig");
 
 // TODO
@@ -38,22 +39,13 @@ pub const CreateInfo = struct {
     texture_creates: ?[]const struct { []const u8, Materials.CreateTextureEntry },
     meshes2D: ?[]const Mesh2DCreateInfo,
     meshes3D: ?[]const Mesh3DCreateInfo,
-    mapped_buffer_creates: ?[]const struct { []const u8, MappedBufferCreate },
-};
-
-// this might be better it its own submodule
-pub const MappedBufferCreate = struct {
-    alloc_size: usize,
-    buffer_usage: core.clibs.vk.BufferUsageFlags,
-    mem_usage: core.clibs.vma.MemoryUsage,
-    flags: core.clibs.vma.AllocationCreateFlags,
+    mapped_buffer_creates: ?[]const struct { []const u8, MappedBuffers.CreateInfo },
 };
 
 materials: Materials,
 meshes2D: Meshes2D,
 meshes3D: Meshes3D,
-
-mapped_buffers: std.StringHashMapUnmanaged(MappedBufferCreate),
+mapped_buffers: MappedBuffers,
 
 pub fn deinit(
     self: *@This(),
@@ -64,7 +56,7 @@ pub fn deinit(
     self.materials.deinit(a, device, alloc_cbs);
     self.meshes3D.deinit(a, device, alloc_cbs);
     self.meshes2D.deinit(a, device, alloc_cbs);
-    self.mapped_buffers.deinit(a);
+    self.mapped_buffers.deinit(a, device, alloc_cbs);
 }
 
 pub fn create(a: std.mem.Allocator, ci: CreateInfo) !@This() {
@@ -82,10 +74,10 @@ pub fn create(a: std.mem.Allocator, ci: CreateInfo) !@This() {
         }
     }
 
-    var mapped_buffers: std.StringHashMapUnmanaged(MappedBufferCreate) = .empty;
+    var mapped_buffers: MappedBuffers = .{};
     if (ci.mapped_buffer_creates) |mp_crs| {
         for (mp_crs) |mp_cr| {
-            try mapped_buffers.put(a, mp_cr.@"0", mp_cr.@"1");
+            try mapped_buffers.creates.put(a, mp_cr.@"0", mp_cr.@"1");
         }
     }
 
@@ -146,7 +138,7 @@ pub const AllocatedData = struct {
     materials: Materials.AllocatedData,
     meshes3D: Meshes3D.AllocatedData,
     meshes2D: Meshes2D.AllocatedData,
-    all_mapped_buffers: std.StringHashMapUnmanaged(core.bindings.vma_usage.MappedBuffer) = .empty,
+    mapped_buffers: MappedBuffers.AllocatedData,
 
     descriptor_pool: core.clibs.vk.DescriptorPool,
 
@@ -159,12 +151,7 @@ pub const AllocatedData = struct {
         self.materials.deinit(allocs, device, alloc_cbs);
         self.meshes3D.deinit(allocs);
         self.meshes2D.deinit(allocs);
-        var iter = self.all_mapped_buffers.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.deinit(allocs.vma);
-        }
-        self.all_mapped_buffers.deinit(allocs.std);
-
+        self.mapped_buffers.deinit(allocs);
         vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
     }
 };
@@ -177,18 +164,20 @@ fn createDescriptorPool(
 ) vk.DescriptorPool {
     var pool: vk.DescriptorPool = undefined;
     const materials_count = self.materials.amountTotalTextures();
+    // TODO
+    // derive these sizes!
     const pool_sizes = [_]vk.DescriptorPoolSize{
         .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
             // BAD
-            .descriptorCount = 3,
+            .descriptorCount = 8,
             // .descriptorCount = self.materials.textures.size,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             // .descriptorCount = self.mapped_buffers.size * 2,
             // BAD
-            .descriptorCount = 3,
+            .descriptorCount = 8,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -208,6 +197,11 @@ fn createDescriptorPool(
 
     return pool;
 }
+
+// TODO?
+// add a consumer of Manager that registers resource use with pipelines
+// this can manage the creation of descriptor sets for pipelines in
+// a declarative way
 
 pub fn upload(
     self: *@This(),
@@ -244,35 +238,13 @@ pub fn upload(
         alloc_cbs,
     );
 
-    var all_mapped_buffers: std.StringHashMapUnmanaged(core.bindings.vma_usage.MappedBuffer) = .empty;
-    var mapped_iter = self.mapped_buffers.iterator();
-
-    while (mapped_iter.next()) |mapped| {
-        const ci = mapped.value_ptr;
-        const alloc = core.bindings.vma_usage.AllocatedBuffer.create(
-            allocs.vma,
-            ci.alloc_size,
-            ci.buffer_usage,
-            ci.mem_usage,
-            ci.flags,
-        );
-        var buf = core.bindings.vma_usage.MappedBuffer{
-            .allocation = alloc,
-        };
-
-        core.bindings.vulkan_init.checkVk(core.clibs.vma.MapMemory(
-            allocs.vma,
-            alloc.allocation,
-            &buf.mapped,
-        )) catch @panic("failed to map buffer");
-        try all_mapped_buffers.put(allocs.std, mapped.key_ptr.*, buf);
-    }
+    const mapped_buffers = try self.mapped_buffers.upload(allocs);
 
     return .{
         .meshes3D = meshes3D,
         .meshes2D = meshes2D,
         .materials = materials,
-        .all_mapped_buffers = all_mapped_buffers,
+        .mapped_buffers = mapped_buffers,
         .descriptor_pool = pool,
     };
 }

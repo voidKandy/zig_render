@@ -19,7 +19,7 @@ layout (set = 0, binding = 0) readonly uniform CameraData {
     mat4 proj;
 } camera_Ubo;
 layout(set = 1, binding = 0, rgba8) uniform writeonly image2D out_image;
-layout(set = 1, binding = 1) readonly buffer CellBuffer {
+layout(set = 2, binding = 0) readonly buffer CellBuffer {
     MazeCell cells[]; // packed wall bits
 };
 
