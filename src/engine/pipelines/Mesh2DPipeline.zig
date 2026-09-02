@@ -8,15 +8,6 @@ const vk = core.clibs.vk;
 const vma_usage = core.bindings.vma_usage;
 const checkVk = vki.checkVk;
 
-const Bindings = struct {
-    /// Set 0
-    const OUTPUT_IMAGE = 0;
-    const MAZE_STATE = 1;
-    /// Set 1
-    const TEXTURE2D = 0;
-    const METADATA = 1;
-};
-
 const GraphicsPushConstants = struct {
     inverse_window_resolution: core.lib.math.Vec2,
 };
@@ -35,130 +26,23 @@ pub const Description = struct {
 graphics_pipeline: vk.Pipeline = undefined,
 graphics_pipeline_layout: vk.PipelineLayout = undefined,
 
-// this stuff should be moved to a system or something
-compute_pipeline: vk.Pipeline = undefined,
-compute_pipeline_layout: vk.PipelineLayout = undefined,
-mapped_buffer_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-texture_write_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyPipeline(device, self.graphics_pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.graphics_pipeline_layout, alloc_cbs);
-    vk.DestroyPipeline(device, self.compute_pipeline, alloc_cbs);
-    vk.DestroyPipelineLayout(device, self.compute_pipeline_layout, alloc_cbs);
-    vk.DestroyDescriptorSetLayout(device, self.mapped_buffer_descriptor_set_layout, alloc_cbs);
-    vk.DestroyDescriptorSetLayout(device, self.texture_write_descriptor_set_layout, alloc_cbs);
 }
-
-const TEXTURE_WRITE_NAMES =
-    [_][]const u8{"maze"};
 
 pub fn init(
     pd: Description,
-    resources: core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     var self = Self{};
-    self.createDescriptorSetLayout(pd.device, resources, alloc_cbs);
-    self.texture_write_descriptor_set_layout = resources.materials.createWritableTextureSetLayout(
-        &TEXTURE_WRITE_NAMES,
-        pd.device,
-        alloc_cbs,
-    );
-    self.initComputePipeline(pd, alloc_cbs);
-    self.initGraphicsPipeline(pd, alloc_cbs);
+    self.initPipeline(pd, alloc_cbs);
     return self;
 }
 
-fn createDescriptorSetLayout(
-    self: *Self,
-    device: vk.Device,
-    resources: core.resources.Manager,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    const maze_buffer_binding = resources.mapped_buffers.createDescriptorSetLayoutBinding(
-        "maze",
-        0,
-        vk.SHADER_STAGE_COMPUTE_BIT,
-    );
-    const compute_bindings = &[_]vk.DescriptorSetLayoutBinding{
-        // .{
-        //     .binding = Bindings.OUTPUT_IMAGE,
-        //     .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        //     .descriptorCount = 1,
-        //     .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
-        // },
-        // .{
-        //     .binding = Bindings.MAZE_STATE,
-        //     .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        //     .descriptorCount = 1,
-        //     .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
-        // },
-        maze_buffer_binding,
-    };
-    const ci = vk.DescriptorSetLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = @as(u32, @intCast(compute_bindings.len)),
-        .pBindings = compute_bindings.ptr,
-    };
-
-    checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.mapped_buffer_descriptor_set_layout)) catch
-        @panic("failed to create main compute descriptor set layout");
-}
-
-/// instead of the user passing a shader module, this
-/// pipeline manages its own compute shaders internally
-fn initComputePipeline(
-    self: *Self,
-    pd: Description,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    const maze_shader = core.engine.shaders.createShaderModule(
-        "maze.comp",
-        pd.device,
-        alloc_cbs,
-    ) orelse @panic("failed to create maze compute shader module");
-    defer vk.DestroyShaderModule(pd.device, maze_shader, alloc_cbs);
-    const push_constant = vk.PushConstantRange{
-        .offset = 0,
-        .size = @sizeOf(core.engine.systems.Maze.PushConstants),
-        .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
-    };
-
-    const set_layouts = [_]vk.DescriptorSetLayout{
-        pd.global_descriptor_set_layout,
-        self.texture_write_descriptor_set_layout,
-        self.mapped_buffer_descriptor_set_layout,
-    };
-
-    const layout_ci = vk.PipelineLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = set_layouts.len,
-        .pSetLayouts = &set_layouts,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &push_constant,
-    };
-    checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.compute_pipeline_layout)) catch
-        @panic("failed to create main compute pipeline layout");
-
-    const stage = vk.PipelineShaderStageCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = vk.SHADER_STAGE_COMPUTE_BIT,
-        .module = maze_shader,
-        .pName = "main",
-    };
-    const ci = vk.ComputePipelineCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .layout = self.compute_pipeline_layout,
-        .stage = stage,
-    };
-    checkVk(vk.CreateComputePipelines(pd.device, null, 1, &ci, alloc_cbs, &self.compute_pipeline)) catch
-        @panic("failed to create main compute pipeline");
-}
-
-fn initGraphicsPipeline(
+fn initPipeline(
     self: *Self,
     pd: Description,
     alloc_cbs: ?*vk.AllocationCallbacks,
@@ -318,158 +202,11 @@ fn initGraphicsPipeline(
         @panic("failed to create hud pipeline");
 }
 
-pub const DescriptorSets = struct {
-    mapped_buffer: vk.DescriptorSet,
-    write_texture: vk.DescriptorSet,
-    // graphics: vk.DescriptorSet,
-    ui: vk.DescriptorSet,
-};
-
-pub fn allocateDescriptorSets(
-    self: Self,
-    pool: vk.DescriptorPool,
-    device: vk.Device,
-    alloc_resources: core.resources.Manager.AllocatedData,
-) DescriptorSets {
-    var mapped_buffer_set: vk.DescriptorSet = undefined;
-    const mp_bf_ai = vk.DescriptorSetAllocateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &self.mapped_buffer_descriptor_set_layout,
-    };
-
-    checkVk(vk.AllocateDescriptorSets(
-        device,
-        &mp_bf_ai,
-        &mapped_buffer_set,
-    )) catch
-        @panic("failed to allocate mapped buffer descriptor set");
-
-    var write_texture_set: vk.DescriptorSet = undefined;
-    const wr_tx_ai = vk.DescriptorSetAllocateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &self.texture_write_descriptor_set_layout,
-    };
-
-    checkVk(vk.AllocateDescriptorSets(
-        device,
-        &wr_tx_ai,
-        &write_texture_set,
-    )) catch |e|
-        std.debug.panic("failed to allocate writable-texture descriptor set: {s}", .{@errorName(e)});
-
-    // TODO
-    // some kind of system that adds all textures to the ui set
-    const maze_tex = alloc_resources.materials.textures.get("maze").?;
-    const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-    return .{
-        .mapped_buffer = mapped_buffer_set,
-        .write_texture = write_texture_set,
-        .ui = ui_set,
-    };
-}
-
-/// does nothing with graphics set?
-pub fn updateDescriptorSets(
-    device: vk.Device,
-    alloc_resources: core.resources.Manager.AllocatedData,
-    sets: DescriptorSets,
-) void {
-    alloc_resources.materials.updateWritableTextureSet(
-        device,
-        sets.write_texture,
-        &TEXTURE_WRITE_NAMES,
-    );
-
-    var maze_buf_info: vk.DescriptorBufferInfo = undefined;
-    const writes = [_]vk.WriteDescriptorSet{
-        alloc_resources.mapped_buffers.createDescriptorSetWrite(
-            sets.mapped_buffer,
-            "maze",
-            0,
-            vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            0,
-            &maze_buf_info,
-        ),
-    };
-
-    vk.UpdateDescriptorSets(device, writes.len, &writes, 0, null);
-}
-
-pub fn bindCompute(self: Self, cmd: vk.CommandBuffer) void {
-    vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_COMPUTE, self.compute_pipeline);
-}
-
-pub fn bindGraphics(self: Self, cmd: vk.CommandBuffer) void {
+pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
     vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.graphics_pipeline);
 }
 
-pub fn recordCommandsCompute(
-    self: Self,
-    alloc_resources: core.resources.Manager.AllocatedData,
-    global_descriptor_set: vk.DescriptorSet,
-    my_sets: DescriptorSets,
-    maze_system: core.engine.systems.Maze,
-    cmd: vk.CommandBuffer,
-) void {
-    const sets = [_]vk.DescriptorSet{
-        global_descriptor_set, my_sets.write_texture, my_sets.mapped_buffer,
-    };
-    vk.CmdBindDescriptorSets(
-        cmd,
-        vk.PIPELINE_BIND_POINT_COMPUTE,
-        self.compute_pipeline_layout,
-        0,
-        sets.len,
-        &sets,
-        0,
-        null,
-    );
-
-    vk.CmdPushConstants(
-        cmd,
-        self.compute_pipeline_layout,
-        vk.SHADER_STAGE_COMPUTE_BIT,
-        0,
-        @sizeOf(core.engine.systems.Maze.PushConstants),
-        &maze_system.push_constants,
-    );
-
-    const maze_image = alloc_resources.materials.textures.get("maze").?.image_alloc;
-
-    // transition to GENERAL for compute write
-    core.bindings.vulkan_util.transitionImageLayout(
-        cmd,
-        maze_image.image,
-        vk.IMAGE_LAYOUT_UNDEFINED,
-        vk.IMAGE_LAYOUT_GENERAL,
-        0,
-        vk.ACCESS_SHADER_WRITE_BIT,
-        vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-    );
-    const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(maze_system.maze.width * maze_system.push_constants.pixels_per_cell)) / 8.0));
-    const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(maze_system.maze.height * maze_system.push_constants.pixels_per_cell)) / 8.0));
-    vk.CmdDispatch(cmd, w, h, 1);
-
-    // transition to SHADER_READ_ONLY so HUD can sample it
-    core.bindings.vulkan_util.transitionImageLayout(
-        cmd,
-        maze_image.image,
-        vk.IMAGE_LAYOUT_GENERAL,
-        vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        vk.ACCESS_SHADER_WRITE_BIT,
-        vk.ACCESS_SHADER_READ_BIT,
-        vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-    );
-}
-
-pub fn recordCommandsGraphics(
+pub fn recordCommands(
     self: Self,
     world: *core.engine.world.GameWorld,
     window_extent: vk.Extent2D,
@@ -479,7 +216,6 @@ pub fn recordCommandsGraphics(
     tx_set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
-    // should match order of set_layouts in `initGraphicsPipeline`
     const sets = [_]vk.DescriptorSet{
         global_descriptor_set, tx_set, meshes_set,
     };
