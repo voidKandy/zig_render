@@ -166,6 +166,9 @@ fn createDescriptorPool(
     const materials_count = self.materials.amountTotalTextures();
     // TODO
     // derive these sizes!
+    // currently these are being manually changed until the program runs
+    // VERY FRAGILE
+    // VERY BAD
     const pool_sizes = [_]vk.DescriptorPoolSize{
         .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
@@ -178,6 +181,12 @@ fn createDescriptorPool(
             // .descriptorCount = self.mapped_buffers.size * 2,
             // BAD
             .descriptorCount = 8,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            // .descriptorCount = self.mapped_buffers.size * 2,
+            // BAD
+            .descriptorCount = 4,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,

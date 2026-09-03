@@ -62,6 +62,7 @@ pub fn createDescriptorSetLayoutBinding(
     self: @This(),
     buffer_name: []const u8,
     binding: u32,
+    desc_type: vk.DescriptorType,
     stage_flags: u32,
 ) vk.DescriptorSetLayoutBinding {
     if (!self.creates.contains(buffer_name)) std.debug.panic(
@@ -70,7 +71,7 @@ pub fn createDescriptorSetLayoutBinding(
 
     return vk.DescriptorSetLayoutBinding{
         .binding = binding,
-        .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorType = desc_type,
         .descriptorCount = 1,
         .stageFlags = stage_flags,
         .pImmutableSamplers = null,
@@ -105,8 +106,8 @@ pub const AllocatedData = struct {
         set: vk.DescriptorSet,
         buffer_name: []const u8,
         binding: u32,
-        desc_type: vk.DescriptorType,
         offset: u32,
+        desc_type: vk.DescriptorType,
         buf_info_out: *vk.DescriptorBufferInfo,
     ) vk.WriteDescriptorSet {
         if (!self.buffers.contains(buffer_name)) std.debug.panic(

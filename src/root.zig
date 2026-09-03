@@ -22,13 +22,14 @@ pub const engine = struct {
     pub const world = @import("engine/world.zig");
     pub const Engine = @import("engine/Engine.zig");
     pub const frames = @import("engine/frames.zig");
-    pub const GlobalAllocatedData = @import("engine/GlobalAllocatedData.zig");
+    pub const GlobalData = @import("engine/GlobalData.zig");
     pub const Input = @import("engine/Input.zig");
     pub const shaders = @import("engine/shaders.zig");
 
     pub const systems = struct {
         pub const MeshManipulation = @import("engine/systems/MeshManipulation.zig");
         pub const Maze = @import("engine/systems/Maze.zig");
+        pub const Camera = @import("engine/systems/Camera.zig");
     };
 
     pub const pipelines = struct {

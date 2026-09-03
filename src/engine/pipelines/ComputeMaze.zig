@@ -69,6 +69,7 @@ fn createDescriptorSetLayout(
         const binding = resources.mapped_buffers.createDescriptorSetLayoutBinding(
             @tagName(tag),
             @intFromEnum(tag),
+            vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             vk.SHADER_STAGE_COMPUTE_BIT,
         );
         bindings[i] = binding;
@@ -179,12 +180,13 @@ pub fn allocateDescriptorSets(
     )) catch |e|
         std.debug.panic("failed to allocate writable-texture descriptor set: {s}", .{@errorName(e)});
 
-    // for (std.meta.tags(TextureBufferPair)) |tag| {
-    // const maze_tex = alloc_resources.materials.textures.get(@tagName(tag)).?;
-    // const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    // }
     // TODO
     // some kind of system that adds all textures to the ui set
+    // example:
+    // for (std.meta.tags(TextureBufferPair)) |tag| {
+    // const tex = alloc_resources.materials.textures.get(@tagName(tag)).?;
+    // const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // }
 
     const maze_tex = alloc_resources.materials.textures.get("maze").?;
     const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -217,8 +219,8 @@ pub fn updateDescriptorSets(
                 sets.mapped_buffer,
                 @tagName(tag),
                 @intFromEnum(tag),
-                vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 @as(u32, @intCast(i)),
+                vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 &buf_info,
             );
         i += 1;

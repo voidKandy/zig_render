@@ -216,21 +216,33 @@ pub fn main(init: std.process.Init) void {
                 },
             },
             .meshes3D = meshes_objects,
-            .mapped_buffer_creates = &[_]struct { []const u8, core.resources.MappedBuffers.CreateInfo }{.{
-                "maze",
+            .mapped_buffer_creates = &[_]struct { []const u8, core.resources.MappedBuffers.CreateInfo }{
                 .{
-                    .alloc_size = @sizeOf(core.engine.systems.Maze.GPUMazeCell) * maze.width * maze.height,
-                    .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                    .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
-                    .flags = 0,
+                    "maze",
+                    .{
+                        .alloc_size = @sizeOf(core.engine.systems.Maze.GPUMazeCell) * maze.width * maze.height,
+                        .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+                        .flags = 0,
+                    },
                 },
-            }},
+                .{
+                    core.engine.systems.Camera.CAMERA_BUFFER_NAME,
+                    .{
+                        .alloc_size = @sizeOf(core.engine.Camera.GPUData),
+                        .buffer_usage = vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+                        .flags = 0,
+                    },
+                },
+            },
         },
         null,
     );
     defer engine.deinit();
 
     engine.allocateResources();
+    engine.initGlobalData();
     engine.initSystems(maze_push_constants);
     engine.initPipelines();
 

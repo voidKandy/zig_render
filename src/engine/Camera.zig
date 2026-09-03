@@ -9,89 +9,89 @@ const math_mod = core.lib.math;
 const Vec3 = math_mod.Vec3;
 const Mat4 = math_mod.Mat4;
 
-pub const AllocatedData = struct {
-    uniform: vma_usage.MappedBuffer,
+// pub const AllocatedData = struct {
+//     uniform: vma_usage.MappedBuffer,
 
-    pub fn deinit(self: *@This(), vma_a: c.vma.Allocator) void {
-        self.uniform.deinit(vma_a);
-    }
+//     pub fn deinit(self: *@This(), vma_a: c.vma.Allocator) void {
+//         self.uniform.deinit(vma_a);
+//     }
 
-    pub const GPUData = struct {
-        view: Mat4,
-        proj: Mat4,
+//     pub const GPUData = struct {
+//         view: Mat4,
+//         proj: Mat4,
 
-        fn fromCamera(camera: Camera, extent: vk.Extent2D) @This() {
-            const aspect =
-                @as(f32, @floatFromInt(extent.width)) /
-                @as(f32, @floatFromInt(extent.height));
-            var proj = Mat4.perspective(
-                camera.fov,
-                aspect,
-                camera.near_plane,
-                camera.far_plane,
-            );
-            proj.j.y *= -1;
+//         fn fromCamera(camera: Camera, extent: vk.Extent2D) @This() {
+//             const aspect =
+//                 @as(f32, @floatFromInt(extent.width)) /
+//                 @as(f32, @floatFromInt(extent.height));
+//             var proj = Mat4.perspective(
+//                 camera.fov,
+//                 aspect,
+//                 camera.near_plane,
+//                 camera.far_plane,
+//             );
+//             proj.j.y *= -1;
 
-            return .{
-                .view = Mat4.lookAt(
-                    camera.eye,
-                    camera.target,
-                    Vec3.UP,
-                ),
-                .proj = proj,
-            };
-        }
-    };
+//             return .{
+//                 .view = Mat4.lookAt(
+//                     camera.eye,
+//                     camera.target,
+//                     Vec3.UP,
+//                 ),
+//                 .proj = proj,
+//             };
+//         }
+//     };
 
-    pub fn createFromCamera(vma_a: c.vma.Allocator, camera: Camera, camera_extent: vk.Extent2D) @This() {
-        const camera_alloc = vma_usage.AllocatedBuffer.create(
-            vma_a,
-            @sizeOf(@This()),
-            vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            c.vma.MEMORY_USAGE_CPU_TO_GPU,
-            0,
-        );
-        var mapped_camera: vma_usage.MappedBuffer = .{ .allocation = camera_alloc };
-        checkVk(core.clibs.vma.MapMemory(vma_a, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
+//     pub fn createFromCamera(vma_a: c.vma.Allocator, camera: Camera, camera_extent: vk.Extent2D) @This() {
+//         const camera_alloc = vma_usage.AllocatedBuffer.create(
+//             vma_a,
+//             @sizeOf(@This()),
+//             vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+//             c.vma.MEMORY_USAGE_CPU_TO_GPU,
+//             0,
+//         );
+//         var mapped_camera: vma_usage.MappedBuffer = .{ .allocation = camera_alloc };
+//         checkVk(core.clibs.vma.MapMemory(vma_a, camera_alloc.allocation, &mapped_camera.mapped)) catch @panic("Failed to map camera");
 
-        const camera_gpu_data = GPUData.fromCamera(camera, camera_extent);
-        const aligned_camera: *AllocatedData.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
-        aligned_camera.* = camera_gpu_data;
+//         const camera_gpu_data = GPUData.fromCamera(camera, camera_extent);
+//         const aligned_camera: *AllocatedData.GPUData = @ptrCast(@alignCast(mapped_camera.mapped));
+//         aligned_camera.* = camera_gpu_data;
 
-        return .{
-            .uniform = mapped_camera,
-        };
-    }
+//         return .{
+//             .uniform = mapped_camera,
+//         };
+//     }
 
-    pub fn descriptorSetLayoutBinding(
-        binding: u32,
-    ) vk.DescriptorSetLayoutBinding {
-        return vk.DescriptorSetLayoutBinding{
-            .binding = binding,
-            .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_COMPUTE_BIT,
-        };
-    }
+//     pub fn descriptorSetLayoutBinding(
+//         binding: u32,
+//     ) vk.DescriptorSetLayoutBinding {
+//         return vk.DescriptorSetLayoutBinding{
+//             .binding = binding,
+//             .descriptorType = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+//             .descriptorCount = 1,
+//             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_COMPUTE_BIT,
+//         };
+//     }
 
-    pub fn allocateDescriptorSet(
-        set: *vk.DescriptorSet,
-        set_layout: vk.DescriptorSetLayout,
-        pool: vk.DescriptorPool,
-        device: vk.Device,
-    ) void {
-        const ai = vk.DescriptorSetAllocateInfo{
-            .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .pNext = null,
-            .descriptorPool = pool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &set_layout,
-        };
+//     pub fn allocateDescriptorSet(
+//         set: *vk.DescriptorSet,
+//         set_layout: vk.DescriptorSetLayout,
+//         pool: vk.DescriptorPool,
+//         device: vk.Device,
+//     ) void {
+//         const ai = vk.DescriptorSetAllocateInfo{
+//             .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+//             .pNext = null,
+//             .descriptorPool = pool,
+//             .descriptorSetCount = 1,
+//             .pSetLayouts = &set_layout,
+//         };
 
-        checkVk(vk.AllocateDescriptorSets(device, &ai, set)) catch
-            @panic("failed to allocate descriptor sets");
-    }
-};
+//         checkVk(vk.AllocateDescriptorSets(device, &ai, set)) catch
+//             @panic("failed to allocate descriptor sets");
+//     }
+// };
 
 near_plane: f32 = 0.1,
 far_plane: f32 = 100.0,
@@ -108,6 +108,33 @@ const DEFAULT_EYE: Vec3 = Vec3.make(4.0, 4.0, 4.0);
 const DEFAULT_TARGET: Vec3 = Vec3.make(0.0, 0.0, 1.0);
 
 const Camera = @This();
+
+pub const GPUData = struct {
+    view: Mat4,
+    proj: Mat4,
+
+    pub fn fromCamera(camera: Camera, extent: vk.Extent2D) @This() {
+        const aspect =
+            @as(f32, @floatFromInt(extent.width)) /
+            @as(f32, @floatFromInt(extent.height));
+        var proj = Mat4.perspective(
+            camera.fov,
+            aspect,
+            camera.near_plane,
+            camera.far_plane,
+        );
+        proj.j.y *= -1;
+
+        return .{
+            .view = Mat4.lookAt(
+                camera.eye,
+                camera.target,
+                Vec3.UP,
+            ),
+            .proj = proj,
+        };
+    }
+};
 
 pub const PlayerController = struct {
     yaw: f32 = 0.0,
@@ -141,7 +168,7 @@ pub const Mode = enum {
 pub fn control(
     self: *@This(),
     io: std.Io,
-    camera_uniform: core.bindings.vma_usage.MappedBuffer,
+    gpu_data: *GPUData,
     input: core.engine.Input,
     screen_extent: vk.Extent2D,
 ) void {
@@ -207,23 +234,20 @@ pub fn control(
         self.target = self.eye.add(fwd);
     }
 
-    var ubo = switch (self.mode) {
-        .rotate_around => AllocatedData.GPUData{
+    gpu_data.* = switch (self.mode) {
+        .rotate_around => GPUData{
             .view = Mat4.lookAt(eye, Vec3.ZERO, Vec3.UP),
             .proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
-        .user_input => AllocatedData.GPUData{
+        .user_input => GPUData{
             .view = Mat4.lookAt(self.eye, Vec3.ZERO, Vec3.UP),
             .proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
-        .player => AllocatedData.GPUData{
+        .player => GPUData{
             .view = Mat4.lookAt(self.eye, self.target, Vec3.UP),
             .proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane),
         },
     };
 
-    ubo.proj.j.y *= -1;
-
-    const aligned_camera: *AllocatedData.GPUData = @ptrCast(@alignCast(camera_uniform.mapped));
-    aligned_camera.* = ubo;
+    gpu_data.proj.j.y *= -1;
 }

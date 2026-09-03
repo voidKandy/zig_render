@@ -70,7 +70,11 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
 
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
     if (self.needs_gpu_sync) {
-        const aligned_maze: [*]GPUMazeCell = @ptrCast(@alignCast(alloc_resources.mapped_buffers.buffers.get("maze").?.mapped));
+        const aligned_maze: [*]GPUMazeCell = @ptrCast(
+            // BAD
+            // fix the raw string passed here
+            @alignCast(alloc_resources.mapped_buffers.buffers.get("maze").?.mapped),
+        );
         @memcpy(aligned_maze, self.maze_gpu_cells);
         self.needs_gpu_sync = false;
     }

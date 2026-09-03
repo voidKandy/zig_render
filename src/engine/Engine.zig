@@ -39,13 +39,15 @@ upload_context: vki.UploadContext = .{},
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
-global_data: core.engine.GlobalAllocatedData = undefined,
+global_data: core.engine.GlobalData = undefined,
+global_data_set: vk.DescriptorSet = undefined,
 allocated_resources: core.resources.Manager.AllocatedData = undefined,
 resources: core.resources.Manager = undefined,
 
 world: core.engine.world.GameWorld,
 mesh_manipulation_system: core.engine.systems.MeshManipulation = undefined,
 maze_system: core.engine.systems.Maze = undefined,
+camera_system: core.engine.systems.Camera = undefined,
 
 background_pipeline: BackgroundPipeline = undefined,
 background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
@@ -88,7 +90,6 @@ pub fn init(
     self.initWindow();
     self.initVulkan();
 
-    self.initGlobalData();
     return self;
 }
 
@@ -106,7 +107,7 @@ pub fn deinit(self: *Self) void {
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
     log.debug("destroyed imgui descriptor pool", .{});
 
-    self.global_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+    self.global_data.deinit(self.logical_device.handle, self.alloc_cbs);
     self.resources.deinit(self.allocs.std, self.logical_device.handle, self.alloc_cbs);
     self.allocated_resources.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
@@ -179,20 +180,8 @@ pub fn run(self: *Self) void {
             _ = sdl.SetWindowRelativeMouseMode(self.window, !is_relative_mouse);
         }
 
-        self.global_data.camera.control(
-            self.io,
-            self.global_data.camera_alloc_data.uniform,
-            self.input,
-            self.swapchain.extent,
-        );
-
-        // self.mesh_manipulation_system.update(
-        //     self.resources,
-        //     self.allocated_resources,
-        //     &self.world,
-        // );
-
         // there seems like theres room for some system container type
+        self.camera_system.update(self.*);
         self.maze_system.update();
         self.maze_system.trySyncResources(
             self.allocated_resources,
@@ -202,10 +191,8 @@ pub fn run(self: *Self) void {
             self.allocated_resources,
             &self.world,
         );
-        // self.hud_pipeline_gui.update(
-        //     self.allocs.std,
-        //     self.hud_pipeline_data,
-        // );
+
+        self.camera_system.trySyncResources(self.allocated_resources);
         self.drawImgui();
         self.drawFrame();
     }
@@ -320,17 +307,23 @@ fn initVulkan(self: *Self) void {
     ) catch @panic("failed to create framebuffers");
 }
 
-fn initGlobalData(
+// BAD
+// this abstraction is completely unecessary
+/// must call after allocateResources
+pub fn initGlobalData(
     self: *Self,
 ) void {
-    self.global_data = core.engine.GlobalAllocatedData.initAndCreateData(self.allocs, .{
-        .camera = .{},
-        .swapchain_extent = self.swapchain.extent,
-    }, self.logical_device.handle, self.alloc_cbs);
+    self.global_data = core.engine.GlobalData.init(self.logical_device.handle, self.resources, self.alloc_cbs);
 
-    self.global_data.createLayout(self.logical_device.handle, self.alloc_cbs);
-    self.global_data.allocateSets(self.logical_device.handle);
-    self.global_data.updateSets(self.logical_device.handle);
+    self.global_data_set = self.global_data.allocateSet(
+        self.logical_device.handle,
+        self.allocated_resources.descriptor_pool,
+    );
+    core.engine.GlobalData.updateSet(
+        self.logical_device.handle,
+        self.global_data_set,
+        self.allocated_resources,
+    );
 }
 
 // These bindings can be the same because they are not in the
@@ -375,6 +368,8 @@ pub fn allocateResources(self: *Self) void {
 
     // BAD
     const max_sets =
+        // camera set?
+        1 +
         // global set
         1 +
         // tx set
@@ -405,6 +400,7 @@ pub fn allocateResources(self: *Self) void {
 pub fn initSystems(self: *Self, maze_push_constants: core.engine.systems.Maze.PushConstants) void {
     self.mesh_manipulation_system = .{};
     self.maze_system = core.engine.systems.Maze.init(self.allocs.std, maze_push_constants) catch @panic("failed to create mesh maze");
+    self.camera_system = core.engine.systems.Camera.init(.{}, self.swapchain.extent) catch @panic("failed to create mesh maze");
 }
 
 pub fn initPipelines(
@@ -675,7 +671,6 @@ fn drawImgui(self: *Self) void {
     c.imgui.Text(if (is_relative_mouse) "Mouse: Relative" else "Mouse: Absolute");
     c.imgui.Text("Press escape to toggle mouse mode");
 
-    self.global_data.drawImgui();
     self.background_pipeline.drawImgui();
 
     self.mesh_manipulation_system.drawImgui(
@@ -688,6 +683,7 @@ fn drawImgui(self: *Self) void {
     self.maze_system.drawImgui(
         self.compute_maze_descriptor_sets.ui,
     );
+    self.camera_system.drawImgui();
 
     c.imgui.Render();
 }
@@ -790,7 +786,7 @@ fn recordCommandBuffer(
     self.compute_maze_pipeline.bind(frame.main_command_buffer);
     self.compute_maze_pipeline.recordCommands(
         self.allocated_resources,
-        self.global_data.set,
+        self.global_data_set,
         self.compute_maze_descriptor_sets,
         self.maze_system,
         frame.main_command_buffer,
@@ -842,7 +838,7 @@ fn recordCommandBuffer(
     self.mesh3D_pipeline.bind(frame.main_command_buffer);
     self.mesh3D_pipeline.recordCommands(
         &self.world,
-        self.global_data.set,
+        self.global_data_set,
         self.allocated_resources.meshes3D.descriptor_set,
         self.allocated_resources.materials.descriptor_set,
         frame.main_command_buffer,
@@ -853,7 +849,7 @@ fn recordCommandBuffer(
         &self.world,
         self.swapchain.extent,
         self.allocated_resources,
-        self.global_data.set,
+        self.global_data_set,
         self.allocated_resources.meshes2D.descriptor_set,
         self.allocated_resources.materials.descriptor_set,
         frame.main_command_buffer,
