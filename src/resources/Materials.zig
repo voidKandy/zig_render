@@ -240,9 +240,14 @@ libraries: std.StringHashMapUnmanaged(MaterialLibraryEntry) = .empty,
 /// specifically for non-static data
 textures: std.StringHashMapUnmanaged(CreateTextureEntry) = .empty,
 
-// amt_materials: usize = 0,
+all_textures_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+/// certain systems require writable access to certain textures
+writable_textures_descriptor_set_layouts: std.StringHashMapUnmanaged(WritableTextureSetLayout) = .empty,
 
-descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+const WritableTextureSetLayout = struct {
+    layout: vk.DescriptorSetLayout,
+    names: []const []const u8,
+};
 
 pub fn deinit(
     self: *@This(),
@@ -256,7 +261,13 @@ pub fn deinit(
     }
     self.textures.deinit(a);
 
-    vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
+    var writable_tx_iter = self.writable_textures_descriptor_set_layouts.valueIterator();
+    while (writable_tx_iter.next()) |layout| {
+        vk.DestroyDescriptorSetLayout(device, layout.layout, alloc_cbs);
+    }
+    self.writable_textures_descriptor_set_layouts.deinit(a);
+
+    vk.DestroyDescriptorSetLayout(device, self.all_textures_descriptor_set_layout, alloc_cbs);
 }
 
 pub fn addMaterialsFile(self: *@This(), a: std.mem.Allocator, file: core.loaders.mtl.MtlFile) std.mem.Allocator.Error!void {
@@ -311,15 +322,34 @@ pub fn createDescriptorSetLayout(
         device,
         &layout_ci,
         alloc_cbs,
-        &self.descriptor_set_layout,
+        &self.all_textures_descriptor_set_layout,
     )) catch @panic("Failed to create descriptor set layout");
+}
+
+pub fn createAndRegisterWritableTextureSetLayout(
+    self: *Self,
+    a: std.mem.Allocator,
+    set_name: []const u8,
+    writable_texture_names: []const []const u8,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) std.mem.Allocator.Error!void {
+    const get_or_put = try self.writable_textures_descriptor_set_layouts.getOrPut(a, set_name);
+    if (get_or_put.found_existing) std.debug.panic(
+        \\ SET for '{s}' already exists!
+    , .{set_name});
+    const layout = self.createWritableTextureSetLayout(writable_texture_names, device, alloc_cbs);
+    get_or_put.value_ptr.* = .{
+        .layout = layout,
+        .names = writable_texture_names,
+    };
 }
 
 /// Builds a storage-image descriptor set layout with one binding per name,
 /// in the order given. Caller is responsible for remembering that order
 /// (e.g. index 0 = names[0]) to know which binding maps to which texture
 /// later, both for the write pass and for shader-side binding numbers.
-pub fn createWritableTextureSetLayout(
+fn createWritableTextureSetLayout(
     self: Self,
     names: []const []const u8,
     device: vk.Device,
@@ -409,27 +439,53 @@ pub fn upload(
         all_names.appendAssumeCapacity(try allocs.std.dupeZ(u8, entry.key_ptr.*));
     }
 
-    var set: vk.DescriptorSet = undefined;
-    const ai = vk.DescriptorSetAllocateInfo{
+    var tx_set: vk.DescriptorSet = undefined;
+    const tx_ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .pNext = null,
         .descriptorPool = pool,
         .descriptorSetCount = 1,
-        .pSetLayouts = &self.descriptor_set_layout,
+        .pSetLayouts = &self.all_textures_descriptor_set_layout,
     };
 
-    checkVk(vk.AllocateDescriptorSets(logical_device.handle, &ai, &set)) catch |e| {
+    checkVk(vk.AllocateDescriptorSets(logical_device.handle, &tx_ai, &tx_set)) catch |e| {
         log.err(
             \\failed to allocate texture descriptor set: {s}
         , .{@errorName(e)});
         @panic("failed to allocate texture descriptor set");
     };
 
+    var writable_sets: std.StringHashMapUnmanaged(AllocatedData.WritableTextureSet) = .empty;
+    var writable_layouts_iter = self.writable_textures_descriptor_set_layouts.iterator();
+    while (writable_layouts_iter.next()) |entry| {
+        var set: vk.DescriptorSet = undefined;
+        const ai = vk.DescriptorSetAllocateInfo{
+            .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .pNext = null,
+            .descriptorPool = pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &entry.value_ptr.layout,
+        };
+
+        checkVk(vk.AllocateDescriptorSets(logical_device.handle, &ai, &set)) catch |e| {
+            log.err(
+                \\failed to allocate texture descriptor set: {s}
+            , .{@errorName(e)});
+            @panic("failed to allocate texture descriptor set");
+        };
+
+        try writable_sets.put(allocs.std, entry.key_ptr.*, .{
+            .set = set,
+            .names = entry.value_ptr.names,
+        });
+    }
+
     return .{
         .libraries = libs,
         .textures = textures,
         .all_material_names = try all_names.toOwnedSlice(allocs.std),
-        .descriptor_set = set,
+        .all_textures_descriptor_set = tx_set,
+        .writable_textures_descriptor_sets = writable_sets,
     };
 }
 
@@ -438,7 +494,16 @@ pub const AllocatedData = struct {
     textures: std.StringHashMapUnmanaged(Texture),
     all_material_names: [][:0]const u8,
 
-    descriptor_set: vk.DescriptorSet,
+    /// name is slightly innacurate,
+    /// this set provides read access to ALL materials in a single array
+    all_textures_descriptor_set: vk.DescriptorSet,
+
+    writable_textures_descriptor_sets: std.StringHashMapUnmanaged(WritableTextureSet),
+
+    const WritableTextureSet = struct {
+        set: vk.DescriptorSet,
+        names: []const []const u8,
+    };
 
     pub fn deinit(
         self: *@This(),
@@ -460,9 +525,10 @@ pub const AllocatedData = struct {
             allocs.std.free(n);
 
         allocs.std.free(self.all_material_names);
+        self.writable_textures_descriptor_sets.deinit(allocs.std);
     }
 
-    pub fn updateDescriptorSet(
+    pub fn updateStaticTextureSet(
         self: @This(),
         a: std.mem.Allocator,
         device: vk.Device,
@@ -503,7 +569,7 @@ pub const AllocatedData = struct {
         const texture_write = vk.WriteDescriptorSet{
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .pNext = null,
-            .dstSet = self.descriptor_set,
+            .dstSet = self.all_textures_descriptor_set,
             .dstBinding = binding,
             .dstArrayElement = 0,
             .descriptorCount = @as(u32, @intCast(texture_count)),
@@ -529,15 +595,17 @@ pub const AllocatedData = struct {
     pub fn updateWritableTextureSet(
         self: @This(),
         device: vk.Device,
-        set: vk.DescriptorSet,
-        names: []const []const u8,
+        set_name: []const u8,
     ) void {
-        std.debug.assert(names.len <= 32); // or heap-alloc if you need more
+        const set_entry = self.writable_textures_descriptor_sets.get(set_name) orelse std.debug.panic(
+            \\ tried to update set '{s}' but it does not exist
+        , .{set_name});
 
+        std.debug.assert(set_entry.names.len <= 32); // or heap-alloc if you need more
         var writes: [32]vk.WriteDescriptorSet = undefined;
         var image_infos: [32]vk.DescriptorImageInfo = undefined;
 
-        for (names, 0..) |name, i| {
+        for (set_entry.names, 0..) |name, i| {
             const tex = self.textures.get(name) orelse
                 std.debug.panic("writable texture \"{s}\" not uploaded", .{name});
             image_infos[i] = .{
@@ -546,7 +614,7 @@ pub const AllocatedData = struct {
             };
             writes[i] = .{
                 .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = set,
+                .dstSet = set_entry.set,
                 .dstBinding = @intCast(i),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
@@ -554,7 +622,7 @@ pub const AllocatedData = struct {
                 .pImageInfo = &image_infos[i],
             };
         }
-        vk.UpdateDescriptorSets(device, @intCast(names.len), writes[0..names.len].ptr, 0, null);
+        vk.UpdateDescriptorSets(device, @intCast(set_entry.names.len), writes[0..set_entry.names.len].ptr, 0, null);
     }
 };
 

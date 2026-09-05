@@ -247,7 +247,7 @@ pub fn upload(
         alloc_cbs,
     );
 
-    const mapped_buffers = try self.mapped_buffers.upload(allocs);
+    const mapped_buffers = try self.mapped_buffers.upload(allocs, pool, logical_device.handle);
 
     return .{
         .meshes3D = meshes3D,

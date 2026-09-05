@@ -9,7 +9,7 @@ const vma_usage = core.bindings.vma_usage;
 const checkVk = vki.checkVk;
 
 pub const Description = struct {
-    global_descriptor_set_layout: vk.DescriptorSetLayout,
+    camera_descriptor_set_layout: vk.DescriptorSetLayout,
     texture_set_layout: vk.DescriptorSetLayout,
     meshes_set_layout: vk.DescriptorSetLayout,
     device: vk.Device,
@@ -19,16 +19,16 @@ pub const Description = struct {
 
 pipeline: vk.Pipeline = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
-mapped_buffer_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-texture_write_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+// mapped_buffer_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
+// texture_write_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
     vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
-    vk.DestroyDescriptorSetLayout(device, self.mapped_buffer_descriptor_set_layout, alloc_cbs);
-    vk.DestroyDescriptorSetLayout(device, self.texture_write_descriptor_set_layout, alloc_cbs);
+    // vk.DestroyDescriptorSetLayout(device, self.mapped_buffer_descriptor_set_layout, alloc_cbs);
+    // vk.DestroyDescriptorSetLayout(device, self.texture_write_descriptor_set_layout, alloc_cbs);
 }
 
 // WARNING
@@ -47,47 +47,48 @@ pub fn init(
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     var self = Self{};
-    self.createDescriptorSetLayout(pd.device, resources, alloc_cbs);
-    self.texture_write_descriptor_set_layout = resources.materials.createWritableTextureSetLayout(
-        std.meta.fieldNames(TextureBufferPair),
-        pd.device,
-        alloc_cbs,
-    );
-    self.initPipeline(pd, alloc_cbs);
+    // self.createDescriptorSetLayout(pd.device, resources, alloc_cbs);
+    // self.texture_write_descriptor_set_layout = resources.materials.createWritableTextureSetLayout(
+    //     std.meta.fieldNames(TextureBufferPair),
+    //     pd.device,
+    //     alloc_cbs,
+    // );
+    self.initPipeline(pd, resources, alloc_cbs);
     return self;
 }
 
-fn createDescriptorSetLayout(
-    self: *Self,
-    device: vk.Device,
-    resources: core.resources.Manager,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    var bindings: [std.meta.tags(TextureBufferPair).len]vk.DescriptorSetLayoutBinding = undefined;
-    var i: usize = 0;
-    for (std.meta.tags(TextureBufferPair)) |tag| {
-        const binding = resources.mapped_buffers.createDescriptorSetLayoutBinding(
-            @tagName(tag),
-            @intFromEnum(tag),
-            vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            vk.SHADER_STAGE_COMPUTE_BIT,
-        );
-        bindings[i] = binding;
-        i += 1;
-    }
+// fn createDescriptorSetLayout(
+//     self: *Self,
+//     device: vk.Device,
+//     resources: core.resources.Manager,
+//     alloc_cbs: ?*vk.AllocationCallbacks,
+// ) void {
+//     var bindings: [std.meta.tags(TextureBufferPair).len]vk.DescriptorSetLayoutBinding = undefined;
+//     var i: usize = 0;
+//     for (std.meta.tags(TextureBufferPair)) |tag| {
+//         const binding = resources.mapped_buffers.createDescriptorSetLayoutBinding(
+//             @tagName(tag),
+//             @intFromEnum(tag),
+//             vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+//             vk.SHADER_STAGE_COMPUTE_BIT,
+//         );
+//         bindings[i] = binding;
+//         i += 1;
+//     }
 
-    const ci = vk.DescriptorSetLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = @as(u32, @intCast(i)),
-        .pBindings = bindings[0..i].ptr,
-    };
-    checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.mapped_buffer_descriptor_set_layout)) catch
-        @panic("failed to create main compute descriptor set layout");
-}
+//     const ci = vk.DescriptorSetLayoutCreateInfo{
+//         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+//         .bindingCount = @as(u32, @intCast(i)),
+//         .pBindings = bindings[0..i].ptr,
+//     };
+//     checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.mapped_buffer_descriptor_set_layout)) catch
+//         @panic("failed to create main compute descriptor set layout");
+// }
 
 fn initPipeline(
     self: *Self,
     pd: Description,
+    resources: core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     // TODO
@@ -107,10 +108,13 @@ fn initPipeline(
         .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
     };
 
+    const texture_write_layout = resources.materials.writable_textures_descriptor_set_layouts.get(core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME).?.layout;
+    const mapped_buffer_layout = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME).?.layout;
+
     const set_layouts = [_]vk.DescriptorSetLayout{
-        pd.global_descriptor_set_layout,
-        self.texture_write_descriptor_set_layout,
-        self.mapped_buffer_descriptor_set_layout,
+        pd.camera_descriptor_set_layout,
+        texture_write_layout,
+        mapped_buffer_layout,
     };
 
     const layout_ci = vk.PipelineLayoutCreateInfo{
@@ -138,96 +142,101 @@ fn initPipeline(
         @panic("failed to create main compute pipeline");
 }
 
-pub const DescriptorSets = struct {
-    mapped_buffer: vk.DescriptorSet,
-    write_texture: vk.DescriptorSet,
-    ui: vk.DescriptorSet,
-};
+// pub const DescriptorSets = struct {
+//     mapped_buffer: vk.DescriptorSet,
+//     write_texture: vk.DescriptorSet,
+//     ui: vk.DescriptorSet,
+// };
 
-pub fn allocateDescriptorSets(
-    self: Self,
-    pool: vk.DescriptorPool,
-    device: vk.Device,
-    alloc_resources: core.resources.Manager.AllocatedData,
-) DescriptorSets {
-    var mapped_buffer_set: vk.DescriptorSet = undefined;
-    const mp_bf_ai = vk.DescriptorSetAllocateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &self.mapped_buffer_descriptor_set_layout,
-    };
+// pub fn allocateDescriptorSets(
+//     self: Self,
+//     pool: vk.DescriptorPool,
+//     device: vk.Device,
+//     alloc_resources: core.resources.Manager.AllocatedData,
+// ) DescriptorSets {
+//     var mapped_buffer_set: vk.DescriptorSet = undefined;
+//     const mp_bf_ai = vk.DescriptorSetAllocateInfo{
+//         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+//         .descriptorPool = pool,
+//         .descriptorSetCount = 1,
+//         .pSetLayouts = &self.mapped_buffer_descriptor_set_layout,
+//     };
 
-    checkVk(vk.AllocateDescriptorSets(
-        device,
-        &mp_bf_ai,
-        &mapped_buffer_set,
-    )) catch
-        @panic("failed to allocate mapped buffer descriptor set");
+//     log.debug(
+//         "allocating descriptor set with layout = {*}\n",
+//         .{self.mapped_buffer_descriptor_set_layout},
+//     );
 
-    var write_texture_set: vk.DescriptorSet = undefined;
-    const wr_tx_ai = vk.DescriptorSetAllocateInfo{
-        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &self.texture_write_descriptor_set_layout,
-    };
+//     checkVk(vk.AllocateDescriptorSets(
+//         device,
+//         &mp_bf_ai,
+//         &mapped_buffer_set,
+//     )) catch
+//         @panic("failed to allocate mapped buffer descriptor set");
 
-    checkVk(vk.AllocateDescriptorSets(
-        device,
-        &wr_tx_ai,
-        &write_texture_set,
-    )) catch |e|
-        std.debug.panic("failed to allocate writable-texture descriptor set: {s}", .{@errorName(e)});
+//     var write_texture_set: vk.DescriptorSet = undefined;
+//     const wr_tx_ai = vk.DescriptorSetAllocateInfo{
+//         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+//         .descriptorPool = pool,
+//         .descriptorSetCount = 1,
+//         .pSetLayouts = &self.texture_write_descriptor_set_layout,
+//     };
 
-    // TODO
-    // some kind of system that adds all textures to the ui set
-    // example:
-    // for (std.meta.tags(TextureBufferPair)) |tag| {
-    // const tex = alloc_resources.materials.textures.get(@tagName(tag)).?;
-    // const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    // }
+//     checkVk(vk.AllocateDescriptorSets(
+//         device,
+//         &wr_tx_ai,
+//         &write_texture_set,
+//     )) catch |e|
+//         std.debug.panic("failed to allocate writable-texture descriptor set: {s}", .{@errorName(e)});
 
-    const maze_tex = alloc_resources.materials.textures.get("maze").?;
-    const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+//     // TODO
+//     // some kind of system that adds all textures to the ui set
+//     // example:
+//     // for (std.meta.tags(TextureBufferPair)) |tag| {
+//     // const tex = alloc_resources.materials.textures.get(@tagName(tag)).?;
+//     // const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+//     // }
 
-    return .{
-        .mapped_buffer = mapped_buffer_set,
-        .write_texture = write_texture_set,
-        .ui = ui_set,
-    };
-}
+//     const maze_tex = alloc_resources.materials.textures.get(core.engine.systems.Maze.MAZE_RESOURCE_NAME).?;
+//     const ui_set = imgui.impl_vulkan.AddTexture(maze_tex.sampler, maze_tex.image_alloc.view, vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-pub fn updateDescriptorSets(
-    device: vk.Device,
-    alloc_resources: core.resources.Manager.AllocatedData,
-    sets: DescriptorSets,
-) void {
-    alloc_resources.materials.updateWritableTextureSet(
-        device,
-        sets.write_texture,
-        std.meta.fieldNames(TextureBufferPair),
-    );
+//     return .{
+//         .mapped_buffer = mapped_buffer_set,
+//         .write_texture = write_texture_set,
+//         .ui = ui_set,
+//     };
+// }
 
-    var writes: [std.meta.tags(TextureBufferPair).len]vk.WriteDescriptorSet = undefined;
+// pub fn updateDescriptorSets(
+//     device: vk.Device,
+//     alloc_resources: core.resources.Manager.AllocatedData,
+//     sets: DescriptorSets,
+// ) void {
+//     alloc_resources.materials.updateWritableTextureSet(
+//         device,
+//         sets.write_texture,
+//         std.meta.fieldNames(TextureBufferPair),
+//     );
 
-    var i: usize = 0;
-    for (std.meta.tags(TextureBufferPair)) |tag| {
-        var buf_info: vk.DescriptorBufferInfo = undefined;
-        writes[i] =
-            alloc_resources.mapped_buffers.createDescriptorSetWrite(
-                sets.mapped_buffer,
-                @tagName(tag),
-                @intFromEnum(tag),
-                @as(u32, @intCast(i)),
-                vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                &buf_info,
-            );
-        i += 1;
-    }
+//     var writes: [std.meta.tags(TextureBufferPair).len]vk.WriteDescriptorSet = undefined;
 
-    vk.UpdateDescriptorSets(device, @as(u32, @intCast(i)), writes[0..i].ptr, 0, null);
-}
+//     var i: usize = 0;
+//     for (std.meta.tags(TextureBufferPair)) |tag| {
+//         var buf_info: vk.DescriptorBufferInfo = undefined;
+//         writes[i] =
+//             alloc_resources.mapped_buffers.createDescriptorSetWrite(
+//                 sets.mapped_buffer,
+//                 @tagName(tag),
+//                 @intFromEnum(tag),
+//                 @as(u32, @intCast(i)),
+//                 vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+//                 &buf_info,
+//             );
+//         i += 1;
+//     }
+
+//     vk.UpdateDescriptorSets(device, @as(u32, @intCast(i)), writes[0..i].ptr, 0, null);
+// }
 
 pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
     vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
@@ -236,14 +245,13 @@ pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
 pub fn recordCommands(
     self: Self,
     alloc_resources: core.resources.Manager.AllocatedData,
-    global_descriptor_set: vk.DescriptorSet,
-    my_sets: DescriptorSets,
+    camera_descriptor_set: vk.DescriptorSet,
+    write_texture_set: vk.DescriptorSet,
+    mapped_buffer_set: vk.DescriptorSet,
     maze_system: core.engine.systems.Maze,
     cmd: vk.CommandBuffer,
 ) void {
-    const sets = [_]vk.DescriptorSet{
-        global_descriptor_set, my_sets.write_texture, my_sets.mapped_buffer,
-    };
+    const sets = [_]vk.DescriptorSet{ camera_descriptor_set, write_texture_set, mapped_buffer_set };
     vk.CmdBindDescriptorSets(
         cmd,
         vk.PIPELINE_BIND_POINT_COMPUTE,

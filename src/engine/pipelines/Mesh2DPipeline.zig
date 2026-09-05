@@ -13,7 +13,7 @@ const GraphicsPushConstants = struct {
 };
 
 pub const Description = struct {
-    global_descriptor_set_layout: vk.DescriptorSetLayout,
+    camera_descriptor_set_layout: vk.DescriptorSetLayout,
     texture_set_layout: vk.DescriptorSetLayout,
     meshes_set_layout: vk.DescriptorSetLayout,
     device: vk.Device,
@@ -23,14 +23,14 @@ pub const Description = struct {
     frag_shader: vk.ShaderModule,
 };
 
-graphics_pipeline: vk.Pipeline = undefined,
-graphics_pipeline_layout: vk.PipelineLayout = undefined,
+pipeline: vk.Pipeline = undefined,
+pipeline_layout: vk.PipelineLayout = undefined,
 
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-    vk.DestroyPipeline(device, self.graphics_pipeline, alloc_cbs);
-    vk.DestroyPipelineLayout(device, self.graphics_pipeline_layout, alloc_cbs);
+    vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
+    vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
 }
 
 pub fn init(
@@ -164,7 +164,7 @@ fn initPipeline(
     };
 
     const set_layouts = [_]vk.DescriptorSetLayout{
-        pd.global_descriptor_set_layout,
+        pd.camera_descriptor_set_layout,
         pd.texture_set_layout,
         pd.meshes_set_layout,
     };
@@ -176,7 +176,7 @@ fn initPipeline(
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &push_constant,
     };
-    checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.graphics_pipeline_layout)) catch
+    checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.pipeline_layout)) catch
         @panic("failed to create hud pipeline layout");
 
     const pipeline_ci = vk.GraphicsPipelineCreateInfo{
@@ -192,18 +192,18 @@ fn initPipeline(
         .pDepthStencilState = &depth_stencil_ci,
         .pColorBlendState = &blend_ci,
         .pDynamicState = &dynamic_state_ci,
-        .layout = self.graphics_pipeline_layout,
+        .layout = self.pipeline_layout,
         .renderPass = pd.render_pass,
         .subpass = 0,
         .basePipelineHandle = null,
         .basePipelineIndex = -1,
     };
-    checkVk(vk.CreateGraphicsPipelines(pd.device, null, 1, &pipeline_ci, alloc_cbs, &self.graphics_pipeline)) catch
+    checkVk(vk.CreateGraphicsPipelines(pd.device, null, 1, &pipeline_ci, alloc_cbs, &self.pipeline)) catch
         @panic("failed to create hud pipeline");
 }
 
 pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
-    vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.graphics_pipeline);
+    vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
 }
 
 pub fn recordCommands(
@@ -211,19 +211,19 @@ pub fn recordCommands(
     world: *core.engine.world.GameWorld,
     window_extent: vk.Extent2D,
     alloc_resources: core.resources.Manager.AllocatedData,
-    global_descriptor_set: vk.DescriptorSet,
+    camera_descriptor_set: vk.DescriptorSet,
     meshes_set: vk.DescriptorSet,
     tx_set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
     const sets = [_]vk.DescriptorSet{
-        global_descriptor_set, tx_set, meshes_set,
+        camera_descriptor_set, tx_set, meshes_set,
     };
 
     vk.CmdBindDescriptorSets(
         cmd,
         vk.PIPELINE_BIND_POINT_GRAPHICS,
-        self.graphics_pipeline_layout,
+        self.pipeline_layout,
         0,
         sets.len,
         &sets,
@@ -240,7 +240,7 @@ pub fn recordCommands(
 
     vk.CmdPushConstants(
         cmd,
-        self.graphics_pipeline_layout,
+        self.pipeline_layout,
         vk.SHADER_STAGE_VERTEX_BIT,
         0,
         @sizeOf(GraphicsPushConstants),

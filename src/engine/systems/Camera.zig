@@ -8,7 +8,8 @@ const Camera = core.engine.Camera;
 camera: Camera,
 gpu_camera: Camera.GPUData,
 
-pub const CAMERA_BUFFER_NAME = "camera";
+pub const CAMERA_SET_NAME = "camera_set";
+pub const CAMERA_RESOURCE_NAME = "camera";
 
 pub fn init(camera: Camera, swapchain_extent: vk.Extent2D) std.mem.Allocator.Error!@This() {
     const gpu = Camera.GPUData.fromCamera(camera, swapchain_extent);
@@ -18,9 +19,25 @@ pub fn init(camera: Camera, swapchain_extent: vk.Extent2D) std.mem.Allocator.Err
     };
 }
 
+pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
+    try resources.mapped_buffers.createAndRegisterBufferSetLayout(
+        a,
+        CAMERA_SET_NAME,
+        &[_]core.resources.MappedBuffers.CreateBufferInfo{
+            .{
+                .name = CAMERA_RESOURCE_NAME,
+                .descriptor_type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .binding = 0,
+                .stage_flags = vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_COMPUTE_BIT,
+            },
+        },
+        device,
+        alloc_cbs,
+    );
+}
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
     const aligned: *Camera.GPUData = @ptrCast(
-        @alignCast(alloc_resources.mapped_buffers.buffers.get(CAMERA_BUFFER_NAME).?.mapped),
+        @alignCast(alloc_resources.mapped_buffers.buffers.get(CAMERA_RESOURCE_NAME).?.mapped),
     );
     aligned.* = self.gpu_camera;
 }

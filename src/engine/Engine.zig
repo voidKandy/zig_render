@@ -39,8 +39,8 @@ upload_context: vki.UploadContext = .{},
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
-global_data: core.engine.GlobalData = undefined,
-global_data_set: vk.DescriptorSet = undefined,
+// global_data: core.engine.GlobalData = undefined,
+// global_data_set: vk.DescriptorSet = undefined,
 allocated_resources: core.resources.Manager.AllocatedData = undefined,
 resources: core.resources.Manager = undefined,
 
@@ -61,7 +61,7 @@ mesh2D_pipeline: Mesh2DPipeline = undefined,
 mesh2D_pipeline_description: Mesh2DPipeline.Description = undefined,
 
 compute_maze_pipeline: ComputeMaze = undefined,
-compute_maze_descriptor_sets: ComputeMaze.DescriptorSets = undefined,
+// compute_maze_descriptor_sets: ComputeMaze.DescriptorSets = undefined,
 compute_maze_pipeline_description: ComputeMaze.Description = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
@@ -107,7 +107,7 @@ pub fn deinit(self: *Self) void {
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
     log.debug("destroyed imgui descriptor pool", .{});
 
-    self.global_data.deinit(self.logical_device.handle, self.alloc_cbs);
+    // self.global_data.deinit(self.logical_device.handle, self.alloc_cbs);
     self.resources.deinit(self.allocs.std, self.logical_device.handle, self.alloc_cbs);
     self.allocated_resources.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
@@ -310,24 +310,26 @@ fn initVulkan(self: *Self) void {
 // BAD
 // this abstraction is completely unecessary
 /// must call after allocateResources
-pub fn initGlobalData(
-    self: *Self,
-) void {
-    self.global_data = core.engine.GlobalData.init(self.logical_device.handle, self.resources, self.alloc_cbs);
+// pub fn initGlobalData(
+//     self: *Self,
+// ) void {
+//     self.global_data = core.engine.GlobalData.init(self.logical_device.handle, self.resources, self.alloc_cbs);
 
-    self.global_data_set = self.global_data.allocateSet(
-        self.logical_device.handle,
-        self.allocated_resources.descriptor_pool,
-    );
-    core.engine.GlobalData.updateSet(
-        self.logical_device.handle,
-        self.global_data_set,
-        self.allocated_resources,
-    );
-}
+//     self.global_data_set = self.global_data.allocateSet(
+//         self.logical_device.handle,
+//         self.allocated_resources.descriptor_pool,
+//     );
+//     core.engine.GlobalData.updateSet(
+//         self.logical_device.handle,
+//         self.global_data_set,
+//         self.allocated_resources,
+//     );
+// }
 
 // These bindings can be the same because they are not in the
 // same descriptor set
+// TODO
+// move these to where they are actually encapsulated
 const TEXTURE_SET_BINDING: u32 = 0;
 const MESHES_2D_METADATA_SET_BINDING: u32 = 0;
 /// Allocates resources, creates descriptor layouts/pool
@@ -366,21 +368,23 @@ pub fn allocateResources(self: *Self) void {
         });
     }
 
-    // BAD
-    const max_sets =
-        // camera set?
-        1 +
-        // global set
-        1 +
-        // tx set
-        1 +
-        // meshes2D
-        1 +
-        // meshes3D
-        1 +
-        // compute maze
-        1;
+    // should be some logic piped in for systems being able to register any sets they
+    // need to
+    core.engine.systems.Maze.registerSets(
+        self.allocs.std,
+        self.logical_device.handle,
+        &self.resources,
+        self.alloc_cbs,
+    ) catch @panic("OOM");
+    core.engine.systems.Camera.registerSets(
+        self.allocs.std,
+        self.logical_device.handle,
+        &self.resources,
+        self.alloc_cbs,
+    ) catch @panic("OOM");
 
+    // BAD??
+    const max_sets = 16;
     self.allocated_resources = self.resources.upload(
         self.allocs,
         max_sets,
@@ -390,11 +394,16 @@ pub fn allocateResources(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("OOM");
 
-    self.allocated_resources.materials.updateDescriptorSet(
+    self.allocated_resources.materials.updateStaticTextureSet(
         self.allocs.std,
         self.logical_device.handle,
         TEXTURE_SET_BINDING,
     ) catch @panic("OOM");
+
+    self.allocated_resources.mapped_buffers.updateBufferSet(
+        self.logical_device.handle,
+        core.engine.systems.Camera.CAMERA_SET_NAME,
+    );
 }
 
 pub fn initSystems(self: *Self, maze_push_constants: core.engine.systems.Maze.PushConstants) void {
@@ -504,8 +513,8 @@ fn initMesh3DPipeline(self: *Self) void {
 
     self.mesh3D_pipeline = Mesh3DPipeline.init(
         .{
-            .global_descriptor_set_layout = self.global_data.layout,
-            .texture_set_layout = self.resources.materials.descriptor_set_layout,
+            .camera_descriptor_set_layout = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+            .texture_set_layout = self.resources.materials.all_textures_descriptor_set_layout,
             .meshes_set_layout = self.resources.meshes3D.descriptor_set_layout,
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
@@ -549,8 +558,8 @@ fn initMesh2DPipeline(self: *Self) void {
     self.mesh2D_pipeline = Mesh2DPipeline.init(
         .{
             .device = self.logical_device.handle,
-            .global_descriptor_set_layout = self.global_data.layout,
-            .texture_set_layout = self.resources.materials.descriptor_set_layout,
+            .camera_descriptor_set_layout = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+            .texture_set_layout = self.resources.materials.all_textures_descriptor_set_layout,
             .meshes_set_layout = self.resources.meshes2D.descriptor_set_layout,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
@@ -570,8 +579,8 @@ fn initComputeMazePipeline(self: *Self) void {
     self.compute_maze_pipeline = ComputeMaze.init(
         .{
             .device = self.logical_device.handle,
-            .global_descriptor_set_layout = self.global_data.layout,
-            .texture_set_layout = self.resources.materials.descriptor_set_layout,
+            .camera_descriptor_set_layout = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+            .texture_set_layout = self.resources.materials.all_textures_descriptor_set_layout,
             .meshes_set_layout = self.resources.meshes2D.descriptor_set_layout,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
@@ -580,17 +589,28 @@ fn initComputeMazePipeline(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.compute_maze_descriptor_sets = self.compute_maze_pipeline.allocateDescriptorSets(
-        self.allocated_resources.descriptor_pool,
+    // self.compute_maze_descriptor_sets = self.compute_maze_pipeline.allocateDescriptorSets(
+    //     self.allocated_resources.descriptor_pool,
+    //     self.logical_device.handle,
+    //     self.allocated_resources,
+    // );
+
+    // BAD fishy..
+
+    self.allocated_resources.mapped_buffers.updateBufferSet(
         self.logical_device.handle,
-        self.allocated_resources,
+        core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME,
     );
 
-    core.engine.pipelines.ComputeMaze.updateDescriptorSets(
+    self.allocated_resources.materials.updateWritableTextureSet(
         self.logical_device.handle,
-        self.allocated_resources,
-        self.compute_maze_descriptor_sets,
+        core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME,
     );
+    // core.engine.pipelines.ComputeMaze.updateDescriptorSets(
+    //     self.logical_device.handle,
+    //     self.allocated_resources,
+    //     self.compute_maze_descriptor_sets,
+    // );
 }
 
 fn initMainRenderPass(self: *Self) void {
@@ -680,9 +700,9 @@ fn drawImgui(self: *Self) void {
         self.resources,
         self.allocated_resources,
     );
-    self.maze_system.drawImgui(
-        self.compute_maze_descriptor_sets.ui,
-    );
+    // self.maze_system.drawImgui(
+    //     self.compute_maze_descriptor_sets.ui,
+    // );
     self.camera_system.drawImgui();
 
     c.imgui.Render();
@@ -786,8 +806,9 @@ fn recordCommandBuffer(
     self.compute_maze_pipeline.bind(frame.main_command_buffer);
     self.compute_maze_pipeline.recordCommands(
         self.allocated_resources,
-        self.global_data_set,
-        self.compute_maze_descriptor_sets,
+        self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        self.allocated_resources.materials.writable_textures_descriptor_sets.get(core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME).?.set,
+        self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME).?.set,
         self.maze_system,
         frame.main_command_buffer,
     );
@@ -838,9 +859,9 @@ fn recordCommandBuffer(
     self.mesh3D_pipeline.bind(frame.main_command_buffer);
     self.mesh3D_pipeline.recordCommands(
         &self.world,
-        self.global_data_set,
+        self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
         self.allocated_resources.meshes3D.descriptor_set,
-        self.allocated_resources.materials.descriptor_set,
+        self.allocated_resources.materials.all_textures_descriptor_set,
         frame.main_command_buffer,
     );
 
@@ -849,9 +870,9 @@ fn recordCommandBuffer(
         &self.world,
         self.swapchain.extent,
         self.allocated_resources,
-        self.global_data_set,
+        self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
         self.allocated_resources.meshes2D.descriptor_set,
-        self.allocated_resources.materials.descriptor_set,
+        self.allocated_resources.materials.all_textures_descriptor_set,
         frame.main_command_buffer,
     );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);

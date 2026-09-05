@@ -217,8 +217,11 @@ pub fn main(init: std.process.Init) void {
             },
             .meshes3D = meshes_objects,
             .mapped_buffer_creates = &[_]struct { []const u8, core.resources.MappedBuffers.CreateInfo }{
+                // TODO
+                // move this stuff to the systems themselves
+                // theres no reason the consumer of the engine should ahve to know this
                 .{
-                    "maze",
+                    core.engine.systems.Maze.MAZE_RESOURCE_NAME,
                     .{
                         .alloc_size = @sizeOf(core.engine.systems.Maze.GPUMazeCell) * maze.width * maze.height,
                         .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -227,7 +230,7 @@ pub fn main(init: std.process.Init) void {
                     },
                 },
                 .{
-                    core.engine.systems.Camera.CAMERA_BUFFER_NAME,
+                    core.engine.systems.Camera.CAMERA_RESOURCE_NAME,
                     .{
                         .alloc_size = @sizeOf(core.engine.Camera.GPUData),
                         .buffer_usage = vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -242,7 +245,7 @@ pub fn main(init: std.process.Init) void {
     defer engine.deinit();
 
     engine.allocateResources();
-    engine.initGlobalData();
+    // engine.initGlobalData();
     engine.initSystems(maze_push_constants);
     engine.initPipelines();
 

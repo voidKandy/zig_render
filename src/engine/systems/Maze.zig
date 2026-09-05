@@ -2,12 +2,16 @@ const std = @import("std");
 const core = @import("../../root.zig");
 const log = std.log.scoped(.MazeSystem);
 const imgui = core.clibs.imgui;
+const vk = core.clibs.vk;
 
 maze: core.lib.Maze,
 maze_gpu_cells: []GPUMazeCell,
 push_constants: PushConstants,
 maze_update: bool = false,
 needs_gpu_sync: bool = true,
+
+pub const COMPUTE_MAZE_SET_NAME = "compute_maze_set";
+pub const MAZE_RESOURCE_NAME = "maze";
 
 pub const PushConstants = extern struct {
     width: u32,
@@ -66,6 +70,31 @@ pub fn init(a: std.mem.Allocator, push_constants: PushConstants) std.mem.Allocat
 pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
     self.maze.deinit(a);
     a.free(self.maze_gpu_cells);
+}
+
+pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
+    try resources.materials.createAndRegisterWritableTextureSetLayout(
+        a,
+        COMPUTE_MAZE_SET_NAME,
+        &[_][]const u8{MAZE_RESOURCE_NAME},
+        device,
+        alloc_cbs,
+    );
+
+    try resources.mapped_buffers.createAndRegisterBufferSetLayout(
+        a,
+        COMPUTE_MAZE_SET_NAME,
+        &[_]core.resources.MappedBuffers.CreateBufferInfo{
+            .{
+                .name = MAZE_RESOURCE_NAME,
+                .descriptor_type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .binding = 0,
+                .stage_flags = vk.SHADER_STAGE_COMPUTE_BIT,
+            },
+        },
+        device,
+        alloc_cbs,
+    );
 }
 
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
