@@ -22,7 +22,6 @@ pub const engine = struct {
     pub const world = @import("engine/world.zig");
     pub const Engine = @import("engine/Engine.zig");
     pub const frames = @import("engine/frames.zig");
-    pub const GlobalData = @import("engine/GlobalData.zig");
     pub const Input = @import("engine/Input.zig");
     pub const shaders = @import("engine/shaders.zig");
 
@@ -36,7 +35,6 @@ pub const engine = struct {
         pub const Mesh3DPipeline = @import("engine/pipelines/Mesh3DPipeline.zig");
         pub const Mesh2DPipeline = @import("engine/pipelines/Mesh2DPipeline.zig");
         pub const BackgroundPipeline = @import("engine/pipelines/BackgroundPipeline.zig");
-        pub const ComputeMaze = @import("engine/pipelines/ComputeMaze.zig");
         test {
             std.testing.refAllDecls(@This());
         }

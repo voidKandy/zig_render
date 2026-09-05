@@ -246,7 +246,15 @@ pub fn main(init: std.process.Init) void {
 
     engine.allocateResources();
     // engine.initGlobalData();
-    engine.initSystems(maze_push_constants);
+
+    const maze_system_ci = core.engine.systems.Maze.CreateInfo{
+        .push_constants = maze_push_constants,
+        .pd = .{
+            .camera_descriptor_set_layout = engine.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+            .device = engine.logical_device.handle,
+        },
+    };
+    engine.initSystems(maze_system_ci);
     engine.initPipelines();
 
     engine.run();

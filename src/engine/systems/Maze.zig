@@ -3,12 +3,15 @@ const core = @import("../../root.zig");
 const log = std.log.scoped(.MazeSystem);
 const imgui = core.clibs.imgui;
 const vk = core.clibs.vk;
+const checkVk = core.bindings.vulkan_init.checkVk;
 
 maze: core.lib.Maze,
 maze_gpu_cells: []GPUMazeCell,
 push_constants: PushConstants,
 maze_update: bool = false,
 needs_gpu_sync: bool = true,
+
+pipeline: ComputePipeline,
 
 pub const COMPUTE_MAZE_SET_NAME = "compute_maze_set";
 pub const MAZE_RESOURCE_NAME = "maze";
@@ -53,23 +56,51 @@ pub const GPUMazeCell = extern struct {
         return all;
     }
 };
+pub const CreateInfo = struct {
+    push_constants: PushConstants,
+    pd: ComputePipeline.Description,
+};
 
-pub fn init(a: std.mem.Allocator, push_constants: PushConstants) std.mem.Allocator.Error!@This() {
-    var maze = try core.lib.Maze.init(a, push_constants.width, push_constants.height);
-    maze.generate(push_constants.threshold, push_constants.seed);
+pub fn init(
+    a: std.mem.Allocator,
+    resources: core.resources.Manager,
+    ci: CreateInfo,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) std.mem.Allocator.Error!@This() {
+    var maze = try core.lib.Maze.init(a, ci.push_constants.width, ci.push_constants.height);
+    maze.generate(ci.push_constants.threshold, ci.push_constants.seed);
     const cells =
         try GPUMazeCell.arrayFromCellArray(a, maze.cells);
+
+    const pipeline = ComputePipeline.init(ci.pd, resources, alloc_cbs);
 
     return .{
         .maze = maze,
         .maze_gpu_cells = cells,
-        .push_constants = push_constants,
+        .push_constants = ci.push_constants,
+        .pipeline = pipeline,
     };
 }
 
-pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.maze.deinit(a);
     a.free(self.maze_gpu_cells);
+    self.pipeline.deinit(device, alloc_cbs);
+}
+
+pub fn updateSets(
+    alloc_resources: core.resources.Manager.AllocatedData,
+    device: vk.Device,
+) void {
+    alloc_resources.mapped_buffers.updateBufferSet(
+        device,
+        COMPUTE_MAZE_SET_NAME,
+    );
+
+    alloc_resources.materials.updateWritableTextureSet(
+        device,
+        COMPUTE_MAZE_SET_NAME,
+    );
 }
 
 pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
@@ -100,9 +131,7 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
     if (self.needs_gpu_sync) {
         const aligned_maze: [*]GPUMazeCell = @ptrCast(
-            // BAD
-            // fix the raw string passed here
-            @alignCast(alloc_resources.mapped_buffers.buffers.get("maze").?.mapped),
+            @alignCast(alloc_resources.mapped_buffers.buffers.get(MAZE_RESOURCE_NAME).?.mapped),
         );
         @memcpy(aligned_maze, self.maze_gpu_cells);
         self.needs_gpu_sync = false;
@@ -127,7 +156,7 @@ pub fn update(
 
 pub fn drawImgui(
     self: *@This(),
-    ui_set: core.clibs.vk.DescriptorSet,
+    // ui_set: core.clibs.vk.DescriptorSet,
 ) void {
     var open = true;
     const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
@@ -138,5 +167,140 @@ pub fn drawImgui(
     }
     defer imgui.End();
     if (!shown) return;
-    imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });
+    // imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });
 }
+
+const ComputePipeline = struct {
+    pipeline: vk.Pipeline = undefined,
+    pipeline_layout: vk.PipelineLayout = undefined,
+
+    pub const Description = struct {
+        camera_descriptor_set_layout: vk.DescriptorSetLayout,
+        device: vk.Device,
+    };
+
+    pub fn deinit(self: *@This(), device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+        vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
+        vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
+    }
+
+    pub fn init(
+        pd: Description,
+        // resources is only passed here so the function can grab the descriptor sets for this given system
+        // there is opportunity for abstraction here
+        resources: core.resources.Manager,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) @This() {
+        var self = @This(){};
+        const maze_shader = core.engine.shaders.createShaderModule(
+            "maze.comp",
+            pd.device,
+            alloc_cbs,
+        ) orelse @panic("failed to create maze compute shader module");
+        defer vk.DestroyShaderModule(pd.device, maze_shader, alloc_cbs);
+        const push_constant = vk.PushConstantRange{
+            .offset = 0,
+            .size = @sizeOf(PushConstants),
+            .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
+        };
+
+        const texture_write_layout = resources.materials.writable_textures_descriptor_set_layouts.get(COMPUTE_MAZE_SET_NAME).?.layout;
+        const mapped_buffer_layout = resources.mapped_buffers.buffer_set_layouts.get(COMPUTE_MAZE_SET_NAME).?.layout;
+
+        const set_layouts = [_]vk.DescriptorSetLayout{
+            pd.camera_descriptor_set_layout,
+            texture_write_layout,
+            mapped_buffer_layout,
+        };
+
+        const layout_ci = vk.PipelineLayoutCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = set_layouts.len,
+            .pSetLayouts = &set_layouts,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &push_constant,
+        };
+        checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.pipeline_layout)) catch
+            @panic("failed to create main compute pipeline layout");
+
+        const stage = vk.PipelineShaderStageCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = vk.SHADER_STAGE_COMPUTE_BIT,
+            .module = maze_shader,
+            .pName = "main",
+        };
+        const ci = vk.ComputePipelineCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .layout = self.pipeline_layout,
+            .stage = stage,
+        };
+        checkVk(vk.CreateComputePipelines(pd.device, null, 1, &ci, alloc_cbs, &self.pipeline)) catch
+            @panic("failed to create main compute pipeline");
+
+        return self;
+    }
+
+    pub fn bind(self: @This(), cmd: vk.CommandBuffer) void {
+        vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
+    }
+
+    pub fn recordCommands(
+        self: @This(),
+        alloc_resources: core.resources.Manager.AllocatedData,
+        camera_descriptor_set: vk.DescriptorSet,
+        write_texture_set: vk.DescriptorSet,
+        mapped_buffer_set: vk.DescriptorSet,
+        maze_system: core.engine.systems.Maze,
+        cmd: vk.CommandBuffer,
+    ) void {
+        const sets = [_]vk.DescriptorSet{ camera_descriptor_set, write_texture_set, mapped_buffer_set };
+        vk.CmdBindDescriptorSets(
+            cmd,
+            vk.PIPELINE_BIND_POINT_COMPUTE,
+            self.pipeline_layout,
+            0,
+            sets.len,
+            &sets,
+            0,
+            null,
+        );
+
+        vk.CmdPushConstants(
+            cmd,
+            self.pipeline_layout,
+            vk.SHADER_STAGE_COMPUTE_BIT,
+            0,
+            @sizeOf(core.engine.systems.Maze.PushConstants),
+            &maze_system.push_constants,
+        );
+
+        const maze_image = alloc_resources.materials.textures.get("maze").?.image_alloc;
+
+        // transition to GENERAL for compute write
+        core.bindings.vulkan_util.transitionImageLayout(
+            cmd,
+            maze_image.image,
+            vk.IMAGE_LAYOUT_UNDEFINED,
+            vk.IMAGE_LAYOUT_GENERAL,
+            0,
+            vk.ACCESS_SHADER_WRITE_BIT,
+            vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        );
+        const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(maze_system.maze.width * maze_system.push_constants.pixels_per_cell)) / 8.0));
+        const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(maze_system.maze.height * maze_system.push_constants.pixels_per_cell)) / 8.0));
+        vk.CmdDispatch(cmd, w, h, 1);
+
+        // transition to SHADER_READ_ONLY so HUD can sample it
+        core.bindings.vulkan_util.transitionImageLayout(
+            cmd,
+            maze_image.image,
+            vk.IMAGE_LAYOUT_GENERAL,
+            vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            vk.ACCESS_SHADER_WRITE_BIT,
+            vk.ACCESS_SHADER_READ_BIT,
+            vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        );
+    }
+};
