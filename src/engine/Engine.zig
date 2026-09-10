@@ -444,17 +444,18 @@ fn initMesh3DPipeline(self: *Self) void {
 
     self.mesh3D_pipeline = Mesh3DPipeline.init(
         .{
-            .camera_descriptor_set_layout = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
-            .samplers_descriptor_set_layout = self.resources.materials.samplers_descriptor_set_layout,
-            .texture_set_layout = self.resources.materials.all_textures_descriptor_set_layout,
-            .meshes_set_layout = self.resources.meshes3D.descriptor_set_layout,
+            .descriptor_sets = .init(.{
+                .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+                .samplers = self.resources.materials.samplers_descriptor_set_layout,
+                .texture = self.resources.materials.all_textures_descriptor_set_layout,
+                .meshes = self.resources.meshes3D.descriptor_set_layout,
+            }),
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
             .vertex_shader = vert_shader,
             .fragment_shader = frag_shader,
         },
-        // self.allocated_resources,
         self.alloc_cbs,
     );
 
@@ -465,8 +466,6 @@ fn initMesh3DPipeline(self: *Self) void {
 }
 
 fn initMesh2DPipeline(self: *Self) void {
-    // TODO
-    // shader code should live inside the pipeline modules they belong to
     const vert_shader = core.engine.shaders.createShaderModule(
         "mesh2D.vert",
         self.logical_device.handle,
@@ -489,11 +488,13 @@ fn initMesh2DPipeline(self: *Self) void {
     );
     self.mesh2D_pipeline = Mesh2DPipeline.init(
         .{
+            .descriptor_sets = .init(.{
+                .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+                .samplers = self.resources.materials.samplers_descriptor_set_layout,
+                .texture = self.resources.materials.all_textures_descriptor_set_layout,
+                .meshes = self.resources.meshes2D.descriptor_set_layout,
+            }),
             .device = self.logical_device.handle,
-            .camera_descriptor_set_layout = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
-            .samplers_descriptor_set_layout = self.resources.materials.samplers_descriptor_set_layout,
-            .texture_set_layout = self.resources.materials.all_textures_descriptor_set_layout,
-            .meshes_set_layout = self.resources.meshes2D.descriptor_set_layout,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
             .vert_shader = vert_shader,
@@ -710,7 +711,6 @@ fn recordCommandBuffer(
     self.draw_bg_system.pipeline.bind(frame.main_command_buffer);
     self.draw_bg_system.pipeline.recordCommands(
         self.allocated_resources,
-        // self.background_pipeline_data,
         self.swapchain,
         image_idx,
         self.allocated_resources.materials.writable_textures_descriptor_sets.get(core.engine.systems.DrawBackground.BACKGROUND_SET_NAME).?.set,
@@ -755,10 +755,12 @@ fn recordCommandBuffer(
     self.mesh3D_pipeline.bind(frame.main_command_buffer);
     self.mesh3D_pipeline.recordCommands(
         &self.world,
-        self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-        self.allocated_resources.materials.sampler_set,
-        self.allocated_resources.meshes3D.descriptor_set,
-        self.allocated_resources.materials.all_textures_descriptor_set,
+        core.engine.pipelines.Mesh3DPipeline.DescriptorSets.Sets.init(.{
+            .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+            .samplers = self.allocated_resources.materials.sampler_set,
+            .meshes = self.allocated_resources.meshes3D.descriptor_set,
+            .texture = self.allocated_resources.materials.all_textures_descriptor_set,
+        }),
         frame.main_command_buffer,
     );
 
@@ -767,10 +769,12 @@ fn recordCommandBuffer(
         &self.world,
         self.swapchain.extent,
         self.allocated_resources,
-        self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-        self.allocated_resources.materials.sampler_set,
-        self.allocated_resources.meshes2D.descriptor_set,
-        self.allocated_resources.materials.all_textures_descriptor_set,
+        core.engine.pipelines.Mesh2DPipeline.DescriptorSets.Sets.init(.{
+            .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+            .samplers = self.allocated_resources.materials.sampler_set,
+            .meshes = self.allocated_resources.meshes2D.descriptor_set,
+            .texture = self.allocated_resources.materials.all_textures_descriptor_set,
+        }),
         frame.main_command_buffer,
     );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);

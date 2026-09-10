@@ -13,11 +13,16 @@ const Mesh = mesh_mod.Mesh3D;
 const Meshes3D = core.resources.Meshes3D;
 const Meshes2D = core.resources.Meshes2D;
 
+pub const DescriptorSets =
+    core.engine.pipelines.PipelineDescriptorSets(enum {
+        camera,
+        samplers,
+        texture,
+        meshes,
+    });
+
 pub const Description = struct {
-    camera_descriptor_set_layout: vk.DescriptorSetLayout,
-    samplers_descriptor_set_layout: vk.DescriptorSetLayout,
-    texture_set_layout: vk.DescriptorSetLayout,
-    meshes_set_layout: vk.DescriptorSetLayout,
+    descriptor_sets: DescriptorSets.Layouts,
     device: vk.Device,
     render_pass: vk.RenderPass,
     window_extent: vk.Extent2D,
@@ -151,17 +156,10 @@ pub fn init(
         .pAttachments = &blend_attach_state,
     };
 
-    const set_layouts = [_]vk.DescriptorSetLayout{
-        pd.camera_descriptor_set_layout,
-        pd.samplers_descriptor_set_layout,
-        pd.texture_set_layout,
-        pd.meshes_set_layout,
-    };
-
     const layout_ci = vk.PipelineLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = set_layouts.len,
-        .pSetLayouts = &set_layouts,
+        .setLayoutCount = pd.descriptor_sets.values.len,
+        .pSetLayouts = &pd.descriptor_sets.values,
     };
 
     checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.pipeline_layout)) catch
@@ -252,26 +250,17 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 pub fn recordCommands(
     self: Self,
     world: *core.engine.world.GameWorld,
+    sets: DescriptorSets.Sets,
     /// TODO
-    /// make descriptor sets type
-    camera_descriptor_set: vk.DescriptorSet,
-    samplers_descriptor_set: vk.DescriptorSet,
-    meshes_set: vk.DescriptorSet,
-    tx_set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
-    // should match order of set_layouts in `init`
-    const sets = [_]vk.DescriptorSet{
-        camera_descriptor_set, samplers_descriptor_set, tx_set, meshes_set,
-    };
-
     vk.CmdBindDescriptorSets(
         cmd,
         vk.PIPELINE_BIND_POINT_GRAPHICS,
         self.pipeline_layout,
         0,
-        sets.len,
-        &sets,
+        sets.values.len,
+        &sets.values,
         0,
         null,
     );

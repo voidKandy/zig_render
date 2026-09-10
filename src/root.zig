@@ -35,6 +35,17 @@ pub const engine = struct {
     pub const pipelines = struct {
         pub const Mesh3DPipeline = @import("engine/pipelines/Mesh3DPipeline.zig");
         pub const Mesh2DPipeline = @import("engine/pipelines/Mesh2DPipeline.zig");
+
+        /// This function will error if anything but an enum is passed to it
+        pub fn PipelineDescriptorSets(DescriptorSets: type) type {
+            _ = @typeInfo(DescriptorSets).@"enum";
+
+            return struct {
+                pub const Layouts = std.EnumArray(DescriptorSets, clibs.vk.DescriptorSetLayout);
+                pub const Sets = std.EnumArray(DescriptorSets, clibs.vk.DescriptorSet);
+            };
+        }
+
         test {
             std.testing.refAllDecls(@This());
         }

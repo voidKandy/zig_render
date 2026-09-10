@@ -12,11 +12,15 @@ const GraphicsPushConstants = struct {
     inverse_window_resolution: core.lib.math.Vec2,
 };
 
+pub const DescriptorSets = core.engine.pipelines.PipelineDescriptorSets(enum {
+    camera,
+    samplers,
+    texture,
+    meshes,
+});
+
 pub const Description = struct {
-    camera_descriptor_set_layout: vk.DescriptorSetLayout,
-    samplers_descriptor_set_layout: vk.DescriptorSetLayout,
-    texture_set_layout: vk.DescriptorSetLayout,
-    meshes_set_layout: vk.DescriptorSetLayout,
+    descriptor_sets: DescriptorSets.Layouts,
     device: vk.Device,
     render_pass: vk.RenderPass,
     window_extent: vk.Extent2D,
@@ -164,17 +168,10 @@ fn initPipeline(
         .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
     };
 
-    const set_layouts = [_]vk.DescriptorSetLayout{
-        pd.camera_descriptor_set_layout,
-        pd.samplers_descriptor_set_layout,
-        pd.texture_set_layout,
-        pd.meshes_set_layout,
-    };
-
     const layout_ci = vk.PipelineLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = set_layouts.len,
-        .pSetLayouts = &set_layouts,
+        .setLayoutCount = pd.descriptor_sets.values.len,
+        .pSetLayouts = &pd.descriptor_sets.values,
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &push_constant,
     };
@@ -213,23 +210,16 @@ pub fn recordCommands(
     world: *core.engine.world.GameWorld,
     window_extent: vk.Extent2D,
     alloc_resources: core.resources.Manager.AllocatedData,
-    camera_descriptor_set: vk.DescriptorSet,
-    samplers_descriptor_set: vk.DescriptorSet,
-    meshes_set: vk.DescriptorSet,
-    tx_set: vk.DescriptorSet,
+    sets: DescriptorSets.Sets,
     cmd: vk.CommandBuffer,
 ) void {
-    const sets = [_]vk.DescriptorSet{
-        camera_descriptor_set, samplers_descriptor_set, tx_set, meshes_set,
-    };
-
     vk.CmdBindDescriptorSets(
         cmd,
         vk.PIPELINE_BIND_POINT_GRAPHICS,
         self.pipeline_layout,
         0,
-        sets.len,
-        &sets,
+        sets.values.len,
+        &sets.values,
         0,
         null,
     );
