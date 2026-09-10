@@ -178,8 +178,8 @@ pub fn main(init: std.process.Init) void {
         },
     };
     engine.initSystems(maze_system_ci);
-
     engine.addSystemCreateDataToResourceManager();
+
     engine.allocateResources();
 
     engine.initPipelines();

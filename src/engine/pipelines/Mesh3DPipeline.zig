@@ -15,6 +15,7 @@ const Meshes2D = core.resources.Meshes2D;
 
 pub const Description = struct {
     camera_descriptor_set_layout: vk.DescriptorSetLayout,
+    samplers_descriptor_set_layout: vk.DescriptorSetLayout,
     texture_set_layout: vk.DescriptorSetLayout,
     meshes_set_layout: vk.DescriptorSetLayout,
     device: vk.Device,
@@ -152,6 +153,7 @@ pub fn init(
 
     const set_layouts = [_]vk.DescriptorSetLayout{
         pd.camera_descriptor_set_layout,
+        pd.samplers_descriptor_set_layout,
         pd.texture_set_layout,
         pd.meshes_set_layout,
     };
@@ -250,14 +252,17 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 pub fn recordCommands(
     self: Self,
     world: *core.engine.world.GameWorld,
+    /// TODO
+    /// make descriptor sets type
     camera_descriptor_set: vk.DescriptorSet,
+    samplers_descriptor_set: vk.DescriptorSet,
     meshes_set: vk.DescriptorSet,
     tx_set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
     // should match order of set_layouts in `init`
     const sets = [_]vk.DescriptorSet{
-        camera_descriptor_set, tx_set, meshes_set,
+        camera_descriptor_set, samplers_descriptor_set, tx_set, meshes_set,
     };
 
     vk.CmdBindDescriptorSets(

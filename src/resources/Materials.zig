@@ -205,28 +205,40 @@ libraries: std.StringHashMapUnmanaged(MaterialLibraryEntry) = .empty,
 /// or other means
 /// specifically for non-static data
 textures: std.StringHashMapUnmanaged(CreateTextureEntry) = .empty,
-/// currently every texture uses the sampelr
+/// this is passed to AllocatedData for deinitialization
 sampler: vk.Sampler = undefined,
+
+samplers_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 
 all_textures_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 /// certain systems require writable access to certain textures
 writable_textures_descriptor_set_layouts: std.StringHashMapUnmanaged(WritableTextureSetLayout) = .empty,
+
+/// creates one sampler for each ci when `upload` is called;
+const DEFAULT_SAMPLER_CI = vk.SamplerCreateInfo{
+    .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+    .magFilter = vk.FILTER_NEAREST,
+    .minFilter = vk.FILTER_NEAREST,
+    .addressModeU = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    .addressModeV = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    .addressModeW = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+};
 
 const WritableTextureSetLayout = struct {
     layout: vk.DescriptorSetLayout,
     names: []const []const u8,
 };
 
-pub fn initSampler(
+pub fn createSampler(
     self: *@This(),
     device: vk.Device,
-    sampler_ci: vk.SamplerCreateInfo,
 ) void {
     var sampler: vk.Sampler = undefined;
-    checkVk(vk.CreateSampler(device, &sampler_ci, null, &sampler)) catch @panic("failed to create sampler");
+    checkVk(vk.CreateSampler(device, &DEFAULT_SAMPLER_CI, null, &sampler)) catch @panic("failed to create sampler");
     self.sampler = sampler;
 }
 
+/// Does not free sampler because ownership is passed to AllocatedData
 pub fn deinit(
     self: *@This(),
     a: std.mem.Allocator,
@@ -246,6 +258,7 @@ pub fn deinit(
     self.writable_textures_descriptor_set_layouts.deinit(a);
 
     vk.DestroyDescriptorSetLayout(device, self.all_textures_descriptor_set_layout, alloc_cbs);
+    vk.DestroyDescriptorSetLayout(device, self.samplers_descriptor_set_layout, alloc_cbs);
 }
 
 pub fn addMaterialsFile(self: *@This(), a: std.mem.Allocator, file: core.loaders.mtl.MtlFile) std.mem.Allocator.Error!void {
@@ -267,50 +280,74 @@ pub fn amountTotalTextures(self: Self) u32 {
     return count;
 }
 
+/// This is NOT the same way bindings are used in Meshes3D
+/// there is only one texture and one sampler currently
+/// in each of these bindings that can be expanded to include more samplers or textures
+pub const DEFAULT_BINDINGS = Bindings{
+    .sampler = 0,
+    .texture = 0,
+};
+
+pub const Bindings = struct {
+    sampler: u32,
+    texture: u32,
+};
 /// only call once all materials have been added
 pub fn createDescriptorSetLayout(
     self: *Self,
-    binding: u32,
+    bindings: Bindings,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    if (binding == 0) @panic(
-        \\ 0 binding is reserved for sampler!!
-    );
-    const count = self.amountTotalTextures();
-
-    const tx_bind = vk.DescriptorSetLayoutBinding{
-        .binding = binding,
-        .descriptorType = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-        .descriptorCount = @as(u32, @intCast(count)),
-        .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
-        .pImmutableSamplers = null,
-    };
-
     const sampler_bind = vk.DescriptorSetLayoutBinding{
-        .binding = 0,
+        .binding = bindings.sampler,
         .descriptorType = vk.DESCRIPTOR_TYPE_SAMPLER,
         .descriptorCount = 1,
         .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
         .pImmutableSamplers = &self.sampler,
     };
 
-    const bindings = [_]vk.DescriptorSetLayoutBinding{
-        sampler_bind,
-        tx_bind,
-    };
+    const smplr_bindings = [_]vk.DescriptorSetLayoutBinding{sampler_bind};
 
-    const layout_ci = vk.DescriptorSetLayoutCreateInfo{
+    const smplr_layout_ci = vk.DescriptorSetLayoutCreateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .pBindings = &bindings,
-        .bindingCount = bindings.len,
+        .pBindings = &smplr_bindings,
+        .bindingCount = smplr_bindings.len,
     };
 
     checkVk(vk.CreateDescriptorSetLayout(
         device,
-        &layout_ci,
+        &smplr_layout_ci,
+        alloc_cbs,
+        &self.samplers_descriptor_set_layout,
+    )) catch @panic("Failed to create sampler descriptor set layout");
+
+    const count = self.amountTotalTextures();
+
+    const tx_bind = vk.DescriptorSetLayoutBinding{
+        .binding = bindings.texture,
+        .descriptorType = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .descriptorCount = @as(u32, @intCast(count)),
+        .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
+        .pImmutableSamplers = null,
+    };
+    const tx_bindings = [_]vk.DescriptorSetLayoutBinding{
+        tx_bind,
+    };
+
+    const tx_layout_ci = vk.DescriptorSetLayoutCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .pBindings = &tx_bindings,
+        .bindingCount = tx_bindings.len,
+    };
+
+    checkVk(vk.CreateDescriptorSetLayout(
+        device,
+        &tx_layout_ci,
         alloc_cbs,
         &self.all_textures_descriptor_set_layout,
     )) catch @panic("Failed to create descriptor set layout");
@@ -430,6 +467,20 @@ pub fn upload(
         all_names.appendAssumeCapacity(try allocs.std.dupeZ(u8, entry.key_ptr.*));
     }
 
+    var smpl_set: vk.DescriptorSet = undefined;
+    const smpl_ai = vk.DescriptorSetAllocateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .pNext = null,
+        .descriptorPool = pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &self.samplers_descriptor_set_layout,
+    };
+
+    checkVk(vk.AllocateDescriptorSets(logical_device.handle, &smpl_ai, &smpl_set)) catch |e|
+        std.debug.panic(
+            \\failed to allocate sampler descriptor set: {s}
+        , .{@errorName(e)});
+
     var tx_set: vk.DescriptorSet = undefined;
     const tx_ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -439,12 +490,10 @@ pub fn upload(
         .pSetLayouts = &self.all_textures_descriptor_set_layout,
     };
 
-    checkVk(vk.AllocateDescriptorSets(logical_device.handle, &tx_ai, &tx_set)) catch |e| {
-        log.err(
+    checkVk(vk.AllocateDescriptorSets(logical_device.handle, &tx_ai, &tx_set)) catch |e|
+        std.debug.panic(
             \\failed to allocate texture descriptor set: {s}
         , .{@errorName(e)});
-        @panic("failed to allocate texture descriptor set");
-    };
 
     var writable_sets: std.StringHashMapUnmanaged(AllocatedData.WritableTextureSet) = .empty;
     var writable_layouts_iter = self.writable_textures_descriptor_set_layouts.iterator();
@@ -476,21 +525,28 @@ pub fn upload(
         .textures = textures,
         .sampler = self.sampler,
         .all_material_names = try all_names.toOwnedSlice(allocs.std),
+        .sampler_set = smpl_set,
         .all_textures_descriptor_set = tx_set,
         .writable_textures_descriptor_sets = writable_sets,
     };
 }
 
 pub const AllocatedData = struct {
+    all_material_names: [][:0]const u8,
+
     libraries: std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData),
     textures: std.StringHashMapUnmanaged(vma_usage.AllocatedImage),
+
     sampler: vk.Sampler,
-    all_material_names: [][:0]const u8,
+
+    sampler_set: vk.DescriptorSet,
 
     /// name is slightly innacurate,
     /// this set provides read access to ALL materials in a single array
     all_textures_descriptor_set: vk.DescriptorSet,
 
+    /// these are `registered` by a consumer and queried by name
+    /// each set represents some amount of writable access to some textures in `textures` ++ `libraries`
     writable_textures_descriptor_sets: std.StringHashMapUnmanaged(WritableTextureSet),
 
     const WritableTextureSet = struct {
@@ -527,7 +583,7 @@ pub const AllocatedData = struct {
         self: @This(),
         a: std.mem.Allocator,
         device: vk.Device,
-        binding: u32,
+        bindings: Bindings,
     ) std.mem.Allocator.Error!void {
         const texture_count = self.all_material_names.len;
 
@@ -565,7 +621,7 @@ pub const AllocatedData = struct {
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .pNext = null,
             .dstSet = self.all_textures_descriptor_set,
-            .dstBinding = binding,
+            .dstBinding = bindings.texture,
             .dstArrayElement = 0,
             .descriptorCount = @as(u32, @intCast(texture_count)),
             .descriptorType = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
@@ -585,6 +641,38 @@ pub const AllocatedData = struct {
             0,
             null,
         );
+    }
+
+    pub fn createSamplerDescriptorSetLayout(
+        self: *Self,
+        sampler: *const vk.Sampler,
+        device: vk.Device,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) void {
+        const sampler_bind = vk.DescriptorSetLayoutBinding{
+            .binding = 0,
+            .descriptorType = vk.DESCRIPTOR_TYPE_SAMPLER,
+            .descriptorCount = 0,
+            .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
+            .pImmutableSamplers = sampler,
+        };
+
+        const bindings = [_]vk.DescriptorSetLayoutBinding{sampler_bind};
+
+        const layout_ci = vk.DescriptorSetLayoutCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .pBindings = &bindings,
+            .bindingCount = bindings.len,
+        };
+
+        checkVk(vk.CreateDescriptorSetLayout(
+            device,
+            &layout_ci,
+            alloc_cbs,
+            &self.sampler_descriptor_set_layout,
+        )) catch @panic("Failed to create sampler descriptor set layout");
     }
 
     pub fn updateWritableTextureSet(

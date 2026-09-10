@@ -70,7 +70,7 @@ pub fn init(
         .alloc_cbs = alloc_cbs,
         .io = io,
         .world = core.engine.world.GameWorld.init(a) catch @panic("OOM"),
-        .resources = core.resources.Manager.create(
+        .resources = core.resources.Manager.init(
             a,
             resources_ci,
         ) catch @panic("failed resources init"),
@@ -78,20 +78,6 @@ pub fn init(
 
     self.initWindow();
     self.initVulkan();
-
-    // BAD
-    // I hate this is called here
-    self.resources.materials.initSampler(
-        self.logical_device.handle,
-        vk.SamplerCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .magFilter = vk.FILTER_NEAREST,
-            .minFilter = vk.FILTER_NEAREST,
-            .addressModeU = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            .addressModeV = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            .addressModeW = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        },
-    );
 
     return self;
 }
@@ -315,13 +301,16 @@ pub fn addSystemCreateDataToResourceManager(self: *@This()) void {
 // move these to where they are actually encapsulated
 const TEXTURE_SET_BINDING: u32 = 1;
 const MESHES_2D_METADATA_SET_BINDING: u32 = 0;
+/// honestly this whole function should be in Manager
 /// Allocates resources, creates descriptor layouts/pool
 /// AND associates meshes with entities.
 /// The latter half of this needs to be moved to its own function
 /// when entity/component management is figured out
 pub fn allocateResources(self: *Self) void {
+    self.resources.createImmutableData(self.logical_device.handle);
+
     self.resources.materials.createDescriptorSetLayout(
-        TEXTURE_SET_BINDING,
+        core.resources.Materials.DEFAULT_BINDINGS,
         self.logical_device.handle,
         self.alloc_cbs,
     );
@@ -386,7 +375,7 @@ pub fn allocateResources(self: *Self) void {
     self.allocated_resources.materials.updateStaticTextureSet(
         self.allocs.std,
         self.logical_device.handle,
-        TEXTURE_SET_BINDING,
+        core.resources.Materials.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
     self.allocated_resources.mapped_buffers.updateBufferSet(
@@ -456,6 +445,7 @@ fn initMesh3DPipeline(self: *Self) void {
     self.mesh3D_pipeline = Mesh3DPipeline.init(
         .{
             .camera_descriptor_set_layout = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+            .samplers_descriptor_set_layout = self.resources.materials.samplers_descriptor_set_layout,
             .texture_set_layout = self.resources.materials.all_textures_descriptor_set_layout,
             .meshes_set_layout = self.resources.meshes3D.descriptor_set_layout,
             .device = self.logical_device.handle,
@@ -501,6 +491,7 @@ fn initMesh2DPipeline(self: *Self) void {
         .{
             .device = self.logical_device.handle,
             .camera_descriptor_set_layout = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+            .samplers_descriptor_set_layout = self.resources.materials.samplers_descriptor_set_layout,
             .texture_set_layout = self.resources.materials.all_textures_descriptor_set_layout,
             .meshes_set_layout = self.resources.meshes2D.descriptor_set_layout,
             .render_pass = self.main_render_pass,
@@ -765,6 +756,7 @@ fn recordCommandBuffer(
     self.mesh3D_pipeline.recordCommands(
         &self.world,
         self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        self.allocated_resources.materials.sampler_set,
         self.allocated_resources.meshes3D.descriptor_set,
         self.allocated_resources.materials.all_textures_descriptor_set,
         frame.main_command_buffer,
@@ -776,6 +768,7 @@ fn recordCommandBuffer(
         self.swapchain.extent,
         self.allocated_resources,
         self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        self.allocated_resources.materials.sampler_set,
         self.allocated_resources.meshes2D.descriptor_set,
         self.allocated_resources.materials.all_textures_descriptor_set,
         frame.main_command_buffer,

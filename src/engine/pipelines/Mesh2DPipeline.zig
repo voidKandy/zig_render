@@ -14,6 +14,7 @@ const GraphicsPushConstants = struct {
 
 pub const Description = struct {
     camera_descriptor_set_layout: vk.DescriptorSetLayout,
+    samplers_descriptor_set_layout: vk.DescriptorSetLayout,
     texture_set_layout: vk.DescriptorSetLayout,
     meshes_set_layout: vk.DescriptorSetLayout,
     device: vk.Device,
@@ -165,6 +166,7 @@ fn initPipeline(
 
     const set_layouts = [_]vk.DescriptorSetLayout{
         pd.camera_descriptor_set_layout,
+        pd.samplers_descriptor_set_layout,
         pd.texture_set_layout,
         pd.meshes_set_layout,
     };
@@ -212,12 +214,13 @@ pub fn recordCommands(
     window_extent: vk.Extent2D,
     alloc_resources: core.resources.Manager.AllocatedData,
     camera_descriptor_set: vk.DescriptorSet,
+    samplers_descriptor_set: vk.DescriptorSet,
     meshes_set: vk.DescriptorSet,
     tx_set: vk.DescriptorSet,
     cmd: vk.CommandBuffer,
 ) void {
     const sets = [_]vk.DescriptorSet{
-        camera_descriptor_set, tx_set, meshes_set,
+        camera_descriptor_set, samplers_descriptor_set, tx_set, meshes_set,
     };
 
     vk.CmdBindDescriptorSets(

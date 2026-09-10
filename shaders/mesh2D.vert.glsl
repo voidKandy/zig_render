@@ -17,7 +17,7 @@ struct MetaData {
     uint materialIndex;
     vec2 screenCoordinates;
 };
-layout(std430, set = 2, binding = 0) readonly buffer MetaSSBO { MetaData metas[]; } MetaBuf;
+layout(std430, set = 3, binding = 0) readonly buffer MetaSSBO { MetaData metas[]; } MetaBuf;
 
 void main() {
     MetaData metaData = MetaBuf.metas[gl_InstanceIndex];

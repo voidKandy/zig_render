@@ -58,7 +58,7 @@ pub fn deinit(
     self.mapped_buffers.deinit(a, device, alloc_cbs);
 }
 
-pub fn create(a: std.mem.Allocator, ci: CreateInfo) !@This() {
+pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
     var materials: Materials = .{};
 
     if (ci.materials_files) |mtlfls| {
@@ -131,6 +131,10 @@ pub fn create(a: std.mem.Allocator, ci: CreateInfo) !@This() {
         .meshes2D = meshes2D,
         .mapped_buffers = mapped_buffers,
     };
+}
+
+pub fn createImmutableData(self: *@This(), device: vk.Device) void {
+    self.materials.createSampler(device);
 }
 
 pub const AllocatedData = struct {

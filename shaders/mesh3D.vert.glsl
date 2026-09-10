@@ -25,9 +25,9 @@ layout (set = 0, binding = 0) readonly uniform CameraData {
     mat4 proj;
 } camera_Ubo;
 
-layout (std430, set = 2, binding = 0) readonly buffer Vertices { VertexData v[]; } in_Vertices;
-layout (set = 2, binding = 1) readonly buffer Indices { int i[]; } in_Indices;
-layout(std430, set = 2, binding = 2) readonly buffer MetaSSBO { MetaData metas[]; } MetaBuf;
+layout (std430, set = 3, binding = 0) readonly buffer Vertices { VertexData v[]; } in_Vertices;
+layout (set = 3, binding = 1) readonly buffer Indices { int i[]; } in_Indices;
+layout(std430, set = 3, binding = 2) readonly buffer MetaSSBO { MetaData metas[]; } MetaBuf;
 
 layout(location = 0) out vec2 texCoord;
 layout(location = 1) flat out uint MaterialIndex;
