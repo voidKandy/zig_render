@@ -11,7 +11,8 @@ push_constants: PushConstants,
 maze_update: bool = false,
 needs_gpu_sync: bool = true,
 
-pipeline: ComputePipeline,
+pipeline_description: ComputePipeline.Description,
+pipeline: ComputePipeline = undefined,
 
 pub const COMPUTE_MAZE_SET_NAME = "compute_maze_set";
 pub const MAZE_RESOURCE_NAME = "maze";
@@ -56,6 +57,7 @@ pub const GPUMazeCell = extern struct {
         return all;
     }
 };
+
 pub const CreateInfo = struct {
     push_constants: PushConstants,
     pd: ComputePipeline.Description,
@@ -63,44 +65,34 @@ pub const CreateInfo = struct {
 
 pub fn init(
     a: std.mem.Allocator,
-    resources: core.resources.Manager,
     ci: CreateInfo,
-    alloc_cbs: ?*vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!@This() {
     var maze = try core.lib.Maze.init(a, ci.push_constants.width, ci.push_constants.height);
     maze.generate(ci.push_constants.threshold, ci.push_constants.seed);
     const cells =
         try GPUMazeCell.arrayFromCellArray(a, maze.cells);
 
-    const pipeline = ComputePipeline.init(ci.pd, resources, alloc_cbs);
-
     return .{
         .maze = maze,
         .maze_gpu_cells = cells,
         .push_constants = ci.push_constants,
-        .pipeline = pipeline,
+        .pipeline_description = ci.pd,
     };
+}
+
+pub fn initPipeline(
+    self: *@This(),
+    resources: core.resources.Manager,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    self.pipeline =
+        ComputePipeline.init(self.pipeline_description, resources, alloc_cbs);
 }
 
 pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.maze.deinit(a);
     a.free(self.maze_gpu_cells);
     self.pipeline.deinit(device, alloc_cbs);
-}
-
-pub fn updateSets(
-    alloc_resources: core.resources.Manager.AllocatedData,
-    device: vk.Device,
-) void {
-    alloc_resources.mapped_buffers.updateBufferSet(
-        device,
-        COMPUTE_MAZE_SET_NAME,
-    );
-
-    alloc_resources.materials.updateWritableTextureSet(
-        device,
-        COMPUTE_MAZE_SET_NAME,
-    );
 }
 
 pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
@@ -125,6 +117,68 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
         },
         device,
         alloc_cbs,
+    );
+}
+
+pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!void {
+    try resources.mapped_buffers.creates.put(
+        a,
+        MAZE_RESOURCE_NAME,
+
+        .{
+            .alloc_size = @sizeOf(GPUMazeCell) * self.maze.width * self.maze.height,
+            .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .flags = 0,
+        },
+    );
+
+    try resources.materials.textures.put(
+        a,
+        MAZE_RESOURCE_NAME,
+        .{
+            .extent = vk.Extent3D{
+                .width = self.maze.width * self.push_constants.pixels_per_cell,
+                .height = self.maze.height * self.push_constants.pixels_per_cell,
+                .depth = 1,
+            },
+            .format = vk.FORMAT_R8G8B8A8_UNORM,
+            .usages = vk.IMAGE_USAGE_STORAGE_BIT |
+                vk.IMAGE_USAGE_SAMPLED_BIT |
+                vk.IMAGE_USAGE_TRANSFER_DST_BIT,
+            .aspect_flags = vk.IMAGE_ASPECT_COLOR_BIT,
+            .initial_transition_function = &struct {
+                pub fn submit(
+                    device: core.bindings.vulkan_init.LogicalDevice,
+                    upload_ctx: *core.bindings.vulkan_init.UploadContext,
+                    img: vk.Image,
+                ) void {
+                    upload_ctx.immediateSubmit(device, struct {
+                        img: vk.Image,
+                        pub fn submit(this: @This(), cmd_buf: vk.CommandBuffer) void {
+                            core.bindings.vulkan_util.transitionImageLayout(
+                                cmd_buf,
+                                this.img,
+                                vk.IMAGE_LAYOUT_UNDEFINED,
+                                vk.IMAGE_LAYOUT_GENERAL,
+                                0,
+                                vk.ACCESS_SHADER_WRITE_BIT,
+                                vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            );
+                        }
+                    }{ .img = img });
+                }
+            }.submit,
+            // .sampler_ci = vk.SamplerCreateInfo{
+            //     .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            //     .magFilter = vk.FILTER_NEAREST,
+            //     .minFilter = vk.FILTER_NEAREST,
+            //     .addressModeU = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            //     .addressModeV = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            //     .addressModeW = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            // },
+        },
     );
 }
 
@@ -174,8 +228,10 @@ const ComputePipeline = struct {
     pipeline: vk.Pipeline = undefined,
     pipeline_layout: vk.PipelineLayout = undefined,
 
+    /// TODO
+    /// remove device from this
     pub const Description = struct {
-        camera_descriptor_set_layout: vk.DescriptorSetLayout,
+        camera_descriptor_set_layout_name: []const u8,
         device: vk.Device,
     };
 
@@ -204,11 +260,12 @@ const ComputePipeline = struct {
             .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
         };
 
+        const camera_layout = resources.mapped_buffers.buffer_set_layouts.get(pd.camera_descriptor_set_layout_name).?.layout;
         const texture_write_layout = resources.materials.writable_textures_descriptor_set_layouts.get(COMPUTE_MAZE_SET_NAME).?.layout;
         const mapped_buffer_layout = resources.mapped_buffers.buffer_set_layouts.get(COMPUTE_MAZE_SET_NAME).?.layout;
 
         const set_layouts = [_]vk.DescriptorSetLayout{
-            pd.camera_descriptor_set_layout,
+            camera_layout,
             texture_write_layout,
             mapped_buffer_layout,
         };
@@ -274,7 +331,7 @@ const ComputePipeline = struct {
             &maze_system.push_constants,
         );
 
-        const maze_image = alloc_resources.materials.textures.get("maze").?.image_alloc;
+        const maze_image = alloc_resources.materials.textures.get(MAZE_RESOURCE_NAME).?;
 
         // transition to GENERAL for compute write
         core.bindings.vulkan_util.transitionImageLayout(

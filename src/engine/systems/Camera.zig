@@ -19,7 +19,12 @@ pub fn init(camera: Camera, swapchain_extent: vk.Extent2D) std.mem.Allocator.Err
     };
 }
 
-pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
+pub fn registerSets(
+    a: std.mem.Allocator,
+    device: vk.Device,
+    resources: *core.resources.Manager,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) std.mem.Allocator.Error!void {
     try resources.mapped_buffers.createAndRegisterBufferSetLayout(
         a,
         CAMERA_SET_NAME,
@@ -35,6 +40,21 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
         alloc_cbs,
     );
 }
+
+pub fn addCreateData(_: @This(), a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!void {
+    try resources.mapped_buffers.creates.put(
+        a,
+
+        CAMERA_RESOURCE_NAME,
+        .{
+            .alloc_size = @sizeOf(Camera.GPUData),
+            .buffer_usage = vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .flags = 0,
+        },
+    );
+}
+
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
     const aligned: *Camera.GPUData = @ptrCast(
         @alignCast(alloc_resources.mapped_buffers.buffers.get(CAMERA_RESOURCE_NAME).?.mapped),

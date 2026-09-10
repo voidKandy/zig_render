@@ -4,7 +4,6 @@ const c = core.clibs;
 const vki = core.bindings.vulkan_init;
 const frames_mod = core.engine.frames;
 const Mesh3DPipeline = core.engine.pipelines.Mesh3DPipeline;
-const BackgroundPipeline = core.engine.pipelines.BackgroundPipeline;
 const Mesh2DPipeline = core.engine.pipelines.Mesh2DPipeline;
 const Input = core.engine.Input;
 const vma_usage = core.bindings.vma_usage;
@@ -38,20 +37,15 @@ upload_context: vki.UploadContext = .{},
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
-// global_data: core.engine.GlobalData = undefined,
-// global_data_set: vk.DescriptorSet = undefined,
 allocated_resources: core.resources.Manager.AllocatedData = undefined,
 resources: core.resources.Manager = undefined,
 
 world: core.engine.world.GameWorld,
+
 mesh_manipulation_system: core.engine.systems.MeshManipulation = undefined,
 maze_system: core.engine.systems.Maze = undefined,
 camera_system: core.engine.systems.Camera = undefined,
-
-background_pipeline: BackgroundPipeline = undefined,
-background_pipeline_data: BackgroundPipeline.AllocatedData = undefined,
-background_descriptor_set: vk.DescriptorSet = undefined,
-background_pipeline_description: BackgroundPipeline.Description = undefined,
+draw_bg_system: core.engine.systems.DrawBackground = undefined,
 
 mesh3D_pipeline: Mesh3DPipeline = undefined,
 mesh3D_pipeline_description: Mesh3DPipeline.Description = undefined,
@@ -85,6 +79,20 @@ pub fn init(
     self.initWindow();
     self.initVulkan();
 
+    // BAD
+    // I hate this is called here
+    self.resources.materials.initSampler(
+        self.logical_device.handle,
+        vk.SamplerCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = vk.FILTER_NEAREST,
+            .minFilter = vk.FILTER_NEAREST,
+            .addressModeU = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeV = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeW = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        },
+    );
+
     return self;
 }
 
@@ -110,15 +118,10 @@ pub fn deinit(self: *Self) void {
     log.debug("destroyed mesh pipeline", .{});
     self.mesh_manipulation_system.deinit(self.allocs);
     self.maze_system.deinit(self.allocs.std, self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed mesh pipeline systems data", .{});
+    self.draw_bg_system.deinit(self.logical_device.handle, self.alloc_cbs);
 
     self.mesh2D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed hud pipeline", .{});
-
-    self.background_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed main compute pipeline", .{});
-    self.background_pipeline_data.deinit(self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed main compute pipeline data", .{});
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
     log.debug("destroyed upload context", .{});
@@ -300,30 +303,17 @@ fn initVulkan(self: *Self) void {
     ) catch @panic("failed to create framebuffers");
 }
 
-// BAD
-// this abstraction is completely unecessary
-/// must call after allocateResources
-// pub fn initGlobalData(
-//     self: *Self,
-// ) void {
-//     self.global_data = core.engine.GlobalData.init(self.logical_device.handle, self.resources, self.alloc_cbs);
-
-//     self.global_data_set = self.global_data.allocateSet(
-//         self.logical_device.handle,
-//         self.allocated_resources.descriptor_pool,
-//     );
-//     core.engine.GlobalData.updateSet(
-//         self.logical_device.handle,
-//         self.global_data_set,
-//         self.allocated_resources,
-//     );
-// }
+pub fn addSystemCreateDataToResourceManager(self: *@This()) void {
+    self.maze_system.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
+    self.camera_system.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
+    self.draw_bg_system.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
+}
 
 // These bindings can be the same because they are not in the
 // same descriptor set
 // TODO
 // move these to where they are actually encapsulated
-const TEXTURE_SET_BINDING: u32 = 0;
+const TEXTURE_SET_BINDING: u32 = 1;
 const MESHES_2D_METADATA_SET_BINDING: u32 = 0;
 /// Allocates resources, creates descriptor layouts/pool
 /// AND associates meshes with entities.
@@ -376,6 +366,12 @@ pub fn allocateResources(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("OOM");
 
+    core.engine.systems.DrawBackground.registerSets(
+        self.allocs.std,
+        self.logical_device.handle,
+        &self.resources,
+        self.alloc_cbs,
+    ) catch @panic("OOM");
     // BAD??
     const max_sets = 16;
     self.allocated_resources = self.resources.upload(
@@ -397,15 +393,28 @@ pub fn allocateResources(self: *Self) void {
         self.logical_device.handle,
         core.engine.systems.Camera.CAMERA_SET_NAME,
     );
+
+    self.allocated_resources.mapped_buffers.updateBufferSet(
+        self.logical_device.handle,
+        core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME,
+    );
+
+    self.allocated_resources.materials.updateWritableTextureSet(
+        self.logical_device.handle,
+        core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME,
+    );
+
+    self.allocated_resources.materials.updateWritableTextureSet(
+        self.logical_device.handle,
+        core.engine.systems.DrawBackground.BACKGROUND_SET_NAME,
+    );
 }
 
 pub fn initSystems(self: *Self, maze_system_ci: core.engine.systems.Maze.CreateInfo) void {
     self.mesh_manipulation_system = .{};
-    self.maze_system = core.engine.systems.Maze.init(self.allocs.std, self.resources, maze_system_ci, self.alloc_cbs) catch @panic("failed to create mesh maze");
+    self.maze_system = core.engine.systems.Maze.init(self.allocs.std, maze_system_ci) catch @panic("failed to create mesh maze");
     self.camera_system = core.engine.systems.Camera.init(.{}, self.swapchain.extent) catch @panic("failed to create mesh maze");
-
-    // maybe updating system related sets should be in it's own function?
-    core.engine.systems.Maze.updateSets(self.allocated_resources, self.logical_device.handle);
+    self.draw_bg_system = core.engine.systems.DrawBackground.init(self.swapchain.extent);
 }
 
 pub fn initPipelines(
@@ -413,73 +422,11 @@ pub fn initPipelines(
 ) void {
     self.initImgui();
 
-    self.background_pipeline_data = BackgroundPipeline.AllocatedData.create(
-        self.allocs,
-        self.logical_device.handle,
-        vk.Extent3D{
-            .width = self.swapchain.extent.width,
-            .height = self.swapchain.extent.height,
-            .depth = 1,
-        },
-        MAIN_RENDER_PASS_IMAGE_FORMAT,
-        self.alloc_cbs,
-    );
+    self.maze_system.initPipeline(self.resources, self.alloc_cbs);
+    self.draw_bg_system.initPipeline(self.logical_device.handle, self.resources, self.alloc_cbs);
 
-    self.initBackgroundPipeline();
     self.initMesh3DPipeline();
     self.initMesh2DPipeline();
-}
-
-fn initBackgroundPipeline(self: *Self) void {
-    const gradient_shader = core.engine.shaders.createShaderModule("gradient_color.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, gradient_shader, self.alloc_cbs);
-    const sky_shader = core.engine.shaders.createShaderModule("sky.comp", self.logical_device.handle, self.alloc_cbs) orelse @panic("failed to create compute shader module");
-    defer vk.DestroyShaderModule(self.logical_device.handle, sky_shader, self.alloc_cbs);
-
-    const gradient_data = BackgroundPipeline.EffectData{ .constants = .{
-        .data1 = math_mod.Vec4.make(1.0, 0.0, 0.0, 1.0),
-        .data2 = math_mod.Vec4.make(0.0, 0.0, 1.0, 1.0),
-    } };
-    const sky_data = BackgroundPipeline.EffectData{ .constants = .{
-        .data1 = math_mod.Vec4.make(0.1, 0.2, 0.4, 0.97),
-    } };
-
-    self.background_pipeline = BackgroundPipeline.init(
-        self.allocs.std,
-        .{
-            .device = self.logical_device.handle,
-            .window_extent = self.swapchain.extent,
-            .effects_info = &[_]struct { []const u8, BackgroundPipeline.EffectData, vk.ShaderModule }{
-                .{
-                    "gradient",
-                    gradient_data,
-                    gradient_shader,
-                },
-                .{
-                    "sky",
-                    sky_data,
-                    sky_shader,
-                },
-            },
-            .num_images = @as(u32, @intCast(self.swapchain.images.len)),
-        },
-        self.alloc_cbs,
-    );
-
-    self.background_pipeline.createDescriptorPool(
-        self.logical_device.handle,
-        @intCast(self.swapchain.images.len),
-        1, // max sets
-        self.alloc_cbs,
-    );
-
-    self.background_descriptor_set = self.background_pipeline.allocateDescriptorSet(self.logical_device.handle);
-
-    BackgroundPipeline.updateDescriptorSets(
-        self.logical_device.handle,
-        self.background_pipeline_data,
-        self.background_descriptor_set,
-    ) catch @panic("OOM");
 }
 
 fn initMesh3DPipeline(self: *Self) void {
@@ -648,7 +595,7 @@ fn drawImgui(self: *Self) void {
     c.imgui.Text(if (is_relative_mouse) "Mouse: Relative" else "Mouse: Absolute");
     c.imgui.Text("Press escape to toggle mouse mode");
 
-    self.background_pipeline.drawImgui();
+    self.draw_bg_system.drawImgui();
 
     self.mesh_manipulation_system.drawImgui(
         self.allocs.std,
@@ -769,12 +716,13 @@ fn recordCommandBuffer(
         self.maze_system,
         frame.main_command_buffer,
     );
-    self.background_pipeline.bind(frame.main_command_buffer);
-    self.background_pipeline.recordCommands(
-        self.background_pipeline_data,
+    self.draw_bg_system.pipeline.bind(frame.main_command_buffer);
+    self.draw_bg_system.pipeline.recordCommands(
+        self.allocated_resources,
+        // self.background_pipeline_data,
         self.swapchain,
         image_idx,
-        self.background_descriptor_set,
+        self.allocated_resources.materials.writable_textures_descriptor_sets.get(core.engine.systems.DrawBackground.BACKGROUND_SET_NAME).?.set,
         frame.main_command_buffer,
     );
 

@@ -29,12 +29,12 @@ pub const engine = struct {
         pub const MeshManipulation = @import("engine/systems/MeshManipulation.zig");
         pub const Maze = @import("engine/systems/Maze.zig");
         pub const Camera = @import("engine/systems/Camera.zig");
+        pub const DrawBackground = @import("engine/systems/DrawBackground.zig");
     };
 
     pub const pipelines = struct {
         pub const Mesh3DPipeline = @import("engine/pipelines/Mesh3DPipeline.zig");
         pub const Mesh2DPipeline = @import("engine/pipelines/Mesh2DPipeline.zig");
-        pub const BackgroundPipeline = @import("engine/pipelines/BackgroundPipeline.zig");
         test {
             std.testing.refAllDecls(@This());
         }

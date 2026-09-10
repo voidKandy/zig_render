@@ -3,8 +3,10 @@
 layout(location = 0) in vec2 texCoord;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 1, binding = 0) uniform sampler2D hudTex;
+layout(set = 1, binding = 0) uniform sampler TextureSampler;
+layout(set = 1, binding = 1) uniform texture2D hudTex;
+// layout(set = 1, binding = 0) uniform sampler2D hudTex;
 
 void main() {
-    outColor = texture(hudTex, texCoord);
+     outColor = texture(sampler2D(hudTex, TextureSampler), texCoord);
 }

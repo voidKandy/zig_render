@@ -36,10 +36,9 @@ pub const Mesh2DCreateInfo = struct {
 
 pub const CreateInfo = struct {
     materials_files: ?[]const core.loaders.mtl.MtlFile,
-    texture_creates: ?[]const struct { []const u8, Materials.CreateTextureEntry },
+    // texture_creates: ?[]const struct { []const u8, Materials.CreateTextureEntry } = null,
     meshes2D: ?[]const Mesh2DCreateInfo,
     meshes3D: ?[]const Mesh3DCreateInfo,
-    mapped_buffer_creates: ?[]const struct { []const u8, MappedBuffers.CreateInfo },
 };
 
 materials: Materials,
@@ -68,18 +67,18 @@ pub fn create(a: std.mem.Allocator, ci: CreateInfo) !@This() {
         }
     }
 
-    if (ci.texture_creates) |tx_crs| {
-        for (tx_crs) |tx_cr| {
-            try materials.textures.put(a, tx_cr.@"0", tx_cr.@"1");
-        }
-    }
+    // if (ci.texture_creates) |tx_crs| {
+    //     for (tx_crs) |tx_cr| {
+    //         try materials.textures.put(a, tx_cr.@"0", tx_cr.@"1");
+    //     }
+    // }
 
-    var mapped_buffers: MappedBuffers = .{};
-    if (ci.mapped_buffer_creates) |mp_crs| {
-        for (mp_crs) |mp_cr| {
-            try mapped_buffers.creates.put(a, mp_cr.@"0", mp_cr.@"1");
-        }
-    }
+    const mapped_buffers: MappedBuffers = .{};
+    // if (ci.mapped_buffer_creates) |mp_crs| {
+    //     for (mp_crs) |mp_cr| {
+    //         try mapped_buffers.creates.put(a, mp_cr.@"0", mp_cr.@"1");
+    //     }
+    // }
 
     var meshes3D = try Meshes3D.init(a);
 
@@ -171,6 +170,12 @@ fn createDescriptorPool(
     // VERY BAD
     const pool_sizes = [_]vk.DescriptorPoolSize{
         .{
+            .type = vk.DESCRIPTOR_TYPE_SAMPLER,
+            // BAD
+            .descriptorCount = 1,
+            // .descriptorCount = self.materials.textures.size,
+        },
+        .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
             // BAD
             .descriptorCount = 8,
@@ -189,7 +194,7 @@ fn createDescriptorPool(
             .descriptorCount = 4,
         },
         .{
-            .type = vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .type = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
             .descriptorCount = materials_count,
         },
     };
@@ -206,11 +211,6 @@ fn createDescriptorPool(
 
     return pool;
 }
-
-// TODO?
-// add a consumer of Manager that registers resource use with pipelines
-// this can manage the creation of descriptor sets for pipelines in
-// a declarative way
 
 pub fn upload(
     self: *@This(),

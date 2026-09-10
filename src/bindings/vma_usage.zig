@@ -80,8 +80,8 @@ pub const AllocatedImage = struct {
             .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         };
 
-        checkVk(c.vma.CreateImage(vma_a, &ci, &ai, &image.image, &image.allocation, null)) catch
-            @panic("failed to create draw image");
+        checkVk(c.vma.CreateImage(vma_a, &ci, &ai, &image.image, &image.allocation, null)) catch |e|
+            std.debug.panic("failed to create draw image: {s}", .{@errorName(e)});
 
         return image;
     }
