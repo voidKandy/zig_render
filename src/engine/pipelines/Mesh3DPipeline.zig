@@ -13,24 +13,6 @@ const Mesh = mesh_mod.Mesh3D;
 const Meshes3D = core.resources.Meshes3D;
 const Meshes2D = core.resources.Meshes2D;
 
-pub const DescriptorSets =
-    core.engine.pipelines.PipelineDescriptorSets(enum {
-        camera,
-        samplers,
-        texture,
-        meshes,
-    });
-
-pub const Description = struct {
-    descriptor_sets: DescriptorSets.Layouts,
-    device: vk.Device,
-    render_pass: vk.RenderPass,
-    window_extent: vk.Extent2D,
-    vertex_shader: vk.ShaderModule,
-    fragment_shader: vk.ShaderModule,
-    depth_compare_op: vk.CompareOp = vk.COMPARE_OP_LESS,
-};
-
 pub const PipelineOptions = enum {
     solid,
     line,
@@ -50,7 +32,7 @@ pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallback
 }
 
 pub fn init(
-    pd: Description,
+    pd: core.engine.graphics_pipelines.DefaultDescription,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     var self = Self{};
@@ -130,7 +112,7 @@ pub fn init(
         .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .depthTestEnable = vk.TRUE,
         .depthWriteEnable = vk.TRUE,
-        .depthCompareOp = pd.depth_compare_op,
+        .depthCompareOp = pd.depth_compare_op orelse @panic("Mesh3DPipeline was not passed a depth comparison operation?"),
         .depthBoundsTestEnable = vk.FALSE,
         .stencilTestEnable = vk.FALSE,
         .minDepthBounds = 0.0,
@@ -156,14 +138,7 @@ pub fn init(
         .pAttachments = &blend_attach_state,
     };
 
-    const layout_ci = vk.PipelineLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = pd.descriptor_sets.values.len,
-        .pSetLayouts = &pd.descriptor_sets.values,
-    };
-
-    checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.pipeline_layout)) catch
-        @panic("failed to create triangle pipeline layout");
+    self.pipeline_layout = pd.createPipelineLayout(null, alloc_cbs);
 
     const dynamic_states = [_]vk.DynamicState{
         vk.DYNAMIC_STATE_VIEWPORT,
@@ -250,7 +225,7 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 pub fn recordCommands(
     self: Self,
     world: *core.engine.world.GameWorld,
-    sets: DescriptorSets.Sets,
+    sets: core.engine.graphics_pipelines.DefaultDescription.Sets,
     /// TODO
     cmd: vk.CommandBuffer,
 ) void {

@@ -64,7 +64,7 @@ fn markMeshEdited(
 pub fn drawImgui(
     self: *@This(),
     a: std.mem.Allocator,
-    pipeline: *core.engine.pipelines.Mesh3DPipeline,
+    pipeline: *core.engine.graphics_pipelines.Mesh3DPipeline,
     world: *core.engine.world.GameWorld,
     resources: core.resources.Manager,
     alloc_resources: core.resources.Manager.AllocatedData,
@@ -80,7 +80,7 @@ pub fn drawImgui(
     if (imgui.BeginCombo("Selected Pipeline", current_pipeline_name.ptr, 0)) {
         defer imgui.EndCombo();
 
-        for (std.meta.tags(core.engine.pipelines.Mesh3DPipeline.PipelineOptions)) |tag| {
+        for (std.meta.tags(core.engine.graphics_pipelines.Mesh3DPipeline.PipelineOptions)) |tag| {
             const name = @tagName(tag);
             if (imgui.Selectable(name))
                 pipeline.current_pipeline = tag;

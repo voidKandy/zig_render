@@ -8,24 +8,8 @@ const vk = core.clibs.vk;
 const vma_usage = core.bindings.vma_usage;
 const checkVk = vki.checkVk;
 
-const GraphicsPushConstants = struct {
+const PushConstants = struct {
     inverse_window_resolution: core.lib.math.Vec2,
-};
-
-pub const DescriptorSets = core.engine.pipelines.PipelineDescriptorSets(enum {
-    camera,
-    samplers,
-    texture,
-    meshes,
-});
-
-pub const Description = struct {
-    descriptor_sets: DescriptorSets.Layouts,
-    device: vk.Device,
-    render_pass: vk.RenderPass,
-    window_extent: vk.Extent2D,
-    vert_shader: vk.ShaderModule,
-    frag_shader: vk.ShaderModule,
 };
 
 pipeline: vk.Pipeline = undefined,
@@ -39,30 +23,21 @@ pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallback
 }
 
 pub fn init(
-    pd: Description,
+    pd: core.engine.graphics_pipelines.DefaultDescription,
     alloc_cbs: ?*vk.AllocationCallbacks,
-) Self {
-    var self = Self{};
-    self.initPipeline(pd, alloc_cbs);
-    return self;
-}
-
-fn initPipeline(
-    self: *Self,
-    pd: Description,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
+) @This() {
+    var self = @This(){};
     const shader_stages = [_]vk.PipelineShaderStageCreateInfo{
         .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_VERTEX_BIT,
-            .module = pd.vert_shader,
+            .module = pd.vertex_shader,
             .pName = "main",
         },
         .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
-            .module = pd.frag_shader,
+            .module = pd.fragment_shader,
             .pName = "main",
         },
     };
@@ -162,21 +137,7 @@ fn initPipeline(
         .pDynamicStates = &dynamic_states,
     };
 
-    const push_constant = vk.PushConstantRange{
-        .offset = 0,
-        .size = @sizeOf(GraphicsPushConstants),
-        .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-    };
-
-    const layout_ci = vk.PipelineLayoutCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = pd.descriptor_sets.values.len,
-        .pSetLayouts = &pd.descriptor_sets.values,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &push_constant,
-    };
-    checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.pipeline_layout)) catch
-        @panic("failed to create hud pipeline layout");
+    self.pipeline_layout = pd.createPipelineLayout(PushConstants, alloc_cbs);
 
     const pipeline_ci = vk.GraphicsPipelineCreateInfo{
         .sType = vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -199,6 +160,8 @@ fn initPipeline(
     };
     checkVk(vk.CreateGraphicsPipelines(pd.device, null, 1, &pipeline_ci, alloc_cbs, &self.pipeline)) catch
         @panic("failed to create hud pipeline");
+
+    return self;
 }
 
 pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
@@ -210,7 +173,7 @@ pub fn recordCommands(
     world: *core.engine.world.GameWorld,
     window_extent: vk.Extent2D,
     alloc_resources: core.resources.Manager.AllocatedData,
-    sets: DescriptorSets.Sets,
+    sets: core.engine.graphics_pipelines.DefaultDescription.Sets,
     cmd: vk.CommandBuffer,
 ) void {
     vk.CmdBindDescriptorSets(
@@ -224,7 +187,7 @@ pub fn recordCommands(
         null,
     );
 
-    const pc = GraphicsPushConstants{
+    const pc = PushConstants{
         .inverse_window_resolution = core.lib.math.Vec2.make(
             1.0 / @as(f32, @floatFromInt(window_extent.width)),
             1.0 / @as(f32, @floatFromInt(window_extent.height)),
@@ -236,7 +199,7 @@ pub fn recordCommands(
         self.pipeline_layout,
         vk.SHADER_STAGE_VERTEX_BIT,
         0,
-        @sizeOf(GraphicsPushConstants),
+        @sizeOf(PushConstants),
         &pc,
     );
     const offsets = [_]vk.DeviceSize{0};

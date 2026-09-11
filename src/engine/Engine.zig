@@ -3,8 +3,8 @@ const core = @import("../root.zig");
 const c = core.clibs;
 const vki = core.bindings.vulkan_init;
 const frames_mod = core.engine.frames;
-const Mesh3DPipeline = core.engine.pipelines.Mesh3DPipeline;
-const Mesh2DPipeline = core.engine.pipelines.Mesh2DPipeline;
+const Mesh3DPipeline = core.engine.graphics_pipelines.Mesh3DPipeline;
+const Mesh2DPipeline = core.engine.graphics_pipelines.Mesh2DPipeline;
 const Input = core.engine.Input;
 const vma_usage = core.bindings.vma_usage;
 const math_mod = core.lib.math;
@@ -42,16 +42,10 @@ resources: core.resources.Manager = undefined,
 
 world: core.engine.world.GameWorld,
 
-mesh_manipulation_system: core.engine.systems.MeshManipulation = undefined,
-maze_system: core.engine.systems.Maze = undefined,
-camera_system: core.engine.systems.Camera = undefined,
-draw_bg_system: core.engine.systems.DrawBackground = undefined,
+system_manager: core.engine.systems.Manager = undefined,
 
 mesh3D_pipeline: Mesh3DPipeline = undefined,
-mesh3D_pipeline_description: Mesh3DPipeline.Description = undefined,
-
 mesh2D_pipeline: Mesh2DPipeline = undefined,
-mesh2D_pipeline_description: Mesh2DPipeline.Description = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
 
@@ -86,63 +80,44 @@ pub fn deinit(self: *Self) void {
     checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
 
     self.swapchain.deinit(self.allocs.std, self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed swapchain", .{});
 
     c.imgui.impl_vulkan.Shutdown();
 
     self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed frames", .{});
 
     vk.DestroyDescriptorPool(self.logical_device.handle, self.imgui_descriptor_pool, self.alloc_cbs);
-    log.debug("destroyed imgui descriptor pool", .{});
 
-    // self.global_data.deinit(self.logical_device.handle, self.alloc_cbs);
     self.resources.deinit(self.allocs.std, self.logical_device.handle, self.alloc_cbs);
     self.allocated_resources.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     self.mesh3D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed mesh pipeline", .{});
-    self.mesh_manipulation_system.deinit(self.allocs);
-    self.maze_system.deinit(self.allocs.std, self.logical_device.handle, self.alloc_cbs);
-    self.draw_bg_system.deinit(self.logical_device.handle, self.alloc_cbs);
-
     self.mesh2D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed hud pipeline", .{});
+
+    self.system_manager.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed upload context", .{});
 
     vk.DestroyRenderPass(self.logical_device.handle, self.main_render_pass, self.alloc_cbs);
-    log.debug("destroyed main render pass", .{});
 
     var stats: c.vma.TotalStatistics = undefined;
     c.vma.CalculateStatistics(self.allocs.vma, &stats);
-    log.debug("VMA allocations still alive: {}\n", .{stats.total.statistics.allocationCount});
-    log.debug("VMA bytes still allocated: {}\n", .{stats.total.statistics.allocationBytes});
     c.vma.DestroyAllocator(self.allocs.vma);
-    log.debug("destroyed vma allocator", .{});
 
     vk.DestroyDevice(self.logical_device.handle, self.alloc_cbs);
-    log.debug("destroyed logical device", .{});
 
     // Maybe instance should have it's own deinit function?
     if (self.instance.debug_messenger != null) {
         const destroyFn = self.instance.getDestroyDebugUtilsMessengerFn() orelse @panic("Debug messenger present but there is no destroy function?")();
         destroyFn(self.instance.handle, self.instance.debug_messenger, self.alloc_cbs);
-        log.debug("destroyed debug messenger", .{});
     }
 
     vk.DestroySurfaceKHR(self.instance.handle, self.surface, self.alloc_cbs);
-    log.debug("destroyed surface", .{});
 
     vk.DestroyInstance(self.instance.handle, self.alloc_cbs);
-    log.debug("destroyed instance", .{});
 
     sdl.DestroyWindow(self.window);
-    log.debug("destroyed window", .{});
 
     sdl.Quit();
-    log.debug("quit sdl", .{});
 }
 
 pub fn run(self: *Self) void {
@@ -162,19 +137,14 @@ pub fn run(self: *Self) void {
             _ = sdl.SetWindowRelativeMouseMode(self.window, !is_relative_mouse);
         }
 
-        // there seems like theres room for some system container type
-        self.camera_system.update(self.*);
-        self.maze_system.update();
-        self.maze_system.trySyncResources(
-            self.allocated_resources,
-        );
-        self.mesh_manipulation_system.trySyncResources(
+        self.system_manager.update(self.*);
+
+        self.system_manager.trySyncResources(
             self.resources,
             self.allocated_resources,
             &self.world,
         );
 
-        self.camera_system.trySyncResources(self.allocated_resources);
         self.drawImgui();
         self.drawFrame();
     }
@@ -289,17 +259,10 @@ fn initVulkan(self: *Self) void {
     ) catch @panic("failed to create framebuffers");
 }
 
-pub fn addSystemCreateDataToResourceManager(self: *@This()) void {
-    self.maze_system.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
-    self.camera_system.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
-    self.draw_bg_system.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
-}
-
 // These bindings can be the same because they are not in the
 // same descriptor set
 // TODO
 // move these to where they are actually encapsulated
-const TEXTURE_SET_BINDING: u32 = 1;
 const MESHES_2D_METADATA_SET_BINDING: u32 = 0;
 /// honestly this whole function should be in Manager
 /// Allocates resources, creates descriptor layouts/pool
@@ -400,10 +363,8 @@ pub fn allocateResources(self: *Self) void {
 }
 
 pub fn initSystems(self: *Self, maze_system_ci: core.engine.systems.Maze.CreateInfo) void {
-    self.mesh_manipulation_system = .{};
-    self.maze_system = core.engine.systems.Maze.init(self.allocs.std, maze_system_ci) catch @panic("failed to create mesh maze");
-    self.camera_system = core.engine.systems.Camera.init(.{}, self.swapchain.extent) catch @panic("failed to create mesh maze");
-    self.draw_bg_system = core.engine.systems.DrawBackground.init(self.swapchain.extent);
+    self.system_manager = core.engine.systems.Manager.init(self.allocs.std, self.swapchain.extent, maze_system_ci);
+    self.system_manager.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
 }
 
 pub fn initPipelines(
@@ -411,14 +372,24 @@ pub fn initPipelines(
 ) void {
     self.initImgui();
 
-    self.maze_system.initPipeline(self.resources, self.alloc_cbs);
-    self.draw_bg_system.initPipeline(self.logical_device.handle, self.resources, self.alloc_cbs);
+    self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
 
-    self.initMesh3DPipeline();
-    self.initMesh2DPipeline();
+    const default_graphics_pipeline_description_layouts =
+        core.engine.graphics_pipelines.DefaultDescription.Layouts.init(.{
+            .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+            .samplers = self.resources.materials.samplers_descriptor_set_layout,
+            .texture = self.resources.materials.all_textures_descriptor_set_layout,
+            .meshes = self.resources.meshes3D.descriptor_set_layout,
+        });
+
+    self.initMesh3DPipeline(default_graphics_pipeline_description_layouts);
+    self.initMesh2DPipeline(default_graphics_pipeline_description_layouts);
 }
 
-fn initMesh3DPipeline(self: *Self) void {
+fn initMesh3DPipeline(
+    self: *Self,
+    default_graphics_pipeline_description_layouts: core.engine.graphics_pipelines.DefaultDescription.Layouts,
+) void {
     const vert_shader = core.engine.shaders.createShaderModule(
         "mesh3D.vert",
         self.logical_device.handle,
@@ -444,17 +415,13 @@ fn initMesh3DPipeline(self: *Self) void {
 
     self.mesh3D_pipeline = Mesh3DPipeline.init(
         .{
-            .descriptor_sets = .init(.{
-                .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
-                .samplers = self.resources.materials.samplers_descriptor_set_layout,
-                .texture = self.resources.materials.all_textures_descriptor_set_layout,
-                .meshes = self.resources.meshes3D.descriptor_set_layout,
-            }),
+            .layouts = default_graphics_pipeline_description_layouts,
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
             .vertex_shader = vert_shader,
             .fragment_shader = frag_shader,
+            .depth_compare_op = vk.COMPARE_OP_LESS,
         },
         self.alloc_cbs,
     );
@@ -465,7 +432,10 @@ fn initMesh3DPipeline(self: *Self) void {
     ) catch @panic("OOM");
 }
 
-fn initMesh2DPipeline(self: *Self) void {
+fn initMesh2DPipeline(
+    self: *Self,
+    default_graphics_pipeline_description_layouts: core.engine.graphics_pipelines.DefaultDescription.Layouts,
+) void {
     const vert_shader = core.engine.shaders.createShaderModule(
         "mesh2D.vert",
         self.logical_device.handle,
@@ -488,17 +458,13 @@ fn initMesh2DPipeline(self: *Self) void {
     );
     self.mesh2D_pipeline = Mesh2DPipeline.init(
         .{
-            .descriptor_sets = .init(.{
-                .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
-                .samplers = self.resources.materials.samplers_descriptor_set_layout,
-                .texture = self.resources.materials.all_textures_descriptor_set_layout,
-                .meshes = self.resources.meshes2D.descriptor_set_layout,
-            }),
+            .layouts = default_graphics_pipeline_description_layouts,
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
-            .vert_shader = vert_shader,
-            .frag_shader = frag_shader,
+            .vertex_shader = vert_shader,
+            .fragment_shader = frag_shader,
+            .depth_compare_op = null,
         },
         self.alloc_cbs,
     );
@@ -587,19 +553,7 @@ fn drawImgui(self: *Self) void {
     c.imgui.Text(if (is_relative_mouse) "Mouse: Relative" else "Mouse: Absolute");
     c.imgui.Text("Press escape to toggle mouse mode");
 
-    self.draw_bg_system.drawImgui();
-
-    self.mesh_manipulation_system.drawImgui(
-        self.allocs.std,
-        &self.mesh3D_pipeline,
-        &self.world,
-        self.resources,
-        self.allocated_resources,
-    );
-    self.maze_system.drawImgui(
-        // self.compute_maze_descriptor_sets.ui,
-    );
-    self.camera_system.drawImgui();
+    self.system_manager.drawImgui(self);
 
     c.imgui.Render();
 }
@@ -699,23 +653,7 @@ fn recordCommandBuffer(
     checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
 
-    self.maze_system.pipeline.bind(frame.main_command_buffer);
-    self.maze_system.pipeline.recordCommands(
-        self.allocated_resources,
-        self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-        self.allocated_resources.materials.writable_textures_descriptor_sets.get(core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME).?.set,
-        self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME).?.set,
-        self.maze_system,
-        frame.main_command_buffer,
-    );
-    self.draw_bg_system.pipeline.bind(frame.main_command_buffer);
-    self.draw_bg_system.pipeline.recordCommands(
-        self.allocated_resources,
-        self.swapchain,
-        image_idx,
-        self.allocated_resources.materials.writable_textures_descriptor_sets.get(core.engine.systems.DrawBackground.BACKGROUND_SET_NAME).?.set,
-        frame.main_command_buffer,
-    );
+    self.system_manager.recordComputeCommands(self.*, frame.main_command_buffer, image_idx);
 
     var render_pass_info = vk.RenderPassBeginInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -752,15 +690,18 @@ fn recordCommandBuffer(
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
-    self.mesh3D_pipeline.bind(frame.main_command_buffer);
-    self.mesh3D_pipeline.recordCommands(
-        &self.world,
-        core.engine.pipelines.Mesh3DPipeline.DescriptorSets.Sets.init(.{
+    const default_graphics_pipeline_description_sets =
+        core.engine.graphics_pipelines.DefaultDescription.Sets.init(.{
             .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
             .samplers = self.allocated_resources.materials.sampler_set,
             .meshes = self.allocated_resources.meshes3D.descriptor_set,
             .texture = self.allocated_resources.materials.all_textures_descriptor_set,
-        }),
+        });
+
+    self.mesh3D_pipeline.bind(frame.main_command_buffer);
+    self.mesh3D_pipeline.recordCommands(
+        &self.world,
+        default_graphics_pipeline_description_sets,
         frame.main_command_buffer,
     );
 
@@ -769,12 +710,7 @@ fn recordCommandBuffer(
         &self.world,
         self.swapchain.extent,
         self.allocated_resources,
-        core.engine.pipelines.Mesh2DPipeline.DescriptorSets.Sets.init(.{
-            .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-            .samplers = self.allocated_resources.materials.sampler_set,
-            .meshes = self.allocated_resources.meshes2D.descriptor_set,
-            .texture = self.allocated_resources.materials.all_textures_descriptor_set,
-        }),
+        default_graphics_pipeline_description_sets,
         frame.main_command_buffer,
     );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);

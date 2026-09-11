@@ -26,23 +26,75 @@ pub const engine = struct {
     pub const shaders = @import("engine/shaders.zig");
 
     pub const systems = struct {
+        pub const Manager = @import("engine/systems/Manager.zig");
         pub const MeshManipulation = @import("engine/systems/MeshManipulation.zig");
         pub const Maze = @import("engine/systems/Maze.zig");
         pub const Camera = @import("engine/systems/Camera.zig");
         pub const DrawBackground = @import("engine/systems/DrawBackground.zig");
     };
 
-    pub const pipelines = struct {
+    pub const graphics_pipelines = struct {
         pub const Mesh3DPipeline = @import("engine/pipelines/Mesh3DPipeline.zig");
         pub const Mesh2DPipeline = @import("engine/pipelines/Mesh2DPipeline.zig");
 
-        /// This function will error if anything but an enum is passed to it
-        pub fn PipelineDescriptorSets(DescriptorSets: type) type {
+        const DefaultDescriptorSets =
+            enum {
+                camera,
+                samplers,
+                texture,
+                meshes,
+            };
+
+        pub const DefaultDescription = Description(DefaultDescriptorSets);
+
+        pub fn Description(DescriptorSets: type) type {
             _ = @typeInfo(DescriptorSets).@"enum";
 
             return struct {
                 pub const Layouts = std.EnumArray(DescriptorSets, clibs.vk.DescriptorSetLayout);
                 pub const Sets = std.EnumArray(DescriptorSets, clibs.vk.DescriptorSet);
+
+                layouts: Layouts,
+                device: clibs.vk.Device,
+                render_pass: clibs.vk.RenderPass,
+                window_extent: clibs.vk.Extent2D,
+                vertex_shader: clibs.vk.ShaderModule,
+                fragment_shader: clibs.vk.ShaderModule,
+                depth_compare_op: ?clibs.vk.CompareOp,
+
+                pub fn createPipelineLayout(
+                    self: @This(),
+                    PushConstants: ?type,
+                    alloc_cbs: ?*clibs.vk.AllocationCallbacks,
+                ) clibs.vk.PipelineLayout {
+                    var layout: clibs.vk.PipelineLayout = undefined;
+                    var ci = clibs.vk.PipelineLayoutCreateInfo{
+                        .sType = clibs.vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                        .setLayoutCount = self.layouts.values.len,
+                        .pSetLayouts = &self.layouts.values,
+                    };
+
+                    if (PushConstants) |P| {
+                        const push_constant = clibs.vk.PushConstantRange{
+                            .offset = 0,
+                            .size = @sizeOf(P),
+                            // THIS MAY NEED TO BE MORE CONFIGURABLE
+                            .stageFlags = clibs.vk.SHADER_STAGE_VERTEX_BIT,
+                        };
+                        ci.pushConstantRangeCount = 1;
+                        ci.pPushConstantRanges = &push_constant;
+                    }
+
+                    bindings.vulkan_init.checkVk(clibs.vk.CreatePipelineLayout(
+                        self.device,
+                        &ci,
+                        alloc_cbs,
+                        &layout,
+                    )) catch
+                        @panic("failed to create pipeline layout");
+
+                    return layout;
+                }
             };
         }
 

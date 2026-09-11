@@ -148,7 +148,6 @@ pub fn main(init: std.process.Init) void {
     var engine = core.engine.Engine.init(
         a,
         init.io,
-
         core.resources.Manager.CreateInfo{
             .materials_files = &[_]core.loaders.mtl.MtlFile{
                 global_mat,
@@ -178,7 +177,6 @@ pub fn main(init: std.process.Init) void {
         },
     };
     engine.initSystems(maze_system_ci);
-    engine.addSystemCreateDataToResourceManager();
 
     engine.allocateResources();
 

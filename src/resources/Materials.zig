@@ -191,6 +191,11 @@ const MaterialLibraryEntry = struct {
     offset: u32,
 };
 
+pub const MaterialReference = struct {
+    library_name: ?[]const u8 = null,
+    name: []const u8,
+};
+
 pub const CreateTextureEntry = struct {
     extent: vk.Extent3D,
     format: vk.Format,
@@ -209,7 +214,6 @@ textures: std.StringHashMapUnmanaged(CreateTextureEntry) = .empty,
 sampler: vk.Sampler = undefined,
 
 samplers_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
-
 all_textures_descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 /// certain systems require writable access to certain textures
 writable_textures_descriptor_set_layouts: std.StringHashMapUnmanaged(WritableTextureSetLayout) = .empty,
@@ -236,6 +240,34 @@ pub fn createSampler(
     var sampler: vk.Sampler = undefined;
     checkVk(vk.CreateSampler(device, &DEFAULT_SAMPLER_CI, null, &sampler)) catch @panic("failed to create sampler");
     self.sampler = sampler;
+}
+
+pub fn getMaterialIndex(self: @This(), material_ref: MaterialReference) u32 {
+    if (material_ref.library_name) |n| {
+        const lib = self.libraries.get(n) orelse std.debug.panic(
+            \\ tried to access library with name '{s}' but it doesn't exist??
+        , .{n});
+
+        const mat = lib.library.metadata.get(material_ref.name) orelse std.debug.panic(
+            \\ tried to material in library '{s}' with name '{s}' but it doesn't exist??
+        , .{ n, material_ref.name });
+        return mat.@"0" + lib.offset;
+    }
+
+    // this isn't ideal
+    // because texture indices are not actually stored, we are assuming that the textures are uploaded
+    // in the same order that they are iterated here
+    // They *are* as of the writing of this comment
+    // but if that changes this will break
+    var iter = self.textures.keyIterator();
+    var i: usize = 0;
+    while (iter.next()) |tx_name| : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(tx_name, material_ref.name)) return i;
+    }
+
+    std.debug.panic(
+        \\ tried to find a material named: '{s}' but it does not exist in textures or libraries??
+    , .{material_ref.name});
 }
 
 /// Does not free sampler because ownership is passed to AllocatedData

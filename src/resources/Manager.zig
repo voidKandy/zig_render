@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("../root.zig");
 const vk = core.clibs.vk;
 const checkVk = core.bindings.vulkan_init.checkVk;
+const log = std.log.scoped(.MaterialManager);
 const Materials = @import("Materials.zig");
 const Meshes2D = @import("Meshes2D.zig");
 const MappedBuffers = @import("MappedBuffers.zig");
