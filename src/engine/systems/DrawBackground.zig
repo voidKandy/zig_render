@@ -49,7 +49,7 @@ pub fn registerSets(
 }
 
 pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!void {
-    try resources.materials.textures.put(
+    try resources.materials.appendWritableTexture(
         a,
         BACKGROUND_IMAGE_NAME,
         .{

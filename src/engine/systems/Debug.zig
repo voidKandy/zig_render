@@ -72,11 +72,6 @@ pub fn drawImgui(
     imgui.Text(if (is_relative_mouse) "Mouse: Relative" else "Mouse: Absolute");
     imgui.Text("Press escape to toggle mouse mode");
 
-    // imgui.Image(self.materials_textures_sets.valueIterator().items[0], imgui.ImVec2{ .x = 400, .y = 400 });
-    // var iter = self.materials_textures_sets.valueIterator();
-    // while (iter.next()) |value_ptr| {
-    //     imgui.Image(value_ptr.*, imgui.ImVec2{ .x = 400, .y = 400 });
-    // }
     var iter = self.materials_textures_sets.iterator();
     while (iter.next()) |entry| {
         imgui.Text(entry.key_ptr.ptr);

@@ -153,7 +153,7 @@ pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resou
         },
     );
 
-    try resources.materials.textures.put(
+    try resources.materials.appendWritableTexture(
         a,
         MAZE_RESOURCE_NAME,
         .{
@@ -193,15 +193,20 @@ pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resou
         },
     );
 
-    const mt_idx = resources.materials.getMaterialIndex(.{ .name = MAZE_RESOURCE_NAME });
     resources.meshes3D.appendMeshWithMaterialIndex(
         a,
         self.mesh3D,
         .IDENTITY,
-        mt_idx,
+        0,
     ) catch @panic("OOM");
 
-    resources.meshes2D.appendMesh(a, self.mesh2D, self.mesh2D_coordinates, mt_idx) catch @panic("OOM");
+    const mt_idx = resources.materials.material_indices.get(MAZE_RESOURCE_NAME).?;
+    resources.meshes2D.appendMesh(
+        a,
+        self.mesh2D,
+        self.mesh2D_coordinates,
+        @as(u32, @intCast(mt_idx)),
+    ) catch @panic("OOM");
 }
 
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {

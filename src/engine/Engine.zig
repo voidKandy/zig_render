@@ -367,8 +367,8 @@ pub fn initPipelines(
 ) void {
     self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
 
-    const default_graphics_pipeline_description_layouts =
-        core.engine.graphics_pipelines.DefaultDescription.Layouts.init(.{
+    var default_graphics_pipeline_description_layouts =
+        core.engine.graphics_pipelines.MeshPipelineDescription.Layouts.init(.{
             .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
             .samplers = self.resources.materials.samplers_descriptor_set_layout,
             .texture = self.resources.materials.all_textures_descriptor_set_layout,
@@ -376,12 +376,14 @@ pub fn initPipelines(
         });
 
     self.initMesh3DPipeline(default_graphics_pipeline_description_layouts);
+
+    default_graphics_pipeline_description_layouts.set(.meshes, self.resources.meshes2D.descriptor_set_layout);
     self.initMesh2DPipeline(default_graphics_pipeline_description_layouts);
 }
 
 fn initMesh3DPipeline(
     self: *Self,
-    default_graphics_pipeline_description_layouts: core.engine.graphics_pipelines.DefaultDescription.Layouts,
+    default_graphics_pipeline_description_layouts: core.engine.graphics_pipelines.MeshPipelineDescription.Layouts,
 ) void {
     const vert_shader = core.engine.shaders.createShaderModule(
         "mesh3D.vert",
@@ -427,7 +429,7 @@ fn initMesh3DPipeline(
 
 fn initMesh2DPipeline(
     self: *Self,
-    default_graphics_pipeline_description_layouts: core.engine.graphics_pipelines.DefaultDescription.Layouts,
+    default_graphics_pipeline_description_layouts: core.engine.graphics_pipelines.MeshPipelineDescription.Layouts,
 ) void {
     const vert_shader = core.engine.shaders.createShaderModule(
         "mesh2D.vert",
@@ -679,8 +681,8 @@ fn recordCommandBuffer(
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
-    const default_graphics_pipeline_description_sets =
-        core.engine.graphics_pipelines.DefaultDescription.Sets.init(.{
+    var graphics_pipeline_mesh_description_sets =
+        core.engine.graphics_pipelines.MeshPipelineDescription.Sets.init(.{
             .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
             .samplers = self.allocated_resources.materials.sampler_set,
             .meshes = self.allocated_resources.meshes3D.descriptor_set,
@@ -690,16 +692,17 @@ fn recordCommandBuffer(
     self.mesh3D_pipeline.bind(frame.main_command_buffer);
     self.mesh3D_pipeline.recordCommands(
         &self.world,
-        default_graphics_pipeline_description_sets,
+        graphics_pipeline_mesh_description_sets,
         frame.main_command_buffer,
     );
 
+    graphics_pipeline_mesh_description_sets.set(.meshes, self.allocated_resources.meshes2D.descriptor_set);
     self.mesh2D_pipeline.bind(frame.main_command_buffer);
     self.mesh2D_pipeline.recordCommands(
         &self.world,
         self.swapchain.extent,
         self.allocated_resources,
-        default_graphics_pipeline_description_sets,
+        graphics_pipeline_mesh_description_sets,
         frame.main_command_buffer,
     );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);

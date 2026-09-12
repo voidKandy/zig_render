@@ -38,7 +38,7 @@ pub const engine = struct {
         pub const Mesh3DPipeline = @import("engine/pipelines/Mesh3DPipeline.zig");
         pub const Mesh2DPipeline = @import("engine/pipelines/Mesh2DPipeline.zig");
 
-        const DefaultDescriptorSets =
+        const MeshPipelineDescriptorSets =
             enum {
                 camera,
                 samplers,
@@ -46,7 +46,7 @@ pub const engine = struct {
                 meshes,
             };
 
-        pub const DefaultDescription = Description(DefaultDescriptorSets);
+        pub const MeshPipelineDescription = Description(MeshPipelineDescriptorSets);
 
         pub fn Description(DescriptorSets: type) type {
             _ = @typeInfo(DescriptorSets).@"enum";

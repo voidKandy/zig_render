@@ -11,8 +11,11 @@ const log = std.log.scoped(.Meshes2D);
 pub const MetaData = extern struct {
     material_index: u32,
     _pad0: u32 = 0,
-    screen_coordinates: core.lib.math.Vec2,
+    screen_coordinates: core.lib.math.Vec2 align(8),
 };
+comptime {
+    std.debug.assert(@alignOf(MetaData) == 8);
+}
 
 pub const MeshRanges = struct {
     vertex: core.lib.mesh.RangeDesc,

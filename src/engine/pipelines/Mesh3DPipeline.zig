@@ -32,7 +32,7 @@ pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallback
 }
 
 pub fn init(
-    pd: core.engine.graphics_pipelines.DefaultDescription,
+    pd: core.engine.graphics_pipelines.MeshPipelineDescription,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) Self {
     var self = Self{};
@@ -225,7 +225,7 @@ pub fn bind(self: Self, cmd_buf: vk.CommandBuffer) void {
 pub fn recordCommands(
     self: Self,
     world: *core.engine.world.GameWorld,
-    sets: core.engine.graphics_pipelines.DefaultDescription.Sets,
+    sets: core.engine.graphics_pipelines.MeshPipelineDescription.Sets,
     /// TODO
     cmd: vk.CommandBuffer,
 ) void {

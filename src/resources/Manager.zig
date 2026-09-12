@@ -23,7 +23,11 @@ pub const Mesh3DCreateInfo = struct {
         obj: core.loaders.obj.ObjFile,
         info: struct {
             mesh: core.lib.mesh.Mesh3D,
-            material_idx: u32,
+            /// period separated by library name
+            /// `debug.black`
+            /// `debug.red`
+            /// `maze`
+            material_name: []const u8,
         },
     },
     transform: core.lib.math.Mat4 = .IDENTITY,
@@ -31,7 +35,7 @@ pub const Mesh3DCreateInfo = struct {
 
 pub const Mesh2DCreateInfo = struct {
     mesh: core.lib.mesh.Mesh2D,
-    material_index: u32,
+    material_name: []const u8,
     screen_coordinates: core.lib.math.Vec2,
 };
 
@@ -64,7 +68,7 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
 
     if (ci.materials_files) |mtlfls| {
         for (mtlfls) |fl| {
-            try materials.addMaterialsFile(a, fl);
+            try materials.appendMtlLibrary(a, fl);
         }
     }
 
@@ -103,11 +107,12 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
                     ) catch @panic("OOM");
                 },
                 .info => |info| {
+                    const material_idx = materials.material_indices.get(info.material_name).?;
                     meshes3D.appendMeshWithMaterialIndex(
                         a,
                         info.mesh,
                         cm3d.transform,
-                        info.material_idx,
+                        @as(u32, @intCast(material_idx)),
                     ) catch @panic("OOM");
                 },
             }
@@ -117,11 +122,12 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
     var meshes2D = try core.resources.Meshes2D.init(a);
     if (ci.meshes2D) |m2ds| {
         for (m2ds) |cm2d| {
+            const material_idx = materials.material_indices.get(cm2d.material_name).?;
             try meshes2D.appendMesh(
                 a,
                 cm2d.mesh,
                 cm2d.screen_coordinates,
-                cm2d.material_index,
+                @as(u32, @intCast(material_idx)),
             );
         }
     }

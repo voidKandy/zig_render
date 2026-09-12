@@ -15,6 +15,9 @@ pub const Vec2 = extern struct {
     x: f32,
     y: f32,
 
+    comptime {
+        std.debug.assert(@alignOf(Vec2) == 4);
+    }
     pub const ZERO = make(0.0, 0.0);
 
     pub inline fn fromSizedArray(array: [2]f32) Vec2 {
