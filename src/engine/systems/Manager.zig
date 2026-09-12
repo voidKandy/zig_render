@@ -4,6 +4,7 @@ const log = std.log.scoped(.SystemManager);
 const vk = core.clibs.vk;
 pub const MeshManipulation = @import("./MeshManipulation.zig");
 pub const Maze = @import("./Maze.zig");
+pub const Debug = @import("./Debug.zig");
 pub const Camera = @import("./Camera.zig");
 pub const DrawBackground = @import("./DrawBackground.zig");
 
@@ -13,13 +14,19 @@ mesh_manipulation: MeshManipulation,
 maze: Maze,
 camera: Camera,
 draw_background: DrawBackground,
+debug: Debug,
 
-pub fn init(a: std.mem.Allocator, swapchain_extent: vk.Extent2D, maze_system_ci: core.engine.systems.Maze.CreateInfo) @This() {
+pub fn init(
+    a: std.mem.Allocator,
+    swapchain_extent: vk.Extent2D,
+    maze_system_ci: core.engine.systems.Maze.CreateInfo,
+) @This() {
     return .{
         .mesh_manipulation = .{},
-        .maze = core.engine.systems.Maze.init(a, maze_system_ci) catch @panic("failed to create maze system"),
-        .camera = core.engine.systems.Camera.init(.{}, swapchain_extent) catch @panic("failed to create camera system"),
-        .draw_background = core.engine.systems.DrawBackground.init(swapchain_extent),
+        .maze = Maze.init(a, maze_system_ci) catch @panic("failed to create maze system"),
+        .debug = .{},
+        .camera = Camera.init(.{}, swapchain_extent) catch @panic("failed to create camera system"),
+        .draw_background = DrawBackground.init(swapchain_extent),
     };
 }
 
@@ -31,7 +38,32 @@ pub fn deinit(
 ) void {
     self.mesh_manipulation.deinit(allocs);
     self.maze.deinit(allocs.std, device, alloc_cbs);
+    self.debug.deinit(allocs.std);
     self.draw_background.deinit(device, alloc_cbs);
+}
+
+pub fn registerSets(
+    _: @This(),
+    a: std.mem.Allocator,
+    device: vk.Device,
+    resources: *core.resources.Manager,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) std.mem.Allocator.Error!void {
+    try Maze.registerSets(a, device, resources, alloc_cbs);
+    try Camera.registerSets(a, device, resources, alloc_cbs);
+    try DrawBackground.registerSets(a, device, resources, alloc_cbs);
+}
+
+/// wasnt sure what to call this
+/// currently only Debug has a need for access to
+/// resources after they are created but im sure this
+/// will change
+pub fn bind(
+    self: *@This(),
+    a: std.mem.Allocator,
+    alloc_resources: core.resources.Manager.AllocatedData,
+) void {
+    self.debug.bind(a, alloc_resources) catch @panic("OOM");
 }
 
 pub fn update(self: *@This(), engine: core.engine.Engine) void {
@@ -67,6 +99,7 @@ pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resou
 }
 
 pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
+    self.debug.drawImgui(engine.window);
     self.camera.drawImgui();
     self.draw_background.drawImgui();
     self.maze.drawImgui();

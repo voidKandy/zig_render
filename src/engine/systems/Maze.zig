@@ -10,6 +10,10 @@ maze_gpu_cells: []GPUMazeCell,
 push_constants: PushConstants,
 maze_update: bool = false,
 needs_gpu_sync: bool = true,
+mesh_options: core.lib.Maze.MeshOptions,
+mesh3D: core.lib.mesh.Mesh3D,
+mesh2D: core.lib.mesh.Mesh2D,
+mesh2D_coordinates: core.lib.math.Vec2,
 
 pipeline_description: ComputePipeline.Description,
 pipeline: ComputePipeline = undefined,
@@ -61,6 +65,7 @@ pub const GPUMazeCell = extern struct {
 pub const CreateInfo = struct {
     push_constants: PushConstants,
     pd: ComputePipeline.Description,
+    mesh_options: core.lib.Maze.MeshOptions,
 };
 
 pub fn init(
@@ -71,13 +76,34 @@ pub fn init(
     maze.generate(ci.push_constants.threshold, ci.push_constants.seed);
     const cells =
         try GPUMazeCell.arrayFromCellArray(a, maze.cells);
+    const maze_mesh3D = ci.mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
+
+    // this could be passed in `ci` but its fine here for now
+    const margin: f32 = 0.05;
+    const quad_size = 0.2;
+    const maze_quad = core.lib.mesh.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create maze quad");
 
     return .{
         .maze = maze,
         .maze_gpu_cells = cells,
         .push_constants = ci.push_constants,
         .pipeline_description = ci.pd,
+        .mesh_options = ci.mesh_options,
+        .mesh3D = maze_mesh3D,
+        .mesh2D = maze_quad,
+        .mesh2D_coordinates = core.lib.math.Vec2.make(
+            1.0 - (quad_size / 2.0) - margin,
+            margin,
+        ),
     };
+}
+
+pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+    self.maze.deinit(a);
+    a.free(self.maze_gpu_cells);
+    self.pipeline.deinit(device, alloc_cbs);
+    self.mesh3D.deinit(a);
+    self.mesh2D.deinit(a);
 }
 
 pub fn initPipeline(
@@ -87,12 +113,6 @@ pub fn initPipeline(
 ) void {
     self.pipeline =
         ComputePipeline.init(self.pipeline_description, resources, alloc_cbs);
-}
-
-pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-    self.maze.deinit(a);
-    a.free(self.maze_gpu_cells);
-    self.pipeline.deinit(device, alloc_cbs);
 }
 
 pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
@@ -170,16 +190,18 @@ pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resou
                     }{ .img = img });
                 }
             }.submit,
-            // .sampler_ci = vk.SamplerCreateInfo{
-            //     .sType = vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            //     .magFilter = vk.FILTER_NEAREST,
-            //     .minFilter = vk.FILTER_NEAREST,
-            //     .addressModeU = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            //     .addressModeV = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            //     .addressModeW = vk.SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-            // },
         },
     );
+
+    const mt_idx = resources.materials.getMaterialIndex(.{ .name = MAZE_RESOURCE_NAME });
+    resources.meshes3D.appendMeshWithMaterialIndex(
+        a,
+        self.mesh3D,
+        .IDENTITY,
+        mt_idx,
+    ) catch @panic("OOM");
+
+    resources.meshes2D.appendMesh(a, self.mesh2D, self.mesh2D_coordinates, mt_idx) catch @panic("OOM");
 }
 
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {

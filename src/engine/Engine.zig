@@ -303,27 +303,13 @@ pub fn allocateResources(self: *Self) void {
         });
     }
 
-    // should be some logic piped in for systems being able to register any sets they
-    // need to
-    core.engine.systems.Maze.registerSets(
-        self.allocs.std,
-        self.logical_device.handle,
-        &self.resources,
-        self.alloc_cbs,
-    ) catch @panic("OOM");
-    core.engine.systems.Camera.registerSets(
+    self.system_manager.registerSets(
         self.allocs.std,
         self.logical_device.handle,
         &self.resources,
         self.alloc_cbs,
     ) catch @panic("OOM");
 
-    core.engine.systems.DrawBackground.registerSets(
-        self.allocs.std,
-        self.logical_device.handle,
-        &self.resources,
-        self.alloc_cbs,
-    ) catch @panic("OOM");
     // BAD??
     const max_sets = 16;
     self.allocated_resources = self.resources.upload(
@@ -341,6 +327,10 @@ pub fn allocateResources(self: *Self) void {
         core.resources.Materials.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
+    self.system_manager.bind(self.allocs.std, self.allocated_resources);
+    // BAD should be in system manager
+    //
+    //
     self.allocated_resources.mapped_buffers.updateBufferSet(
         self.logical_device.handle,
         core.engine.systems.Camera.CAMERA_SET_NAME,
@@ -363,15 +353,18 @@ pub fn allocateResources(self: *Self) void {
 }
 
 pub fn initSystems(self: *Self, maze_system_ci: core.engine.systems.Maze.CreateInfo) void {
-    self.system_manager = core.engine.systems.Manager.init(self.allocs.std, self.swapchain.extent, maze_system_ci);
+    self.initImgui();
+    self.system_manager = core.engine.systems.Manager.init(
+        self.allocs.std,
+        self.swapchain.extent,
+        maze_system_ci,
+    );
     self.system_manager.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
 }
 
 pub fn initPipelines(
     self: *Self,
 ) void {
-    self.initImgui();
-
     self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
 
     const default_graphics_pipeline_description_layouts =
@@ -548,10 +541,6 @@ fn drawImgui(self: *Self) void {
     c.imgui.impl_vulkan.NewFrame();
     c.imgui.impl_sdl3.NewFrame();
     c.imgui.NewFrame();
-
-    const is_relative_mouse = c.sdl.GetWindowRelativeMouseMode(self.window) == true;
-    c.imgui.Text(if (is_relative_mouse) "Mouse: Relative" else "Mouse: Absolute");
-    c.imgui.Text("Press escape to toggle mouse mode");
 
     self.system_manager.drawImgui(self);
 

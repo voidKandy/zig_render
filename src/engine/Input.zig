@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.Input);
 const core = @import("../root.zig");
 const sdl = core.clibs.sdl;
+const imgui = core.clibs.imgui;
 const sdl_usage = core.bindings.sdl_usage;
 const math_mod = core.lib.math;
 
@@ -19,7 +20,9 @@ pub fn isDown(self: @This(), key: sdl_usage.KeyCode) bool {
 pub fn update(self: *@This(), event: sdl.Event) void {
     switch (sdl_usage.Event.from(event) catch return) {
         .Quit => self.quit = true,
-        .MouseWheel => self.scroll += event.wheel.y,
+        .MouseWheel => if (!imgui.GetIO().*.WantCaptureMouse) {
+            self.scroll += event.wheel.y;
+        },
         .KeyDown => {
             const key = sdl_usage.KeyCode.from(event.key.key) catch return;
             self.keys.set(@intFromEnum(key));

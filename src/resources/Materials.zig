@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const log = std.log.scoped(.Materials);
+
 const core = @import("../root.zig");
 const vma = core.clibs.vma;
 const vk = core.clibs.vk;
@@ -8,6 +8,7 @@ const vki = core.bindings.vulkan_init;
 const checkVk = vki.checkVk;
 const vma_usage = core.bindings.vma_usage;
 
+const log = std.log.scoped(.Materials);
 const Self = @This();
 
 const Metadata = struct {
@@ -251,7 +252,7 @@ pub fn getMaterialIndex(self: @This(), material_ref: MaterialReference) u32 {
         const mat = lib.library.metadata.get(material_ref.name) orelse std.debug.panic(
             \\ tried to material in library '{s}' with name '{s}' but it doesn't exist??
         , .{ n, material_ref.name });
-        return mat.@"0" + lib.offset;
+        return @as(u32, @intCast(mat.@"0" + lib.offset));
     }
 
     // this isn't ideal
@@ -260,9 +261,9 @@ pub fn getMaterialIndex(self: @This(), material_ref: MaterialReference) u32 {
     // They *are* as of the writing of this comment
     // but if that changes this will break
     var iter = self.textures.keyIterator();
-    var i: usize = 0;
+    var i: u32 = 0;
     while (iter.next()) |tx_name| : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(tx_name, material_ref.name)) return i;
+        if (std.ascii.eqlIgnoreCase(tx_name.*, material_ref.name)) return i;
     }
 
     std.debug.panic(
@@ -490,6 +491,7 @@ pub fn upload(
             ci.usages,
         );
         const view_ci = vki.imageViewCreateInfo(image.format, image.image, ci.aspect_flags);
+
         checkVk(vk.CreateImageView(logical_device.handle, &view_ci, alloc_cbs, &image.view)) catch
             @panic("failed to create maze image view");
 
@@ -567,6 +569,8 @@ pub const AllocatedData = struct {
     all_material_names: [][:0]const u8,
 
     libraries: std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData),
+
+    /// All writable textures
     textures: std.StringHashMapUnmanaged(vma_usage.AllocatedImage),
 
     sampler: vk.Sampler,
@@ -609,6 +613,43 @@ pub const AllocatedData = struct {
         self.writable_textures_descriptor_sets.deinit(allocs.std);
 
         vk.DestroySampler(device, self.sampler, alloc_cbs);
+    }
+
+    /// this function is a worst case O(n)
+    /// not great but fine for now
+    pub fn getMaterialByName(self: @This(), name: []const u8) ?vma_usage.AllocatedImage {
+        var lib_iter = self.libraries.iterator();
+        var lib_cutoff: usize = 0;
+        while (lib_iter.next()) |entry| {
+            lib_cutoff += entry.value_ptr.images.len;
+        }
+
+        const names_idx = blk: {
+            for (self.all_material_names, 0..) |n, i| {
+                if (std.ascii.eqlIgnoreCase(n, name)) break :blk i;
+            }
+            std.debug.panic(
+                \\ did not find '{s}' in materials
+            , .{name});
+        };
+
+        if (names_idx < lib_cutoff) {
+            lib_iter = self.libraries.iterator();
+            var i: usize = 0;
+            while (lib_iter.next()) |entry| {
+                for (entry.value_ptr.images) |img| {
+                    if (i == names_idx) return img;
+                    i += 1;
+                }
+            }
+        } else {
+            const tx = self.textures.get(name) orelse std.debug.panic(
+                \\ expected to find a texture with name '{s}'
+            , .{name});
+            return tx;
+        }
+
+        return null;
     }
 
     pub fn updateStaticTextureSet(

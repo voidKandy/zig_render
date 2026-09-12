@@ -29,6 +29,7 @@ pub const engine = struct {
         pub const Manager = @import("engine/systems/Manager.zig");
         pub const MeshManipulation = @import("engine/systems/MeshManipulation.zig");
         pub const Maze = @import("engine/systems/Maze.zig");
+        pub const Debug = @import("engine/systems/Debug.zig");
         pub const Camera = @import("engine/systems/Camera.zig");
         pub const DrawBackground = @import("engine/systems/DrawBackground.zig");
     };

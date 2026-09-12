@@ -800,9 +800,11 @@ pub const vk = struct {
 };
 
 pub const imgui = struct {
-    pub const ImGuiContext = c.ImGuiContext;
-    pub const ImGuiIO = c.ImGuiIO;
-    pub const ImGuiStyle = c.ImGuiStyle;
+    pub const GetIO = c.ImGui_GetIO;
+
+    pub const Context = c.ImGuiContext;
+    pub const IO = c.ImGuiIO;
+    pub const Style = c.ImGuiStyle;
     pub const ImDrawData = c.ImDrawData;
     pub const ImDrawList = c.ImDrawList;
     pub const ImFontAtlas = c.ImFontAtlas;
