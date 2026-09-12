@@ -454,7 +454,8 @@ pub fn upload(
     physical_device: vki.PhysicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!AllocatedData {
-    var all_names = try std.ArrayList([:0]const u8).initCapacity(allocs.std, self.amountTotalTextures());
+    var material_indices: std.StringHashMapUnmanaged(usize) = .empty;
+    var material_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8) = .empty;
 
     var libs = std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData).empty;
     var mat_libs_iter = self.libraries.iterator();
@@ -467,7 +468,11 @@ pub fn upload(
             alloc_cbs,
         );
         libs.put(allocs.std, mat.key_ptr.*, uploaded) catch @panic("OOM");
-        all_names.appendSliceAssumeCapacity(mat.value_ptr.library.material_names);
+
+        for (mat.value_ptr.library.material_names, 0..) |name, i| {
+            try material_indices.put(allocs.std, name, i + mat.value_ptr.offset);
+            try material_names_reverse_lookup.put(allocs.std, i + mat.value_ptr.offset, name);
+        }
     }
 
     var textures = std.StringHashMapUnmanaged(vma_usage.AllocatedImage).empty;
@@ -498,7 +503,10 @@ pub fn upload(
         if (ci.initial_transition_function) |func| func(logical_device, upload_ctx, image.image);
 
         textures.putAssumeCapacity(entry.key_ptr.*, image);
-        all_names.appendAssumeCapacity(try allocs.std.dupeZ(u8, entry.key_ptr.*));
+        const name = try allocs.std.dupeZ(u8, entry.key_ptr.*);
+
+        try material_indices.put(allocs.std, name, material_indices.count());
+        try material_names_reverse_lookup.put(allocs.std, material_names_reverse_lookup.count(), name);
     }
 
     var smpl_set: vk.DescriptorSet = undefined;
@@ -558,7 +566,9 @@ pub fn upload(
         .libraries = libs,
         .textures = textures,
         .sampler = self.sampler,
-        .all_material_names = try all_names.toOwnedSlice(allocs.std),
+
+        .material_indices = material_indices,
+        .material_names_reverse_lookup = material_names_reverse_lookup,
         .sampler_set = smpl_set,
         .all_textures_descriptor_set = tx_set,
         .writable_textures_descriptor_sets = writable_sets,
@@ -566,7 +576,8 @@ pub fn upload(
 }
 
 pub const AllocatedData = struct {
-    all_material_names: [][:0]const u8,
+    material_indices: std.StringHashMapUnmanaged(usize),
+    material_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8),
 
     libraries: std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData),
 
@@ -606,10 +617,8 @@ pub const AllocatedData = struct {
             t.deinit(allocs.vma, device, alloc_cbs);
         self.textures.deinit(allocs.std);
 
-        for (self.all_material_names) |n|
-            allocs.std.free(n);
-
-        allocs.std.free(self.all_material_names);
+        self.material_indices.deinit(allocs.std);
+        self.material_names_reverse_lookup.deinit(allocs.std);
         self.writable_textures_descriptor_sets.deinit(allocs.std);
 
         vk.DestroySampler(device, self.sampler, alloc_cbs);
@@ -617,36 +626,30 @@ pub const AllocatedData = struct {
 
     /// this function is a worst case O(n)
     /// not great but fine for now
-    pub fn getMaterialByName(self: @This(), name: []const u8) ?vma_usage.AllocatedImage {
+    pub fn getMaterialResource(self: @This(), idx: usize) ?vma_usage.AllocatedImage {
         var lib_iter = self.libraries.iterator();
         var lib_cutoff: usize = 0;
         while (lib_iter.next()) |entry| {
             lib_cutoff += entry.value_ptr.images.len;
         }
 
-        const names_idx = blk: {
-            for (self.all_material_names, 0..) |n, i| {
-                if (std.ascii.eqlIgnoreCase(n, name)) break :blk i;
-            }
-            std.debug.panic(
-                \\ did not find '{s}' in materials
-            , .{name});
-        };
-
-        if (names_idx < lib_cutoff) {
+        if (idx < lib_cutoff) {
             lib_iter = self.libraries.iterator();
             var i: usize = 0;
             while (lib_iter.next()) |entry| {
                 for (entry.value_ptr.images) |img| {
-                    if (i == names_idx) return img;
+                    if (i == idx) return img;
                     i += 1;
                 }
             }
         } else {
-            const tx = self.textures.get(name) orelse std.debug.panic(
-                \\ expected to find a texture with name '{s}'
-            , .{name});
-            return tx;
+            var iter = self.textures.iterator();
+            const relative_idx = idx - lib_cutoff;
+            var i: usize = 0;
+            while (iter.next()) |entry| {
+                if (i == relative_idx) return entry.value_ptr.*;
+                i += 1;
+            }
         }
 
         return null;
@@ -658,7 +661,7 @@ pub const AllocatedData = struct {
         device: vk.Device,
         bindings: Bindings,
     ) std.mem.Allocator.Error!void {
-        const texture_count = self.all_material_names.len;
+        const texture_count = self.material_indices.count();
 
         var image_infos = try a.alloc(vk.DescriptorImageInfo, texture_count);
         defer a.free(image_infos);

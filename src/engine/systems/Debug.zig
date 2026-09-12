@@ -20,28 +20,31 @@ pub fn bind(
     a: std.mem.Allocator,
     alloc_resources: core.resources.Manager.AllocatedData,
 ) std.mem.Allocator.Error!void {
-    for (alloc_resources.materials.all_material_names) |name| {
+    var iter =
+        alloc_resources.materials.material_indices.keyIterator();
+    while (iter.next()) |name| {
         if (std.mem.eql(
             u8,
-            name,
+            name.*,
             // background image will not be in correct layout, so we dont allow it to be added
             core.engine.systems.DrawBackground.BACKGROUND_IMAGE_NAME,
         )) continue;
 
-        const mtl = alloc_resources.materials.getMaterialByName(name) orelse
-            std.debug.panic(
-                \\ could not find material with name {s}
-            , .{name});
+        const mt_idx = alloc_resources.materials.material_indices.get(name.*) orelse std.debug.panic(
+            \\ could not find index for material names '{s}'
+        , .{name.*});
+
+        const img = alloc_resources.materials.getMaterialResource(mt_idx).?;
 
         const set = imgui.impl_vulkan.AddTexture(
             alloc_resources.materials.sampler,
-            mtl.view,
+            img.view,
             vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         );
         log.debug(
             \\ created set for {s}
-        , .{name});
-        try self.materials_textures_sets.put(a, name, set);
+        , .{name.*});
+        try self.materials_textures_sets.put(a, name.*, set);
     }
 }
 

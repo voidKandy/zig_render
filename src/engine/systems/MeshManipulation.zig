@@ -123,7 +123,7 @@ pub fn drawImgui(
 
             var mat_idx: c_int = @intCast(mesh_metadatas[0].material_index);
 
-            const mat_name = alloc_resources.materials.all_material_names[@as(usize, @intCast(mat_idx))];
+            const mat_name = alloc_resources.materials.material_names_reverse_lookup.get(@as(usize, @intCast(mat_idx))).?;
             imgui.Text("Material Name: %s", mat_name.ptr);
 
             if (imgui.InputInt("Material Index", &mat_idx)) {
