@@ -152,7 +152,7 @@ pub fn init(
     defer maze_quad.deinit(a);
     const coordinates = core.lib.math.Vec2.make(
         1.0 - (quad_size / 2.0) - margin,
-        margin,
+        1.0 - margin - quad_size,
     );
 
     const mt_idx = resources.materials.material_indices.get(MAZE_RESOURCE_NAME).?;

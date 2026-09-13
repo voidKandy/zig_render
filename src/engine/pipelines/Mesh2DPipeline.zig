@@ -83,8 +83,7 @@ pub fn init(
     const raster_ci = vk.PipelineRasterizationStateCreateInfo{
         .sType = vk.STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .polygonMode = vk.POLYGON_MODE_FILL,
-        // BAD
-        .cullMode = vk.CULL_MODE_NONE,
+        .cullMode = vk.CULL_MODE_BACK_BIT,
         .frontFace = vk.FRONT_FACE_COUNTER_CLOCKWISE,
         .lineWidth = 1.0,
     };

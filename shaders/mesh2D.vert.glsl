@@ -33,7 +33,7 @@ void main() {
 
     vec2 ndc;
     ndc.x = screenPos.x * 2.0 - 1.0;
-    ndc.y = screenPos.y * 2.0 - 1.0;
+    ndc.y = -(screenPos.y * 2.0 - 1.0);
 
 
     if (gl_VertexIndex == 0 && gl_InstanceIndex == 0) {

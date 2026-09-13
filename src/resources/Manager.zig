@@ -201,26 +201,22 @@ fn createDescriptorPool(
     const pool_sizes = [_]vk.DescriptorPoolSize{
         .{
             .type = vk.DESCRIPTOR_TYPE_SAMPLER,
-            // BAD
             .descriptorCount = 1,
             // .descriptorCount = self.materials.textures.size,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            // BAD
             .descriptorCount = 8,
             // .descriptorCount = self.materials.textures.size,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             // .descriptorCount = self.mapped_buffers.size * 2,
-            // BAD
             .descriptorCount = 8,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             // .descriptorCount = self.mapped_buffers.size * 2,
-            // BAD
             .descriptorCount = 4,
         },
         .{
