@@ -265,44 +265,18 @@ pub fn EntityStore(
 
         /// Archetypes can easily be expressed through signatures:
         /// ```zig
-        /// var archetype = Signature.initZeros();
-        /// archetype.set(@intFromEnum(ComponentTag.mycomponent));
-        /// archetype.set(@intFromEnum(ComponentTag.othercomponent));
+        /// var archetype = Signature.initEmpty();
+        /// archetype.insert(@intFromEnum(ComponentTag.mycomponent));
+        /// archetype.insert(@intFromEnum(ComponentTag.othercomponent));
         /// ```
-        pub const Signature = std.bit_set.IntegerBitSet(N_COMPONENTS);
+        pub const Signature = std.EnumSet(Meta.ComponentTag);
 
         pub fn entityHandle(self: *ThisStore, entity_id: u32) error{NoData}!EntityHandle {
             var sig =
                 self.entities.manager.getData(entity_id) orelse return error.NoData;
             return EntityHandle{ .ecs = self, .identifier = entity_id, .signature = &sig };
         }
-        /// Returns the signature associated with the given component
-        pub fn componentSignature(tag: Meta.ComponentTag) Signature {
-            var sig = Signature.initEmpty();
-            sig.set(@intFromEnum(tag));
-            return sig;
-        }
-        /// Returns the signature associated with the given component
-        pub fn componentsSignature(tags: []Meta.ComponentTag) Signature {
-            var sig = Signature.initEmpty();
-            for (tags) |c| {
-                sig.set(@intFromEnum(c));
-            }
-            return sig;
-        }
 
-        /// Returns the signature associated with the given components
-        // pub inline fn signatureComponents(signature: Signature) []ComponentTag {
-        //     var all: [N_COMPONENTS]ComponentTag = undefined;
-        //     var amt: usize = 0;
-        //     for (0..Signature.bit_length, &all) |i, *tag| {
-        //         if (signature.isSet(i)) {
-        //             tag.* = @intFromEnum(i);
-        //             amt += 1;
-        //         }
-        //     }
-        //     return &all;
-        // }
         pub inline fn componentType(variant: Meta.ComponentTag) type {
             const idx = @intFromEnum(variant);
             return @typeInfo(Options.components).@"struct".fields[idx].type;
@@ -349,10 +323,6 @@ pub fn EntityStore(
         pub const QueryStatement = struct {
             rule: QueryRule,
             sig: Signature,
-            // component_rules: ?[]const ComponentRule = null,
-            pub fn new(rule: QueryRule, components: []const Meta.ComponentTag) @This() {
-                return .{ .rule = rule, .sig = componentsSignature(@constCast(components)) };
-            }
         };
 
         /// Query can either directly look for an entity by id (id)
@@ -488,7 +458,16 @@ pub fn EntityStore(
             // expects to be passed `T` for `component`
             // **NEVER** use multiple allocators for a single instance
             pub fn insert(self: *@This(), comptime which: Meta.ComponentTag, idx: usize, component: anytype) void {
-                if (@FieldType(Meta.ComponentUnion, @tagName(which)) != @TypeOf(component)) @compileError("Passed invalid type to insert!");
+                if (@FieldType(Meta.ComponentUnion, @tagName(which)) != @TypeOf(component)) @compileError(
+                    std.fmt.comptimePrint(
+                        \\ Passed invalid type to insert!
+                        \\ expected: {s}
+                        \\ got: {s}
+                    , .{
+                        @typeName(@FieldType(Meta.ComponentUnion, @tagName(which))),
+                        @typeName(@TypeOf(component)),
+                    }),
+                );
 
                 @field(self.arrays, @tagName(which))[idx] = component;
             }
@@ -597,9 +576,7 @@ pub fn EntityStore(
             pub fn addComponent(self: *@This(), comptime which: Meta.ComponentTag, component: anytype) void {
                 const idx = self.index() orelse @panic("NO INDEX?");
                 var sig = self.ecs.entities.manager.data[idx] orelse @panic("NO DATA?");
-                std.log.debug("sig: {b}\n", .{sig.mask});
-                sig.set(@intFromEnum(which));
-                std.log.debug("changed sig: {b}\n", .{sig.mask});
+                sig.insert(which);
                 self.ecs.entities.manager.data[idx] = sig;
                 self.ecs.components.insert(which, idx, component);
             }

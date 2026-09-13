@@ -93,6 +93,10 @@ pub fn main(init: std.process.Init) void {
     );
     defer engine.deinit();
 
+    // BAD
+    // dont like consumer calling this
+    engine.resources.registerInWorld(&engine.world);
+
     const maze_system_ci = core.engine.systems.Maze.CreateInfo{
         .push_constants = core.engine.systems.Maze.PushConstants{
             .width = 10,

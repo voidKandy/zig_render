@@ -244,48 +244,6 @@ pub fn createSampler(
     self.sampler = sampler;
 }
 
-// pub const MaterialReference = struct {
-//     library_name: ?[]const u8 = null,
-//     name: []const u8,
-// };
-
-/// mtl_ref: period separated by library name
-/// `debug.black`
-/// `debug.red`
-/// `maze`
-pub fn getMaterialIndex(self: @This(), mtl_ref: []const u8) u32 {
-    const library_name = if (std.ascii.findIgnoreCase(mtl_ref, ".")) |i|
-        mtl_ref[0..i]
-    else
-        null;
-    const mtl_name = if (library_name) |ln| mtl_ref[ln.len..] else mtl_ref;
-    if (library_name) |n| {
-        const lib = self.libraries.get(n) orelse std.debug.panic(
-            \\ tried to access library with name '{s}' but it doesn't exist??
-        , .{n});
-
-        const mat = lib.library.metadata.get(mtl_ref.name) orelse std.debug.panic(
-            \\ tried to material in library '{s}' with name '{s}' but it doesn't exist??
-        , .{ n, mtl_ref.name });
-        return @as(u32, @intCast(mat.@"0" + lib.offset));
-    }
-
-    // this isn't ideal
-    // because texture indices are not actually stored, we are assuming that the textures are uploaded
-    // in the same order that they are iterated here
-    // They *are* as of the writing of this comment
-    // but if that changes this will break
-    var iter = self.textures.keyIterator();
-    var i: u32 = 0;
-    while (iter.next()) |tx_name| : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(tx_name.*, mtl_name)) return i;
-    }
-
-    std.debug.panic(
-        \\ tried to find a material named: '{s}' but it does not exist in textures or libraries??
-    , .{mtl_ref.name});
-}
-
 /// Does not free sampler because ownership is passed to AllocatedData
 pub fn deinit(
     self: *@This(),
@@ -314,11 +272,12 @@ pub fn appendMtlLibrary(self: *@This(), a: std.mem.Allocator, file: core.loaders
 
     const offset = self.amountTotalTextures();
     for (lib.material_names, 0..) |name, i| {
-        try self.material_indices.put(a, name, i + offset);
-        try self.material_names_reverse_lookup.put(a, i + offset, name);
+        const full_name = try std.fmt.allocPrint(a, "{s}.{s}", .{ lib.library_name, name });
+        try self.material_indices.put(a, full_name, i + offset);
+        try self.material_names_reverse_lookup.put(a, i + offset, full_name);
     }
 
-    try self.libraries.put(a, file.name, .{
+    try self.libraries.put(a, lib.library_name, .{
         .library = lib,
         .offset = offset,
     });

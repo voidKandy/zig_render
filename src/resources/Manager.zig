@@ -140,6 +140,25 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
     };
 }
 
+pub fn registerInWorld(
+    self: @This(),
+    world: *core.engine.world.GameWorld,
+) void {
+    for (self.meshes3D.meshes.items) |handle| {
+        var ent = world.entities.register(null) catch @panic("OOM");
+        ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+            .handle = handle,
+        });
+    }
+
+    for (self.meshes2D.ranges.items) |ranges| {
+        var ent = world.entities.register(null) catch @panic("OOM");
+        ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
+            .ranges = ranges,
+        });
+    }
+}
+
 pub fn createImmutableData(self: *@This(), device: vk.Device) void {
     self.materials.createSampler(device);
 }

@@ -290,19 +290,6 @@ pub fn allocateResources(self: *Self) void {
         self.alloc_cbs,
     );
 
-    for (self.resources.meshes3D.meshes.items) |handle| {
-        var ent = self.world.entities.register(null) catch @panic("OOM");
-        ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
-            .handle = handle,
-        });
-    }
-    for (self.resources.meshes2D.ranges.items) |ranges| {
-        var ent = self.world.entities.register(null) catch @panic("OOM");
-        ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
-            .ranges = ranges,
-        });
-    }
-
     self.system_manager.registerSets(
         self.allocs.std,
         self.logical_device.handle,
@@ -359,7 +346,7 @@ pub fn initSystems(self: *Self, maze_system_ci: core.engine.systems.Maze.CreateI
         self.swapchain.extent,
         maze_system_ci,
     );
-    self.system_manager.addCreateData(self.allocs.std, &self.resources) catch @panic("OOM");
+    self.system_manager.addCreateData(self.allocs.std, &self.resources, &self.world) catch @panic("OOM");
 }
 
 pub fn initPipelines(

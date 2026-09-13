@@ -10,9 +10,16 @@ maze_gpu_cells: []GPUMazeCell,
 push_constants: PushConstants,
 maze_update: bool = false,
 needs_gpu_sync: bool = true,
+update_mesh: bool = false,
 mesh_options: core.lib.Maze.MeshOptions,
+
 mesh3D: core.lib.mesh.Mesh3D,
 mesh2D: core.lib.mesh.Mesh2D,
+/// Populated when added to world in addCreateData
+mesh3D_id: ?u32 = null,
+/// Populated when added to world in addCreateData
+mesh2D_id: ?u32 = null,
+
 mesh2D_coordinates: core.lib.math.Vec2,
 
 pipeline_description: ComputePipeline.Description,
@@ -140,7 +147,16 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
     );
 }
 
-pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!void {
+/// TODO
+/// rename
+/// this also registers entities in the world
+pub fn addCreateData(
+    self: *@This(),
+    a: std.mem.Allocator,
+    resources: *core.resources.Manager,
+    world: *core.engine.world.GameWorld,
+) std.mem.Allocator.Error!void {
+    std.debug.assert(self.mesh2D_id == null and self.mesh3D_id == null);
     try resources.mapped_buffers.creates.put(
         a,
         MAZE_RESOURCE_NAME,
@@ -200,6 +216,12 @@ pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resou
         0,
     ) catch @panic("OOM");
 
+    var mesh3d_entity = try world.entities.register(null);
+    mesh3d_entity.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+        .handle = resources.meshes3D.meshes.getLast(),
+    });
+    self.mesh3D_id = mesh3d_entity.identifier;
+
     const mt_idx = resources.materials.material_indices.get(MAZE_RESOURCE_NAME).?;
     resources.meshes2D.appendMesh(
         a,
@@ -207,6 +229,12 @@ pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resou
         self.mesh2D_coordinates,
         @as(u32, @intCast(mt_idx)),
     ) catch @panic("OOM");
+
+    var mesh2d_entity = try world.entities.register(null);
+    mesh2d_entity.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
+        .ranges = resources.meshes2D.ranges.getLast(),
+    });
+    self.mesh2D_id = mesh2d_entity.identifier;
 }
 
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
@@ -216,6 +244,10 @@ pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.
         );
         @memcpy(aligned_maze, self.maze_gpu_cells);
         self.needs_gpu_sync = false;
+
+        // alloc_resources.meshes3D.vertex_buffer
+        // add check for 3d or 2d gpu sync
+        // const aligned_maze_mesh = @ptrCast();
     }
 }
 
@@ -233,6 +265,10 @@ pub fn update(
         self.maze_update = false;
         self.needs_gpu_sync = true;
     }
+
+    // if (self.update_mesh) {
+    //     const maze_mesh3D = self.mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
+    // }
 }
 
 pub fn drawImgui(
@@ -246,6 +282,11 @@ pub fn drawImgui(
         self.maze.seed = @as(u64, @intCast(seed));
         self.maze_update = true;
     }
+
+    if (imgui.Button(
+        "Recreate mesh?",
+    )) self.update_mesh = true;
+
     defer imgui.End();
     if (!shown) return;
     // imgui.Image(ui_set, imgui.ImVec2{ .x = 400, .y = 400 });

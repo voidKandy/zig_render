@@ -206,11 +206,10 @@ pub fn recordCommands(
     vk.CmdBindVertexBuffers(cmd, 0, 1, &alloc_resources.meshes2D.vertex_buffer.buffer, &offsets);
     vk.CmdBindIndexBuffer(cmd, alloc_resources.meshes2D.index_buffer.buffer, 0, vk.INDEX_TYPE_UINT32);
 
-    const query = core.engine.world.GameWorld.Query{ .is = .{ .rule = .at_least, .sig = s: {
-        var s = core.engine.world.GameWorld.Signature.initEmpty();
-        s.set(@intFromEnum(core.engine.world.GameWorld.Meta.ComponentTag.mesh2D));
-        break :s s;
-    } } };
+    const query = core.engine.world.GameWorld.Query{ .is = .{
+        .rule = .at_least,
+        .sig = core.engine.world.GameWorld.Signature.initOne(.mesh2D),
+    } };
     var mesh_entities_iter = world.queryEntities(query);
 
     var idx: usize = 0;

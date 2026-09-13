@@ -20,6 +20,7 @@ comptime {
 pub const MeshRanges = struct {
     vertex: core.lib.mesh.RangeDesc,
     index: core.lib.mesh.RangeDesc,
+    metadata_idx: usize,
 };
 
 pub const AllocatedData = struct {
@@ -152,6 +153,7 @@ pub fn appendMesh(
             .offset = @intCast(self.indices.items.len),
             .range = @intCast(mesh.indices.len),
         },
+        .metadata_idx = self.amt_meshes,
     };
     try self.vertices.appendSlice(a, mesh.vertices);
     // indices need to be offset by the current vertex count

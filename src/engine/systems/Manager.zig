@@ -92,8 +92,13 @@ pub fn trySyncResources(
     self.camera.trySyncResources(allocated_resources);
 }
 
-pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!void {
-    try self.maze.addCreateData(a, resources);
+pub fn addCreateData(
+    self: *@This(),
+    a: std.mem.Allocator,
+    resources: *core.resources.Manager,
+    world: *core.engine.world.GameWorld,
+) std.mem.Allocator.Error!void {
+    try self.maze.addCreateData(a, resources, world);
     try self.camera.addCreateData(a, resources);
     try self.draw_background.addCreateData(a, resources);
 }
