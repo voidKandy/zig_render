@@ -315,38 +315,21 @@ pub fn allocateResources(self: *Self) void {
     ) catch @panic("OOM");
 
     self.system_manager.bind(self.allocs.std, self.allocated_resources);
-    // BAD should be in system manager
-    //
-    //
-    self.allocated_resources.mapped_buffers.updateBufferSet(
-        self.logical_device.handle,
-        core.engine.systems.Camera.CAMERA_SET_NAME,
-    );
-
-    self.allocated_resources.mapped_buffers.updateBufferSet(
-        self.logical_device.handle,
-        core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME,
-    );
-
-    self.allocated_resources.materials.updateWritableTextureSet(
-        self.logical_device.handle,
-        core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME,
-    );
-
-    self.allocated_resources.materials.updateWritableTextureSet(
-        self.logical_device.handle,
-        core.engine.systems.DrawBackground.BACKGROUND_SET_NAME,
-    );
+    self.system_manager.updateSets(self.logical_device.handle, &self.allocated_resources);
 }
 
-pub fn initSystems(self: *Self, maze_system_ci: core.engine.systems.Maze.CreateInfo) void {
+pub fn initSystems(
+    self: *Self,
+    maze_system_ci: core.engine.systems.Maze.CreateInfo,
+) void {
     self.initImgui();
     self.system_manager = core.engine.systems.Manager.init(
         self.allocs.std,
+        &self.world,
+        &self.resources,
         self.swapchain.extent,
         maze_system_ci,
-    );
-    self.system_manager.addCreateData(self.allocs.std, &self.resources, &self.world) catch @panic("OOM");
+    ) catch @panic("OOM");
 }
 
 pub fn initPipelines(

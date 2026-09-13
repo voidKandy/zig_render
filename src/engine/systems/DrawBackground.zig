@@ -13,7 +13,29 @@ pipeline: ComputePipeline = undefined,
 pub const BACKGROUND_SET_NAME = "background_set";
 pub const BACKGROUND_IMAGE_NAME = "background";
 
-pub fn init(swapchain_extent: vk.Extent2D) @This() {
+pub fn init(
+    a: std.mem.Allocator,
+    resources: *core.resources.Manager,
+    swapchain_extent: vk.Extent2D,
+) std.mem.Allocator.Error!@This() {
+    try resources.materials.appendWritableTexture(
+        a,
+        BACKGROUND_IMAGE_NAME,
+        .{
+            .extent = vk.Extent3D{
+                .width = swapchain_extent.width,
+                .height = swapchain_extent.height,
+                .depth = 1,
+            },
+            .format = core.engine.Engine.MAIN_RENDER_PASS_IMAGE_FORMAT,
+            .usages = vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
+                vk.IMAGE_USAGE_TRANSFER_DST_BIT |
+                vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
+            .aspect_flags = vk.IMAGE_ASPECT_COLOR_BIT,
+            .initial_transition_function = null,
+        },
+    );
+
     return .{
         .swapchain_extent = swapchain_extent,
     };
@@ -45,26 +67,6 @@ pub fn registerSets(
         &[_][]const u8{BACKGROUND_IMAGE_NAME},
         device,
         alloc_cbs,
-    );
-}
-
-pub fn addCreateData(self: @This(), a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!void {
-    try resources.materials.appendWritableTexture(
-        a,
-        BACKGROUND_IMAGE_NAME,
-        .{
-            .extent = vk.Extent3D{
-                .width = self.swapchain_extent.width,
-                .height = self.swapchain_extent.height,
-                .depth = 1,
-            },
-            .format = core.engine.Engine.MAIN_RENDER_PASS_IMAGE_FORMAT,
-            .usages = vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
-                vk.IMAGE_USAGE_TRANSFER_DST_BIT |
-                vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
-            .aspect_flags = vk.IMAGE_ASPECT_COLOR_BIT,
-            .initial_transition_function = null,
-        },
     );
 }
 

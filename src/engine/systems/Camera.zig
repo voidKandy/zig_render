@@ -11,8 +11,25 @@ gpu_camera: Camera.GPUData,
 pub const CAMERA_SET_NAME = "camera_set";
 pub const CAMERA_RESOURCE_NAME = "camera";
 
-pub fn init(camera: Camera, swapchain_extent: vk.Extent2D) std.mem.Allocator.Error!@This() {
+pub fn init(
+    a: std.mem.Allocator,
+    resources: *core.resources.Manager,
+    camera: Camera,
+    swapchain_extent: vk.Extent2D,
+) std.mem.Allocator.Error!@This() {
     const gpu = Camera.GPUData.fromCamera(camera, swapchain_extent);
+
+    try resources.mapped_buffers.creates.put(
+        a,
+        CAMERA_RESOURCE_NAME,
+        .{
+            .alloc_size = @sizeOf(Camera.GPUData),
+            .buffer_usage = vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .flags = 0,
+        },
+    );
+
     return .{
         .camera = camera,
         .gpu_camera = gpu,
@@ -38,20 +55,6 @@ pub fn registerSets(
         },
         device,
         alloc_cbs,
-    );
-}
-
-pub fn addCreateData(_: @This(), a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!void {
-    try resources.mapped_buffers.creates.put(
-        a,
-
-        CAMERA_RESOURCE_NAME,
-        .{
-            .alloc_size = @sizeOf(Camera.GPUData),
-            .buffer_usage = vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
-            .flags = 0,
-        },
     );
 }
 

@@ -10,17 +10,11 @@ maze_gpu_cells: []GPUMazeCell,
 push_constants: PushConstants,
 maze_update: bool = false,
 needs_gpu_sync: bool = true,
+/// not currently working because meshes3D is not dynamic
 update_mesh: bool = false,
-mesh_options: core.lib.Maze.MeshOptions,
 
-mesh3D: core.lib.mesh.Mesh3D,
-mesh2D: core.lib.mesh.Mesh2D,
-/// Populated when added to world in addCreateData
-mesh3D_id: ?u32 = null,
-/// Populated when added to world in addCreateData
-mesh2D_id: ?u32 = null,
-
-mesh2D_coordinates: core.lib.math.Vec2,
+mesh3D_id: u32,
+mesh2D_id: u32,
 
 pipeline_description: ComputePipeline.Description,
 pipeline: ComputePipeline = undefined,
@@ -77,31 +71,110 @@ pub const CreateInfo = struct {
 
 pub fn init(
     a: std.mem.Allocator,
+    world: *core.engine.world.GameWorld,
+    resources: *core.resources.Manager,
     ci: CreateInfo,
 ) std.mem.Allocator.Error!@This() {
     var maze = try core.lib.Maze.init(a, ci.push_constants.width, ci.push_constants.height);
     maze.generate(ci.push_constants.threshold, ci.push_constants.seed);
     const cells =
         try GPUMazeCell.arrayFromCellArray(a, maze.cells);
-    const maze_mesh3D = ci.mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
 
-    // this could be passed in `ci` but its fine here for now
+    try resources.mapped_buffers.creates.put(
+        a,
+        MAZE_RESOURCE_NAME,
+
+        .{
+            .alloc_size = @sizeOf(GPUMazeCell) * maze.width * maze.height,
+            .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .flags = 0,
+        },
+    );
+
+    try resources.materials.appendWritableTexture(
+        a,
+        MAZE_RESOURCE_NAME,
+        .{
+            .extent = vk.Extent3D{
+                .width = maze.width * ci.push_constants.pixels_per_cell,
+                .height = maze.height * ci.push_constants.pixels_per_cell,
+                .depth = 1,
+            },
+            .format = vk.FORMAT_R8G8B8A8_UNORM,
+            .usages = vk.IMAGE_USAGE_STORAGE_BIT |
+                vk.IMAGE_USAGE_SAMPLED_BIT |
+                vk.IMAGE_USAGE_TRANSFER_DST_BIT,
+            .aspect_flags = vk.IMAGE_ASPECT_COLOR_BIT,
+            .initial_transition_function = &struct {
+                pub fn submit(
+                    device: core.bindings.vulkan_init.LogicalDevice,
+                    upload_ctx: *core.bindings.vulkan_init.UploadContext,
+                    img: vk.Image,
+                ) void {
+                    upload_ctx.immediateSubmit(device, struct {
+                        img: vk.Image,
+                        pub fn submit(this: @This(), cmd_buf: vk.CommandBuffer) void {
+                            core.bindings.vulkan_util.transitionImageLayout(
+                                cmd_buf,
+                                this.img,
+                                vk.IMAGE_LAYOUT_UNDEFINED,
+                                vk.IMAGE_LAYOUT_GENERAL,
+                                0,
+                                vk.ACCESS_SHADER_WRITE_BIT,
+                                vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            );
+                        }
+                    }{ .img = img });
+                }
+            }.submit,
+        },
+    );
+
+    const maze_mesh3D = ci.mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
+    defer maze_mesh3D.deinit(a);
+    resources.meshes3D.appendMeshWithMaterialIndex(
+        a,
+        maze_mesh3D,
+        .IDENTITY,
+        0,
+    ) catch @panic("OOM");
+
+    var mesh3d_entity = try world.entities.register(null);
+    mesh3d_entity.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+        .handle = resources.meshes3D.meshes.getLast(),
+    });
+
     const margin: f32 = 0.05;
     const quad_size = 0.2;
     const maze_quad = core.lib.mesh.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create maze quad");
+    defer maze_quad.deinit(a);
+    const coordinates = core.lib.math.Vec2.make(
+        1.0 - (quad_size / 2.0) - margin,
+        margin,
+    );
+
+    const mt_idx = resources.materials.material_indices.get(MAZE_RESOURCE_NAME).?;
+    resources.meshes2D.appendMesh(
+        a,
+        maze_quad,
+        coordinates,
+        @as(u32, @intCast(mt_idx)),
+    ) catch @panic("OOM");
+
+    var mesh2d_entity = try world.entities.register(null);
+    mesh2d_entity.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
+        .ranges = resources.meshes2D.ranges.getLast(),
+    });
 
     return .{
         .maze = maze,
         .maze_gpu_cells = cells,
         .push_constants = ci.push_constants,
         .pipeline_description = ci.pd,
-        .mesh_options = ci.mesh_options,
-        .mesh3D = maze_mesh3D,
-        .mesh2D = maze_quad,
-        .mesh2D_coordinates = core.lib.math.Vec2.make(
-            1.0 - (quad_size / 2.0) - margin,
-            margin,
-        ),
+        .mesh3D_id = mesh3d_entity.identifier,
+        .mesh2D_id = mesh2d_entity.identifier,
     };
 }
 
@@ -109,8 +182,6 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs
     self.maze.deinit(a);
     a.free(self.maze_gpu_cells);
     self.pipeline.deinit(device, alloc_cbs);
-    self.mesh3D.deinit(a);
-    self.mesh2D.deinit(a);
 }
 
 pub fn initPipeline(
@@ -145,96 +216,6 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
         device,
         alloc_cbs,
     );
-}
-
-/// TODO
-/// rename
-/// this also registers entities in the world
-pub fn addCreateData(
-    self: *@This(),
-    a: std.mem.Allocator,
-    resources: *core.resources.Manager,
-    world: *core.engine.world.GameWorld,
-) std.mem.Allocator.Error!void {
-    std.debug.assert(self.mesh2D_id == null and self.mesh3D_id == null);
-    try resources.mapped_buffers.creates.put(
-        a,
-        MAZE_RESOURCE_NAME,
-
-        .{
-            .alloc_size = @sizeOf(GPUMazeCell) * self.maze.width * self.maze.height,
-            .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
-            .flags = 0,
-        },
-    );
-
-    try resources.materials.appendWritableTexture(
-        a,
-        MAZE_RESOURCE_NAME,
-        .{
-            .extent = vk.Extent3D{
-                .width = self.maze.width * self.push_constants.pixels_per_cell,
-                .height = self.maze.height * self.push_constants.pixels_per_cell,
-                .depth = 1,
-            },
-            .format = vk.FORMAT_R8G8B8A8_UNORM,
-            .usages = vk.IMAGE_USAGE_STORAGE_BIT |
-                vk.IMAGE_USAGE_SAMPLED_BIT |
-                vk.IMAGE_USAGE_TRANSFER_DST_BIT,
-            .aspect_flags = vk.IMAGE_ASPECT_COLOR_BIT,
-            .initial_transition_function = &struct {
-                pub fn submit(
-                    device: core.bindings.vulkan_init.LogicalDevice,
-                    upload_ctx: *core.bindings.vulkan_init.UploadContext,
-                    img: vk.Image,
-                ) void {
-                    upload_ctx.immediateSubmit(device, struct {
-                        img: vk.Image,
-                        pub fn submit(this: @This(), cmd_buf: vk.CommandBuffer) void {
-                            core.bindings.vulkan_util.transitionImageLayout(
-                                cmd_buf,
-                                this.img,
-                                vk.IMAGE_LAYOUT_UNDEFINED,
-                                vk.IMAGE_LAYOUT_GENERAL,
-                                0,
-                                vk.ACCESS_SHADER_WRITE_BIT,
-                                vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                            );
-                        }
-                    }{ .img = img });
-                }
-            }.submit,
-        },
-    );
-
-    resources.meshes3D.appendMeshWithMaterialIndex(
-        a,
-        self.mesh3D,
-        .IDENTITY,
-        0,
-    ) catch @panic("OOM");
-
-    var mesh3d_entity = try world.entities.register(null);
-    mesh3d_entity.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
-        .handle = resources.meshes3D.meshes.getLast(),
-    });
-    self.mesh3D_id = mesh3d_entity.identifier;
-
-    const mt_idx = resources.materials.material_indices.get(MAZE_RESOURCE_NAME).?;
-    resources.meshes2D.appendMesh(
-        a,
-        self.mesh2D,
-        self.mesh2D_coordinates,
-        @as(u32, @intCast(mt_idx)),
-    ) catch @panic("OOM");
-
-    var mesh2d_entity = try world.entities.register(null);
-    mesh2d_entity.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
-        .ranges = resources.meshes2D.ranges.getLast(),
-    });
-    self.mesh2D_id = mesh2d_entity.identifier;
 }
 
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {

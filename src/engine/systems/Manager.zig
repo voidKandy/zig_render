@@ -18,15 +18,17 @@ debug: Debug,
 
 pub fn init(
     a: std.mem.Allocator,
+    world: *core.engine.world.GameWorld,
+    resources: *core.resources.Manager,
     swapchain_extent: vk.Extent2D,
     maze_system_ci: core.engine.systems.Maze.CreateInfo,
-) @This() {
+) std.mem.Allocator.Error!@This() {
     return .{
         .mesh_manipulation = .{},
-        .maze = Maze.init(a, maze_system_ci) catch @panic("failed to create maze system"),
+        .maze = try Maze.init(a, world, resources, maze_system_ci),
         .debug = .{},
-        .camera = Camera.init(.{}, swapchain_extent) catch @panic("failed to create camera system"),
-        .draw_background = DrawBackground.init(swapchain_extent),
+        .camera = try Camera.init(a, resources, .{}, swapchain_extent),
+        .draw_background = try DrawBackground.init(a, resources, swapchain_extent),
     };
 }
 
@@ -54,6 +56,31 @@ pub fn registerSets(
     try DrawBackground.registerSets(a, device, resources, alloc_cbs);
 }
 
+pub fn updateSets(
+    _: @This(),
+    device: vk.Device,
+    allocated_resources: *core.resources.Manager.AllocatedData,
+) void {
+    allocated_resources.mapped_buffers.updateBufferSet(
+        device,
+        Camera.CAMERA_SET_NAME,
+    );
+
+    allocated_resources.mapped_buffers.updateBufferSet(
+        device,
+        Maze.COMPUTE_MAZE_SET_NAME,
+    );
+
+    allocated_resources.materials.updateWritableTextureSet(
+        device,
+        Maze.COMPUTE_MAZE_SET_NAME,
+    );
+
+    allocated_resources.materials.updateWritableTextureSet(
+        device,
+        DrawBackground.BACKGROUND_SET_NAME,
+    );
+}
 /// wasnt sure what to call this
 /// currently only Debug has a need for access to
 /// resources after they are created but im sure this
@@ -90,17 +117,6 @@ pub fn trySyncResources(
     self.maze.trySyncResources(allocated_resources);
     self.mesh_manipulation.trySyncResources(resources, allocated_resources, world);
     self.camera.trySyncResources(allocated_resources);
-}
-
-pub fn addCreateData(
-    self: *@This(),
-    a: std.mem.Allocator,
-    resources: *core.resources.Manager,
-    world: *core.engine.world.GameWorld,
-) std.mem.Allocator.Error!void {
-    try self.maze.addCreateData(a, resources, world);
-    try self.camera.addCreateData(a, resources);
-    try self.draw_background.addCreateData(a, resources);
 }
 
 pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
