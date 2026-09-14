@@ -117,6 +117,12 @@ pub const lib = struct {
     pub const terrain = @import("lib/terrain.zig");
     // pub const alpha_wrapping = @import("lib/alpha_wrapping.zig");
     pub const delaunay = @import("lib/delaunay.zig");
+
+    pub const physics = struct {
+        test "physics" {
+            _ = clibs.box3D.WorldId;
+        }
+    };
     test {
         std.testing.refAllDecls(@This());
     }

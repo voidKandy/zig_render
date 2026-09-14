@@ -1,5 +1,9 @@
 const c = @import("c");
 
+pub const box3D = struct {
+    pub const WorldId = c.b3WorldId;
+};
+
 /// SDL3
 pub const sdl = struct {
     pub const Window = c.SDL_Window;

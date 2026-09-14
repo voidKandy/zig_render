@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) !void {
     translate_c.addIncludePath(b.path("libs/vma"));
     translate_c.addIncludePath(b.path("libs/stb"));
     translate_c.addIncludePath(b.path("libs/imgui"));
+    translate_c.addIncludePath(b.path("libs/box3d/include/box3d"));
     // translate_c.linkSystemLibrary("vk_mem_alloc", .{});
     // translate_c.linkSystemLibrary("stb_image", .{});
     // translate_c.linkSystemLibrary("cimgui", .{});
@@ -47,10 +48,41 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/vma/"));
     core_lib.addIncludePath(b.path("libs/stb/"));
     core_lib.addIncludePath(b.path("libs/imgui/"));
+    core_lib.addIncludePath(b.path("libs/box3d/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/clibs/stb_image.c"), .flags = &.{""} });
 
     addAllShaders(b, io, core_lib);
 
+    const imgui_lib = buildImgui(b, target, optimize);
+    core_lib.linkLibrary(imgui_lib);
+
+    const box3d_lib = buildBox3D(b, target, optimize);
+    core_lib.linkLibrary(box3d_lib);
+
+    const exe_tests = b.addTest(.{
+        .root_module = core_lib,
+    });
+
+    const run_exe_tests = b.addRunArtifact(exe_tests);
+    const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_exe_tests.step);
+
+    buildBinaries(
+        b,
+        io,
+        target,
+        optimize,
+        &[_]struct { []const u8, *std.Build.Module }{
+            .{ "core", core_lib },
+        },
+    );
+}
+
+fn buildImgui(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Step.Compile {
     const imgui_lib = b.addLibrary(.{
         .linkage = .static,
         .name = "cimgui",
@@ -78,26 +110,89 @@ pub fn build(b: *std.Build) !void {
             "libs/imgui/cimgui_impl_vulkan.cpp",
         },
     });
+    return imgui_lib;
+}
 
-    core_lib.linkLibrary(imgui_lib);
-
-    const exe_tests = b.addTest(.{
-        .root_module = core_lib,
+fn buildBox3D(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Step.Compile {
+    const box3d_lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "box3d",
+        .root_module = b.addModule("box3d", .{
+            .root_source_file = null,
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
-    const run_exe_tests = b.addRunArtifact(exe_tests);
-    const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&run_exe_tests.step);
+    box3d_lib.root_module.addIncludePath(b.path("libs/box3d/include"));
+    // src/ also needs to be on the include path — box3d's own .c files
+    // #include internal headers like "core.h" relative to src/, not include/
+    box3d_lib.root_module.addIncludePath(b.path("libs/box3d/src"));
+    box3d_lib.root_module.link_libc = true;
 
-    buildBinaries(
-        b,
-        io,
-        target,
-        optimize,
-        &[_]struct { []const u8, *std.Build.Module }{
-            .{ "core", core_lib },
+    box3d_lib.root_module.addCSourceFiles(.{
+        .files = &.{
+            "libs/box3d/src/aabb.c",
+            "libs/box3d/src/arena_allocator.c",
+            "libs/box3d/src/bitset.c",
+            "libs/box3d/src/block_allocator.c",
+            "libs/box3d/src/body.c",
+            "libs/box3d/src/broad_phase.c",
+            "libs/box3d/src/capsule.c",
+            "libs/box3d/src/compound.c",
+            "libs/box3d/src/constraint_graph.c",
+            "libs/box3d/src/contact_solver.c",
+            "libs/box3d/src/contact.c",
+            "libs/box3d/src/convex_manifold.c",
+            "libs/box3d/src/core.c",
+            "libs/box3d/src/distance_joint.c",
+            "libs/box3d/src/distance.c",
+            "libs/box3d/src/dynamic_tree.c",
+            "libs/box3d/src/height_field.c",
+            "libs/box3d/src/hull.c",
+            "libs/box3d/src/id_pool.c",
+            "libs/box3d/src/island.c",
+            "libs/box3d/src/joint.c",
+            "libs/box3d/src/manifold.c",
+            "libs/box3d/src/math_functions.c",
+            "libs/box3d/src/mesh_contact.c",
+            "libs/box3d/src/mesh.c",
+            "libs/box3d/src/motor_joint.c",
+            "libs/box3d/src/mover.c",
+            "libs/box3d/src/name_cache.c",
+            "libs/box3d/src/parallel_for.c",
+            "libs/box3d/src/parallel_joint.c",
+            "libs/box3d/src/physics_world.c",
+            "libs/box3d/src/prismatic_joint.c",
+            "libs/box3d/src/recording_replay.c",
+            "libs/box3d/src/recording.c",
+            "libs/box3d/src/revolute_joint.c",
+            "libs/box3d/src/scheduler.c",
+            "libs/box3d/src/sensor.c",
+            "libs/box3d/src/shape.c",
+            "libs/box3d/src/simd.c",
+            "libs/box3d/src/solver_set.c",
+            "libs/box3d/src/solver.c",
+            "libs/box3d/src/sphere.c",
+            "libs/box3d/src/spherical_joint.c",
+            "libs/box3d/src/table.c",
+            "libs/box3d/src/timer.c",
+            "libs/box3d/src/triangle_manifold.c",
+            "libs/box3d/src/types.c",
+            "libs/box3d/src/weld_joint.c",
+            "libs/box3d/src/wheel_joint.c",
+            "libs/box3d/src/world_snapshot.c",
         },
-    );
+        .flags = &.{
+            "-ffp-contract=off", // matches their determinism flag from CMakeLists.txt
+        },
+    });
+
+    return box3d_lib;
 }
 
 const BINARIES_PATH = "bins";

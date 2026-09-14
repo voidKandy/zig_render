@@ -185,7 +185,7 @@ test "meshmaze" {
     const allocator = std.testing.allocator;
     var maze = try core.lib.Maze.init(allocator, 10, 10);
     defer maze.deinit(allocator);
-    maze.generate(allocator, 16, 8);
+    maze.generate(16, 8);
 
     const opts = core.lib.Maze.MeshOptions{
         .cell_size = 2.0,

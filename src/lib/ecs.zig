@@ -521,7 +521,7 @@ pub fn EntityStore(
                     const sig = self.ecs.entities.manager.getData(self.identifier) orelse @panic("No entity signature?");
                     // unfortunately we need to do this because of the comptime requirements of removeNoReturn
                     inline for (Meta.ALL_COMPONENT_TAGS) |tag|
-                        if (sig.isSet(@intFromEnum(tag)))
+                        if (sig.contains(tag))
                             self.ecs.components.removeNoReturn(tag, idx);
                 }
 
@@ -547,7 +547,7 @@ pub fn EntityStore(
                         }
                         const sig = self.ecs.entities.manager.getData(ent.id) orelse @panic("No entity signature?");
                         inline for (Meta.ALL_COMPONENT_TAGS) |tag| {
-                            if (sig.isSet(@intFromEnum(tag))) {
+                            if (sig.contains(tag)) {
                                 self.ecs.components.swap(tag, prev_idx_of_moved_ent, idx);
                             }
                         }
@@ -568,8 +568,8 @@ pub fn EntityStore(
 
             pub fn removeComponent(self: *@This(), which: Meta.ComponentTag, component: anytype) void {
                 const idx = self.index() orelse @panic("NO INDEX?");
-                var sig = self.ecs.entities.manager.data[idx];
-                sig.unset(@intFromEnum(which));
+                var sig = &self.ecs.entities.manager.data[idx] orelse @panic("NO SIG??");
+                sig.remove(which);
                 self.ecs.components.removeNoReturn(@TypeOf(component), which, idx);
             }
 
@@ -680,14 +680,17 @@ test "ECS Entity Management" {
     var all: [5]u32 = undefined;
     @memset(&all, 0);
 
-    const query = MyEcs.Query{ .query = .{ .is = .{ .rule = .exact, .sig = s: {
-        var s = MyEcs.Signature.initEmpty();
-        s.set(@intFromEnum(MyEcs.Meta.ComponentTag.somecomponent));
-        s.set(@intFromEnum(MyEcs.Meta.ComponentTag.someothercomponent));
-        break :s s;
-    } } } };
+    const query = MyEcs.Query{
+        .is = .{
+            .rule = .exact,
+            .sig = MyEcs.Signature.initMany(&[_]MyEcs.Meta.ComponentTag{
+                .somecomponent,
+                .someothercomponent,
+            }),
+        },
+    };
 
-    const iter = try ecs.queryEntities(a, query) orelse @panic("NOTHING MATCHING");
+    const iter = ecs.queryEntities(query);
 
     const containsEntityWithId = struct {
         fn contains(qu: MyEcs.QueryIterator, id: u32) bool {
@@ -743,11 +746,12 @@ test "ECS Entity Management" {
             }
             pub fn run(self: *@This(), myecs: *MyEcs) anyerror!void {
                 const q =
-                    MyEcs.Query{ .query = .{
-                        .is = MyEcs.QueryStatement.new(.at_least, &[_]MyEcs.Meta.ComponentTag{.someothercomponent}),
+                    MyEcs.Query{ .is = MyEcs.QueryStatement{
+                        .rule = .at_least,
+                        .sig = .initOne(.someothercomponent),
                     } };
 
-                var query_iter = myecs.queryEntities(a, q);
+                var query_iter = myecs.queryEntities(q);
                 warn("IN SOME SYSTEM\n", .{});
                 self.call_count += 1;
                 while (query_iter.next()) |e| {
