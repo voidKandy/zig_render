@@ -137,7 +137,7 @@ pub fn run(self: *Self) void {
             _ = sdl.SetWindowRelativeMouseMode(self.window, !is_relative_mouse);
         }
 
-        self.system_manager.update(self.*);
+        self.system_manager.update(self);
 
         self.system_manager.trySyncResources(
             self.resources,

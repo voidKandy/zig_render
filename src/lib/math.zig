@@ -41,6 +41,7 @@ pub const Vec3 = extern struct {
     const Self = @This();
 
     pub const ZERO = make(0.0, 0.0, 0.0);
+    pub const ONE = make(1.0, 1.0, 1.0);
     pub const UP = make(0.0, 0.0, 1.0);
     pub const FORWARD = make(0.0, 1.0, 0.0);
     pub const RIGHT = make(1.0, 0.0, 0.0);

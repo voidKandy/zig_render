@@ -9,6 +9,13 @@ pub const Mesh3DComponent = struct {
 pub const Mesh2DComponent = struct {
     ranges: core.resources.Meshes2D.MeshRanges,
 };
+
+pub const Transform = struct {
+    position: core.lib.math.Vec3 = .ZERO,
+    rotation: core.lib.math.Mat4 = .IDENTITY,
+    scale: core.lib.math.Vec3 = .ONE,
+};
+
 // pub const Mesh2DComponent = struct {
 //     handle: core.resources.Meshes2D.MeshHandle,
 // metadatas: []const core.resources.Meshes2D.MetaData,
@@ -18,6 +25,7 @@ pub const GameWorld =
         .max_entities = 64,
         .components = struct {
             camera: core.engine.Camera,
+            transform: Transform,
             mesh3D: Mesh3DComponent,
             mesh2D: Mesh2DComponent,
         },

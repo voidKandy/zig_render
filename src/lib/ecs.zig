@@ -423,7 +423,7 @@ pub fn EntityStore(
 
             pub const ComponentTag = @Enum(u32, .exhaustive, &STATIC.names, &STATIC.enum_vals);
             pub const ComponentUnion = @Union(.auto, ComponentTag, &STATIC.names, &STATIC.types, &STATIC.un_field_attrs);
-            pub const ComponentPtrUnion = @Union(.auto, null, &STATIC.names, &STATIC.un_ptr_types, &STATIC.un_field_attrs);
+            pub const ComponentUnionPtr = @Union(.auto, null, &STATIC.names, &STATIC.un_ptr_types, &STATIC.un_field_attrs);
 
             const ALL_COMPONENT_TAGS: [N_COMPONENTS]ComponentTag = blk: {
                 var all: [N_COMPONENTS]ComponentTag = undefined;
@@ -451,8 +451,8 @@ pub fn EntityStore(
                 return @unionInit(Meta.ComponentUnion, @tagName(which), @field(self.arrays, @tagName(which))[idx] orelse return null);
             }
 
-            fn getPtr(self: @This(), comptime which: Meta.ComponentTag, idx: usize) ?Meta.ComponentPtrUnion {
-                return @unionInit(Meta.ComponentPtrUnion, @tagName(which), &@field(self.arrays, @tagName(which))[idx] orelse return null);
+            fn getPtr(self: *@This(), comptime which: Meta.ComponentTag, idx: usize) ?Meta.ComponentUnionPtr {
+                return @unionInit(Meta.ComponentUnionPtr, @tagName(which), if (@field(self.arrays, @tagName(which))[idx]) |*f| f else return null);
             }
 
             // expects to be passed `T` for `component`
@@ -562,6 +562,17 @@ pub fn EntityStore(
                 inline for (Meta.ALL_COMPONENT_TAGS) |t| {
                     if (t == which)
                         if (self.ecs.components.get(t, self.index().?)) |c| return c;
+                }
+                return error.AccessFailed;
+            }
+
+            pub fn accessComponentPtr(
+                self: *@This(),
+                which: Meta.ComponentTag,
+            ) error{AccessFailed}!Meta.ComponentUnionPtr {
+                inline for (Meta.ALL_COMPONENT_TAGS) |t| {
+                    if (t == which)
+                        if (self.ecs.components.getPtr(t, self.index().?)) |c| return c;
                 }
                 return error.AccessFailed;
             }

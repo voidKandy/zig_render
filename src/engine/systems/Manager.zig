@@ -27,7 +27,7 @@ pub fn init(
         .mesh_manipulation = .{},
         .maze = try Maze.init(a, world, resources, maze_system_ci),
         .debug = .{},
-        .camera = try Camera.init(a, resources, .{}, swapchain_extent),
+        .camera = try Camera.init(a, resources, world, .{}, swapchain_extent),
         .draw_background = try DrawBackground.init(a, resources, swapchain_extent),
     };
 }
@@ -93,7 +93,7 @@ pub fn bind(
     self.debug.bind(a, alloc_resources) catch @panic("OOM");
 }
 
-pub fn update(self: *@This(), engine: core.engine.Engine) void {
+pub fn update(self: *@This(), engine: *core.engine.Engine) void {
     self.camera.update(engine);
     self.maze.update();
 }
@@ -121,7 +121,7 @@ pub fn trySyncResources(
 
 pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
     self.debug.drawImgui(engine.window);
-    self.camera.drawImgui();
+    self.camera.drawImgui(engine);
     self.draw_background.drawImgui();
     self.maze.drawImgui();
     self.mesh_manipulation.drawImgui(

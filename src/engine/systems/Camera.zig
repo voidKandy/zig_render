@@ -5,15 +5,18 @@ const vk = core.clibs.vk;
 const imgui = core.clibs.imgui;
 const Camera = core.engine.Camera;
 
-camera: Camera,
+main_camera_entity: u32,
 gpu_camera: Camera.GPUData,
 
 pub const CAMERA_SET_NAME = "camera_set";
 pub const CAMERA_RESOURCE_NAME = "camera";
 
+/// creates camera gpu data
+/// also creaetes an entity to hold camera
 pub fn init(
     a: std.mem.Allocator,
     resources: *core.resources.Manager,
+    world: *core.engine.world.GameWorld,
     camera: Camera,
     swapchain_extent: vk.Extent2D,
 ) std.mem.Allocator.Error!@This() {
@@ -30,8 +33,10 @@ pub fn init(
         },
     );
 
+    var ent = try world.entities.register("main_camera");
+    ent.addComponent(.camera, camera);
     return .{
-        .camera = camera,
+        .main_camera_entity = ent.identifier,
         .gpu_camera = gpu,
     };
 }
@@ -67,29 +72,37 @@ pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.
 
 pub fn update(
     self: *@This(),
-    engine: core.engine.Engine,
+    engine: *core.engine.Engine,
 ) void {
-    self.camera.control(engine.io, &self.gpu_camera, engine.input, engine.swapchain.extent);
+    var camera_ent = engine.world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
+    var comp = camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?");
+    comp.camera.control(engine.io, &self.gpu_camera, engine.input, engine.swapchain.extent);
 }
 
-pub fn drawImgui(self: *@This()) void {
+pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
     var open = true;
     const shown = imgui.Begin("Camera System", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
 
+    // var camera_ent = engine.world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
+    // var comp = camera_ent.accessComponent(.camera) catch @panic("No camera component?");
+    // const camera = comp.camera;
     if (!shown) return;
 
-    const current_mode_name = @tagName(self.camera.mode);
+    var camera_ent = engine.world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
+    var comp = camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?");
+
+    const current_mode_name = @tagName(comp.camera.mode);
     if (imgui.BeginCombo("Modes", current_mode_name.ptr, 0)) {
         defer imgui.EndCombo();
 
         for (std.meta.tags(Camera.Mode)) |tag| {
             const name = @tagName(tag);
             if (imgui.Selectable(name))
-                self.camera.mode = tag;
+                comp.camera.mode = tag;
         }
     }
 
-    const pos = self.camera.eye; // adjust field name to whatever your Camera struct calls it
+    const pos = comp.camera.eye; // adjust field name to whatever your Camera struct calls it
     imgui.Text("Camera Pos: (%.2f, %.2f, %.2f)", pos.x, pos.y, pos.z);
 }

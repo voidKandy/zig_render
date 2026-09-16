@@ -30,14 +30,6 @@ pub const Mesh3D = struct {
     vertices: []Vertex3D,
     indices: []u32,
 
-    pub const Buffers = struct {
-        vertex: vma_usage.AllocatedBuffer = undefined,
-        index: vma_usage.AllocatedBuffer = undefined,
-    };
-
-    /// vertex & index buffers are not present until `upload` method is called
-    // vertex_buffer: AllocatedBuffer = undefined,
-    // index_buffer: AllocatedBuffer = undefined,
     const Self = @This();
 
     pub fn init(a: std.mem.Allocator, vertices: []const Vertex3D, indices: []const u32) std.mem.Allocator.Error!Self {
