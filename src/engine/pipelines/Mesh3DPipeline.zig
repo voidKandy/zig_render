@@ -305,9 +305,13 @@ pub const RenderSystem = struct {
         model_transform: core.lib.math.Mat4,
     };
 
+    /// HOLDS pointers to data owned by ECS
+    /// REMOVAL OF ENTITIES WILL BREAK THIS SO THAT NEEDS TO BE FIGURED OUT
     const InstanceEntry = struct {
         entity_id: u32,
-        instance: Instance,
+        mesh_idx: *u32,
+        material_idx: *u32,
+        model_transform: *core.lib.math.Mat4,
     };
 
     ranges: std.AutoHashMap(u32, core.lib.mesh.RangeDesc),
@@ -347,7 +351,11 @@ pub const RenderSystem = struct {
             @alignCast(alloc_resources.mapped_buffers.buffers.get(INSTANCES_BUFFER_NAME).?.mapped),
         );
         for (self.instances, 0..) |entry, i|
-            aligned[i] = entry.instance;
+            aligned[i] = Instance{
+                .mesh_idx = entry.mesh_idx.*,
+                .material_idx = entry.material_idx.*,
+                .model_transform = entry.model_transform.*,
+            };
     }
 
     pub fn registerSets(
@@ -407,9 +415,9 @@ pub const RenderSystem = struct {
 
         while (iter.next()) |*entity| {
             const mesh =
-                (entity.accessComponent(.mesh3D) catch @panic("NO MESH?")).mesh3D;
+                (entity.accessComponentPtr(.mesh3D) catch @panic("NO MESH?")).mesh3D;
             const transform =
-                (entity.accessComponent(.transform) catch @panic("NO TRANSFORM?")).transform;
+                (entity.accessComponentPtr(.transform) catch @panic("NO TRANSFORM?")).transform;
 
             const result = try buckets.getOrPut(mesh.mesh_index);
 
@@ -431,11 +439,9 @@ pub const RenderSystem = struct {
             );
             try result.value_ptr.append(a, .{
                 .entity_id = entity.identifier,
-                .instance = .{
-                    .model_transform = transform.matrix,
-                    .mesh_idx = mesh.mesh_index,
-                    .material_idx = mesh.material_index,
-                },
+                .model_transform = &transform.matrix,
+                .mesh_idx = &mesh.mesh_index,
+                .material_idx = &mesh.material_index,
             });
         }
 
@@ -494,10 +500,10 @@ pub const RenderSystem = struct {
                 const zbuf = std.fmt.bufPrintZ(&buf, "instance: {d}", .{inst.entity_id}) catch @panic("Buffer couldnt print??");
                 if (imgui.TreeNode(zbuf.ptr)) {
                     defer imgui.TreePop();
-                    const mtl_name = materials.material_names_reverse_lookup.get(inst.instance.material_idx) orelse @panic("No material??");
-                    imgui.Text("Material: %s, index: %d", mtl_name.ptr, inst.instance.material_idx);
+                    const mtl_name = materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");
+                    imgui.Text("Material: %s, index: %d", mtl_name.ptr, inst.material_idx.*);
 
-                    const m = inst.instance.model_transform;
+                    const m = inst.model_transform.*;
 
                     imgui.Text(
                         "i: %.3f, %.3f, %.3f, %.3f",

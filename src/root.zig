@@ -27,6 +27,7 @@ pub const engine = struct {
 
     pub const systems = struct {
         pub const Manager = @import("engine/systems/Manager.zig");
+        pub const Physics = @import("engine/systems/Physics.zig");
         // pub const MeshManipulation = @import("engine/systems/MeshManipulation.zig");
         pub const Mesh3DInstancing = @import("engine/systems/Mesh3DInstancing.zig");
         pub const Maze = @import("engine/systems/Maze.zig");
@@ -118,12 +119,7 @@ pub const lib = struct {
     pub const terrain = @import("lib/terrain.zig");
     // pub const alpha_wrapping = @import("lib/alpha_wrapping.zig");
     pub const delaunay = @import("lib/delaunay.zig");
-
-    pub const physics = struct {
-        test "physics" {
-            _ = clibs.box3D.WorldId;
-        }
-    };
+    pub const physics = @import("lib/physics.zig");
     test {
         std.testing.refAllDecls(@This());
     }

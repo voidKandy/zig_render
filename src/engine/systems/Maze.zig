@@ -145,7 +145,7 @@ pub fn init(
     // ) catch @panic("OOM");
 
     var mesh3d_entity = try world.entities.register(null);
-    mesh3d_entity.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+    mesh3d_entity.addComponent(.mesh3D, core.engine.world.MaterialMesh3D{
         .mesh_index = @intCast(resources.meshes3D.meshes.items.len - 1),
         .material_index = @intCast(mt_idx),
     });

@@ -568,18 +568,11 @@ pub const AllocatedData = struct {
         device: core.clibs.vk.Device,
         alloc_cbs: ?*core.clibs.vk.AllocationCallbacks,
     ) void {
-        // var lib_iter = self.libraries.valueIterator();
-        // while (lib_iter.next()) |m|
-        // m.deinit(allocs, device, alloc_cbs);
-        // self.libraries.deinit(allocs.std);
-
         var tx_iter = self.textures.valueIterator();
         while (tx_iter.next()) |t|
             t.deinit(allocs.vma, device, alloc_cbs);
         self.textures.deinit(allocs.std);
 
-        // self.material_indices.deinit(allocs.std);
-        // self.material_names_reverse_lookup.deinit(allocs.std);
         self.writable_textures_descriptor_sets.deinit(allocs.std);
 
         vk.DestroySampler(device, self.sampler, alloc_cbs);

@@ -174,7 +174,7 @@ pub fn drawImgui(
         const mesh_component =
             mutable_handle.accessComponent(.mesh3D) catch unreachable;
 
-        const mesh: core.engine.world.Mesh3DComponent = mesh_component.mesh3D;
+        const mesh: core.engine.world.MaterialMesh3D = mesh_component.mesh3D;
 
         const ranges = mesh.handle.ranges;
         const mesh_metadatas =

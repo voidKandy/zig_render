@@ -11,12 +11,6 @@ const Meshes3D = @import("Meshes3D.zig");
 // TODO
 // currently mesh create infos utilize direct material index
 //
-// This is not ideal because upon creation of meshes these material
-// indexes cannot be reliably known
-// instead some way of referencing materials should be created
-// likely by human readable name
-// remember, there needs to be a way to know whether to look for a
-// material in a library or just in the flat textures map
 
 pub const Mesh3DCreateInfo = struct {
     create_mesh: union(enum) {
@@ -28,6 +22,7 @@ pub const Mesh3DCreateInfo = struct {
             // `debug.black`
             // `debug.red`
             // `maze`
+            // can be removed
             material_name: []const u8 = "",
         },
     },
@@ -148,14 +143,13 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
 pub fn registerInWorld(
     _: @This(),
     world: *core.engine.world.GameWorld,
+    physics_world: core.clibs.box3D.WorldId,
 ) void {
     for (0..3) |i| {
         var ent = world.entities.register(null) catch @panic("OOM");
-        ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+        ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D{
             .mesh_index = 0,
             .material_index = 12 + @as(u32, @intCast(i)),
-            // TODO  get this some other way
-            // .material_index = self.meshes3D.meta_data.items[i].material_index,
         });
 
         var tx = core.engine.world.Transform{};
@@ -168,11 +162,9 @@ pub fn registerInWorld(
     }
 
     var ent = world.entities.register(null) catch @panic("OOM");
-    ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+    ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D{
         .mesh_index = 1,
         .material_index = 0,
-        // TODO  get this some other way
-        // .material_index = self.meshes3D.meta_data.items[i].material_index,
     });
 
     var tx = core.engine.world.Transform{};
@@ -182,6 +174,35 @@ pub fn registerInWorld(
         .z = 0.5,
     });
     ent.addComponent(.transform, tx);
+
+    var body_def = core.clibs.box3D.DefaultBodyDef();
+    body_def.type = core.clibs.box3D.BODY_TYPE_DYNAMIC;
+    body_def.position = .{
+        .x = 2.0,
+        .y = 1.5,
+        .z = 0.5,
+    };
+
+    const body_id = core.clibs.box3D.CreateBody(physics_world, &body_def);
+
+    ent.addComponent(.rigid_body, core.engine.world.RigidBody{
+        .id = body_id,
+    });
+
+    var shape_def = core.clibs.box3D.DefaultShapeDef();
+    shape_def.density = 1.0;
+
+    const box = core.clibs.box3D.MakeBoxHull(
+        0.5,
+        0.5,
+        0.5,
+    );
+
+    _ = core.clibs.box3D.CreateHullShape(
+        body_id,
+        &shape_def,
+        &box.base,
+    );
 
     // for (self.meshes2D.ranges.items) |ranges| {
     //     var ent = world.entities.register(null) catch @panic("OOM");

@@ -43,6 +43,8 @@ resources: core.resources.Manager = undefined,
 world: core.engine.world.GameWorld,
 
 system_manager: core.engine.systems.Manager = undefined,
+/// i would love for this to live in manager but it needs to be initailized before everything else
+physics: core.engine.systems.Physics = undefined,
 
 mesh3D_pipeline: Mesh3DPipeline = undefined,
 mesh3D_pipeline_render_system: Mesh3DPipeline.RenderSystem = undefined,
@@ -140,6 +142,8 @@ pub fn run(self: *Self) void {
         }
 
         self.system_manager.update(self);
+
+        self.physics.update(&self.world);
 
         self.system_manager.trySyncResources(
             self.resources,

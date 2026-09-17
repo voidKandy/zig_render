@@ -5,6 +5,7 @@ const vk = core.clibs.vk;
 // pub const MeshManipulation = @import("./MeshManipulation.zig");
 pub const Maze = @import("./Maze.zig");
 pub const Debug = @import("./Debug.zig");
+// pub const Physics = @import("./Physics.zig");
 pub const Camera = @import("./Camera.zig");
 pub const DrawBackground = @import("./DrawBackground.zig");
 pub const Mesh3DInstancing = @import("./Mesh3DInstancing.zig");
@@ -16,6 +17,7 @@ maze: Maze,
 camera: Camera,
 draw_background: DrawBackground,
 debug: Debug,
+// physics: Physics,
 
 pub fn init(
     a: std.mem.Allocator,
@@ -30,6 +32,7 @@ pub fn init(
         .debug = .{},
         .camera = try Camera.init(a, resources, world, .{}, swapchain_extent),
         .draw_background = try DrawBackground.init(a, resources, swapchain_extent),
+        // .physics = Physics.init(),
     };
 }
 
@@ -39,10 +42,10 @@ pub fn deinit(
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    // self.mesh_manipulation.deinit(allocs);
     self.maze.deinit(allocs.std, device, alloc_cbs);
     self.debug.deinit(allocs.std);
     self.draw_background.deinit(device, alloc_cbs);
+    // self.physics.deinit();
 }
 
 pub fn registerSets(
@@ -103,6 +106,7 @@ pub fn bind(
 pub fn update(self: *@This(), engine: *core.engine.Engine) void {
     self.camera.update(engine);
     self.maze.update();
+    // self.physics.update(&engine.world);
 }
 
 pub fn initComputePipelines(

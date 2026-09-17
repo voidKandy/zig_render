@@ -2,6 +2,91 @@ const c = @import("c");
 
 pub const box3D = struct {
     pub const WorldId = c.b3WorldId;
+    pub const BodyId = c.b3BodyId;
+
+    pub const BodyDef = c.b3BodyDef;
+    pub const BodyType = c.b3BodyType;
+    pub const MotionLocks = c.b3MotionLocks;
+
+    pub const Vec3 = c.b3Vec3;
+    pub const Rot = c.b3Rot;
+    pub const Transform = c.b3Transform;
+
+    pub const DefaultWorldDef = c.b3DefaultWorldDef;
+    pub const CreateWorld = c.b3CreateWorld;
+    pub const DestroyWorld = c.b3DestroyWorld;
+
+    pub const DefaultBodyDef = c.b3DefaultBodyDef;
+    pub const CreateBody = c.b3CreateBody;
+    pub const DestroyBody = c.b3DestroyBody;
+
+    pub const DefaultShapeDef = c.b3DefaultShapeDef;
+    pub const CreateShape = c.b3CreateShape;
+    pub const DestroyShape = c.b3DestroyShape;
+
+    pub const Body_GetType = c.b3Body_GetType;
+    pub const Body_SetType = c.b3Body_SetType;
+
+    pub const Body_GetTransform = c.b3Body_GetTransform;
+    pub const Body_SetTransform = c.b3Body_SetTransform;
+
+    pub const Body_GetPosition = c.b3Body_GetPosition;
+    pub const Body_GetRotation = c.b3Body_GetRotation;
+
+    pub const Body_GetLinearVelocity = c.b3Body_GetLinearVelocity;
+    pub const Body_SetLinearVelocity = c.b3Body_SetLinearVelocity;
+
+    pub const Body_GetAngularVelocity = c.b3Body_GetAngularVelocity;
+    pub const Body_SetAngularVelocity = c.b3Body_SetAngularVelocity;
+
+    pub const Body_ApplyForce = c.b3Body_ApplyForce;
+    pub const Body_ApplyForceToCenter = c.b3Body_ApplyForceToCenter;
+    pub const Body_ApplyTorque = c.b3Body_ApplyTorque;
+
+    pub const Body_ApplyLinearImpulse = c.b3Body_ApplyLinearImpulse;
+    pub const Body_ApplyLinearImpulseToCenter = c.b3Body_ApplyLinearImpulseToCenter;
+    pub const Body_ApplyAngularImpulse = c.b3Body_ApplyAngularImpulse;
+
+    pub const Body_SetLinearDamping = c.b3Body_SetLinearDamping;
+    pub const Body_GetLinearDamping = c.b3Body_GetLinearDamping;
+
+    pub const Body_SetAngularDamping = c.b3Body_SetAngularDamping;
+    pub const Body_GetAngularDamping = c.b3Body_GetAngularDamping;
+
+    pub const Body_SetGravityScale = c.b3Body_SetGravityScale;
+    pub const Body_GetGravityScale = c.b3Body_GetGravityScale;
+
+    pub const Body_SetAwake = c.b3Body_SetAwake;
+    pub const Body_IsAwake = c.b3Body_IsAwake;
+
+    pub const Body_EnableSleep = c.b3Body_EnableSleep;
+    pub const Body_IsSleepEnabled = c.b3Body_IsSleepEnabled;
+
+    pub const Body_SetBullet = c.b3Body_SetBullet;
+    pub const Body_IsBullet = c.b3Body_IsBullet;
+
+    pub const Body_SetEnabled = c.b3Body_SetEnabled;
+    pub const Body_IsEnabled = c.b3Body_IsEnabled;
+
+    pub const Body_SetMotionLocks = c.b3Body_SetMotionLocks;
+    pub const Body_GetMotionLocks = c.b3Body_GetMotionLocks;
+
+    pub const BODY_TYPE_STATIC = c.b3_staticBody;
+    pub const BODY_TYPE_KINEMATIC = c.b3_kinematicBody;
+    pub const BODY_TYPE_DYNAMIC = c.b3_dynamicBody;
+
+    pub const BoxHull = c.b3BoxHull;
+
+    pub const MakeBoxHull = c.b3MakeBoxHull;
+    pub const CreateHullShape = c.b3CreateHullShape;
+
+    pub const World_Step = c.b3World_Step;
+
+    pub const ShapeDef = c.b3ShapeDef;
+    pub const Box = c.b3Box;
+
+    pub const MakeBox = c.b3MakeBox;
+    pub const CreateBoxShape = c.b3CreateBoxShape;
 };
 
 /// SDL3
