@@ -9,32 +9,25 @@ const Debug = @This();
 materials_textures_sets: std.StringHashMapUnmanaged(vk.DescriptorSet) = .empty,
 
 pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
-    var iter = self.materials_textures_sets.keyIterator();
-    while (iter.next()) |k|
-        a.free(k.*);
     self.materials_textures_sets.deinit(a);
 }
 
 pub fn bind(
     self: *@This(),
     a: std.mem.Allocator,
+    resources: core.resources.Manager,
     alloc_resources: core.resources.Manager.AllocatedData,
 ) std.mem.Allocator.Error!void {
-    var iter =
-        alloc_resources.materials.material_indices.keyIterator();
-    while (iter.next()) |name| {
+    for (0..resources.materials.material_indices.size) |i| {
+        const name = resources.materials.material_names_reverse_lookup.get(i).?;
         if (std.mem.eql(
             u8,
-            name.*,
+            name,
             // background image will not be in correct layout, so we dont allow it to be added
             core.engine.systems.DrawBackground.BACKGROUND_IMAGE_NAME,
         )) continue;
 
-        const mt_idx = alloc_resources.materials.material_indices.get(name.*) orelse std.debug.panic(
-            \\ could not find index for material names '{s}'
-        , .{name.*});
-
-        const img = alloc_resources.materials.getMaterialResource(mt_idx).?;
+        const img = alloc_resources.materials.textures.get(name).?;
 
         const set = imgui.impl_vulkan.AddTexture(
             alloc_resources.materials.sampler,
@@ -43,8 +36,8 @@ pub fn bind(
         );
         log.debug(
             \\ created set for {s}
-        , .{name.*});
-        try self.materials_textures_sets.put(a, name.*, set);
+        , .{name});
+        try self.materials_textures_sets.put(a, name, set);
     }
 }
 
@@ -74,7 +67,9 @@ pub fn drawImgui(
 
     var iter = self.materials_textures_sets.iterator();
     while (iter.next()) |entry| {
-        imgui.Text(entry.key_ptr.ptr);
+        var buf: [64]u8 = undefined;
+        const zbuf = std.fmt.bufPrintZ(&buf, "{s}", .{entry.key_ptr.*}) catch @panic("Buffer couldnt print??");
+        imgui.Text(zbuf);
         imgui.Image(entry.value_ptr.*, imgui.ImVec2{ .x = 400, .y = 400 });
     }
 }

@@ -23,11 +23,12 @@ pub const Mesh3DCreateInfo = struct {
         obj: core.loaders.obj.ObjFile,
         info: struct {
             mesh: core.lib.mesh.Mesh3D,
-            /// period separated by library name
-            /// `debug.black`
-            /// `debug.red`
-            /// `maze`
-            material_name: []const u8,
+            name: []const u8,
+            // period separated by library name
+            // `debug.black`
+            // `debug.red`
+            // `maze`
+            material_name: []const u8 = "",
         },
     },
     transform: core.lib.math.Mat4 = .IDENTITY,
@@ -91,29 +92,32 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
         for (m3ds) |cm3d| {
             switch (cm3d.create_mesh) {
                 .obj => |obj| {
-                    const this_mat_lib = materials.libraries.get(obj.material_library_name) orelse std.debug.panic(
-                        \\ Failed to get material library "{s}"
-                    , .{obj.material_library_name});
+                    // const this_mat_lib = materials.libraries.get(obj.material_library_name) orelse std.debug.panic(
+                    // \\ Failed to get material library "{s}"
+                    // , .{obj.material_library_name});
 
                     const mesh = core.lib.mesh.Mesh3D.fromObjFile(a, obj) catch @panic("failed to load mesh");
                     defer mesh.deinit(a);
-                    meshes3D.appendMeshWithMaterialLookup(
-                        a,
-                        mesh,
-                        cm3d.transform,
-                        this_mat_lib.offset,
-                        this_mat_lib.library,
-                        obj.objects[0].material_ranges,
-                    ) catch @panic("OOM");
+                    try meshes3D.appendMesh(a, obj.name, mesh);
+                    // meshes3D.appendMeshWithMaterialLookup(
+                    //     a,
+                    //     mesh,
+                    //     cm3d.transform,
+                    //     0,
+                    //     // this_mat_lib.offset,
+                    //     this_mat_lib,
+                    //     obj.objects[0].material_ranges,
+                    // ) catch @panic("OOM");
                 },
                 .info => |info| {
-                    const material_idx = materials.material_indices.get(info.material_name).?;
-                    meshes3D.appendMeshWithMaterialIndex(
-                        a,
-                        info.mesh,
-                        cm3d.transform,
-                        @as(u32, @intCast(material_idx)),
-                    ) catch @panic("OOM");
+                    try meshes3D.appendMesh(a, info.name, info.mesh);
+                    // const material_idx = materials.material_indices.get(info.material_name).?;
+                    // meshes3D.appendMeshWithMaterialIndex(
+                    //     a,
+                    //     info.mesh,
+                    //     cm3d.transform,
+                    //     @as(u32, @intCast(material_idx)),
+                    // ) catch @panic("OOM");
                 },
             }
         }
@@ -140,23 +144,51 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
     };
 }
 
+/// erveryhting about this function is dogshit
 pub fn registerInWorld(
-    self: @This(),
+    _: @This(),
     world: *core.engine.world.GameWorld,
 ) void {
-    for (self.meshes3D.meshes.items) |handle| {
+    for (0..3) |i| {
         var ent = world.entities.register(null) catch @panic("OOM");
         ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
-            .handle = handle,
+            .mesh_index = 0,
+            .material_index = 12 + @as(u32, @intCast(i)),
+            // TODO  get this some other way
+            // .material_index = self.meshes3D.meta_data.items[i].material_index,
         });
+
+        var tx = core.engine.world.Transform{};
+        tx.matrix = tx.matrix.translate(.{
+            .x = 0.0,
+            .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
+            .z = 0.0,
+        });
+        ent.addComponent(.transform, tx);
     }
 
-    for (self.meshes2D.ranges.items) |ranges| {
-        var ent = world.entities.register(null) catch @panic("OOM");
-        ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
-            .ranges = ranges,
-        });
-    }
+    var ent = world.entities.register(null) catch @panic("OOM");
+    ent.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
+        .mesh_index = 1,
+        .material_index = 0,
+        // TODO  get this some other way
+        // .material_index = self.meshes3D.meta_data.items[i].material_index,
+    });
+
+    var tx = core.engine.world.Transform{};
+    tx.matrix = tx.matrix.translate(.{
+        .x = 2.0,
+        .y = 1.5,
+        .z = 0.5,
+    });
+    ent.addComponent(.transform, tx);
+
+    // for (self.meshes2D.ranges.items) |ranges| {
+    //     var ent = world.entities.register(null) catch @panic("OOM");
+    //     ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
+    //         .ranges = ranges,
+    //     });
+    // }
 }
 
 pub fn createImmutableData(self: *@This(), device: vk.Device) void {
@@ -192,7 +224,7 @@ fn createDescriptorPool(
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) vk.DescriptorPool {
     var pool: vk.DescriptorPool = undefined;
-    const materials_count = self.materials.amountTotalTextures();
+    const materials_count = self.materials.creates.items.len;
     // TODO
     // derive these sizes!
     // currently these are being manually changed until the program runs
@@ -221,7 +253,7 @@ fn createDescriptorPool(
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            .descriptorCount = materials_count,
+            .descriptorCount = @as(u32, @intCast(materials_count)),
         },
     };
 
@@ -244,7 +276,6 @@ pub fn upload(
     max_sets: u32,
     upload_ctx: *core.bindings.vulkan_init.UploadContext,
     logical_device: core.bindings.vulkan_init.LogicalDevice,
-    physical_device: core.bindings.vulkan_init.PhysicalDevice,
     alloc_cbs: ?*core.clibs.vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!AllocatedData {
     const pool = self.createDescriptorPool(
@@ -269,7 +300,6 @@ pub fn upload(
         pool,
         upload_ctx,
         logical_device,
-        physical_device,
         alloc_cbs,
     );
 

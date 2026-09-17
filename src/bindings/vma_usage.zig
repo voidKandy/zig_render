@@ -42,7 +42,9 @@ pub const AllocatedBuffer = struct {
             .size = alloc_size,
         };
 
-        checkVk(c.vma.CreateBuffer(vma_a, &buffer_ci, &vma_alloc_info, &buffer.buffer, &buffer.allocation, null)) catch @panic("Failed to create buffer");
+        checkVk(c.vma.CreateBuffer(vma_a, &buffer_ci, &vma_alloc_info, &buffer.buffer, &buffer.allocation, null)) catch |e| std.debug.panic(
+            \\ Failed to create buffer: {s}
+        , .{@errorName(e)});
 
         return buffer;
     }

@@ -27,7 +27,8 @@ pub const engine = struct {
 
     pub const systems = struct {
         pub const Manager = @import("engine/systems/Manager.zig");
-        pub const MeshManipulation = @import("engine/systems/MeshManipulation.zig");
+        // pub const MeshManipulation = @import("engine/systems/MeshManipulation.zig");
+        pub const Mesh3DInstancing = @import("engine/systems/Mesh3DInstancing.zig");
         pub const Maze = @import("engine/systems/Maze.zig");
         pub const Debug = @import("engine/systems/Debug.zig");
         pub const Camera = @import("engine/systems/Camera.zig");

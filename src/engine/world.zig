@@ -1,19 +1,19 @@
 const std = @import("std");
 const core = @import("../root.zig");
-/// TODO REORGANIZE
-/// This stuff is for the ECS
+/// rename to materialmesh
 pub const Mesh3DComponent = struct {
-    handle: core.resources.Meshes3D.MeshHandle,
+    mesh_index: u32,
+    material_index: u32,
+    // TODO REMOVE
     scale_factor: f32 = 1.0,
 };
+
 pub const Mesh2DComponent = struct {
     ranges: core.resources.Meshes2D.MeshRanges,
 };
 
 pub const Transform = struct {
-    position: core.lib.math.Vec3 = .ZERO,
-    rotation: core.lib.math.Mat4 = .IDENTITY,
-    scale: core.lib.math.Vec3 = .ONE,
+    matrix: core.lib.math.Mat4 = .IDENTITY,
 };
 
 // pub const Mesh2DComponent = struct {

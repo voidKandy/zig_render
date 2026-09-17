@@ -132,18 +132,22 @@ pub fn init(
         },
     );
 
+    const mt_idx = resources.materials.material_indices.get(MAZE_RESOURCE_NAME).?;
+
     const maze_mesh3D = ci.mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
     defer maze_mesh3D.deinit(a);
-    resources.meshes3D.appendMeshWithMaterialIndex(
-        a,
-        maze_mesh3D,
-        .IDENTITY,
-        0,
-    ) catch @panic("OOM");
+    try resources.meshes3D.appendMesh(a, MAZE_RESOURCE_NAME, maze_mesh3D);
+    // resources.meshes3D.appendMeshWithMaterialIndex(
+    //     a,
+    //     maze_mesh3D,
+    //     .IDENTITY,
+    //     0,
+    // ) catch @panic("OOM");
 
     var mesh3d_entity = try world.entities.register(null);
     mesh3d_entity.addComponent(.mesh3D, core.engine.world.Mesh3DComponent{
-        .handle = resources.meshes3D.meshes.getLast(),
+        .mesh_index = @intCast(resources.meshes3D.meshes.items.len - 1),
+        .material_index = @intCast(mt_idx),
     });
 
     const margin: f32 = 0.05;
@@ -155,7 +159,6 @@ pub fn init(
         1.0 - margin - quad_size,
     );
 
-    const mt_idx = resources.materials.material_indices.get(MAZE_RESOURCE_NAME).?;
     resources.meshes2D.appendMesh(
         a,
         maze_quad,

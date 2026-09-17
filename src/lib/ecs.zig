@@ -556,7 +556,7 @@ pub fn EntityStore(
             }
 
             pub fn accessComponent(
-                self: *@This(),
+                self: *const @This(),
                 which: Meta.ComponentTag,
             ) error{AccessFailed}!Meta.ComponentUnion {
                 inline for (Meta.ALL_COMPONENT_TAGS) |t| {

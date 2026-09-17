@@ -9,17 +9,16 @@ const vk = c.vk;
 const log = std.log.scoped(.Meshes3D);
 
 pub const MetaData = extern struct {
-    material_index: u32,
-    index_offset: u32,
-    index_count: u32,
+    // material_index: u32,
     vertex_offset: u32,
-    model_transform: math_mod.Mat4,
+    // _pad: u64 = 0,
+    // model_transform: math_mod.Mat4,
 };
 
 pub const MeshRanges = struct {
     vertex: core.lib.mesh.RangeDesc,
     index: core.lib.mesh.RangeDesc,
-    metadata: core.lib.mesh.RangeDesc,
+    // metadata: core.lib.mesh.RangeDesc,
 };
 
 pub const MeshHandle = struct {
@@ -29,19 +28,19 @@ pub const MeshHandle = struct {
 pub const Bindings = struct {
     vertex: u32,
     index: u32,
-    metadata: u32,
+    // metadata: u32,
 };
 
 pub const DEFAULT_BINDINGS = Bindings{
     .vertex = 0,
     .index = 1,
-    .metadata = 2,
+    // .metadata = 2,
 };
 
 pub const AllocatedData = struct {
     vertex_buffer: vma_usage.AllocatedBuffer,
     index_buffer: vma_usage.AllocatedBuffer,
-    metadata: vma_usage.MappedBuffer,
+    // metadata: vma_usage.MappedBuffer,
     descriptor_set: vk.DescriptorSet,
 
     pub fn deinit(
@@ -50,7 +49,7 @@ pub const AllocatedData = struct {
     ) void {
         self.vertex_buffer.deinit(allocs.vma);
         self.index_buffer.deinit(allocs.vma);
-        self.metadata.deinit(allocs.vma);
+        // self.metadata.deinit(allocs.vma);
     }
 
     pub fn updateDescriptorSet(
@@ -68,11 +67,11 @@ pub const AllocatedData = struct {
             .offset = 0,
             .range = self.index_buffer.size,
         };
-        const buffer_info = vk.DescriptorBufferInfo{
-            .buffer = self.metadata.allocation.buffer,
-            .offset = 0,
-            .range = vk.WHOLE_SIZE,
-        };
+        // const buffer_info = vk.DescriptorBufferInfo{
+        //     .buffer = self.metadata.allocation.buffer,
+        //     .offset = 0,
+        //     .range = vk.WHOLE_SIZE,
+        // };
 
         const write_sets =
             &[_]vk.WriteDescriptorSet{
@@ -96,18 +95,18 @@ pub const AllocatedData = struct {
                     .pBufferInfo = &index_info,
                 },
 
-                .{
-                    .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .pNext = null,
-                    .dstSet = self.descriptor_set,
-                    .dstBinding = bindings.metadata,
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                    .pImageInfo = null,
-                    .pBufferInfo = &buffer_info,
-                    .pTexelBufferView = null,
-                },
+                // .{
+                //     .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                //     .pNext = null,
+                //     .dstSet = self.descriptor_set,
+                //     .dstBinding = bindings.metadata,
+                //     .dstArrayElement = 0,
+                //     .descriptorCount = 1,
+                //     .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                //     .pImageInfo = null,
+                //     .pBufferInfo = &buffer_info,
+                //     .pTexelBufferView = null,
+                // },
             };
         vk.UpdateDescriptorSets(
             device,
@@ -121,9 +120,11 @@ pub const AllocatedData = struct {
 
 vertices: std.ArrayList(core.lib.mesh.Vertex3D),
 indices: std.ArrayList(u32),
-meta_data: std.ArrayList(MetaData),
+// meta_data: std.ArrayList(MetaData),
 meshes: std.ArrayList(MeshHandle),
-amt_meshes: usize = 0,
+
+mesh_indices: std.StringArrayHashMapUnmanaged(usize) = .empty,
+mesh_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8) = .empty,
 
 descriptor_set_layout: vk.DescriptorSetLayout = undefined,
 
@@ -131,28 +132,38 @@ pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
     return .{
         .vertices = try std.ArrayList(core.lib.mesh.Vertex3D).initCapacity(a, 64),
         .indices = try std.ArrayList(u32).initCapacity(a, 64),
-        .meta_data = try std.ArrayList(MetaData).initCapacity(a, 16),
+        // .meta_data = try std.ArrayList(MetaData).initCapacity(a, 16),
         .meshes = try std.ArrayList(MeshHandle).initCapacity(a, 16),
     };
 }
 
-/// DOES NOT FREE RANGES
 /// passes ownership to allocated data
 pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.vertices.deinit(a);
     self.indices.deinit(a);
-    self.meta_data.deinit(a);
+    // self.meta_data.deinit(a);
+    self.mesh_indices.deinit(a);
+    // var iter = self.mesh_names_reverse_lookup.valueIterator();
+    // while (iter.next()) |v| a.free(v);
+    self.mesh_names_reverse_lookup.deinit(a);
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
 }
 
-pub fn appendMeshWithMaterialIndex(
+pub fn appendMesh(
     self: *@This(),
     a: std.mem.Allocator,
+    name: []const u8,
     mesh: core.lib.mesh.Mesh3D,
-    transform: core.lib.math.Mat4,
-    material_index: u32,
 ) std.mem.Allocator.Error!void {
-    defer self.amt_meshes += 1;
+    defer log.debug(
+        \\ added mesh: '{s}'
+    , .{name});
+    const idx = self.meshes.items.len;
+    try self.mesh_indices.put(a, name, idx);
+
+    const zname = try a.dupeZ(u8, name);
+    try self.mesh_names_reverse_lookup.put(a, idx, zname);
+
     const mesh_range = MeshRanges{
         .vertex = .{
             .offset = @as(u32, @intCast(self.vertices.items.len)),
@@ -162,68 +173,22 @@ pub fn appendMeshWithMaterialIndex(
             .offset = @as(u32, @intCast(self.indices.items.len)),
             .range = @as(u32, @intCast(mesh.indices.len)),
         },
-        .metadata = .{
-            .offset = @as(u32, @intCast(self.meta_data.items.len)),
-            .range = 1,
-        },
+        // .metadata = .{
+        //     .offset = @as(u32, @intCast(self.meta_data.items.len)),
+        //     .range = 1,
+        // },
     };
 
     try self.vertices.appendSlice(a, mesh.vertices);
     try self.indices.appendSlice(a, mesh.indices);
 
-    try self.meta_data.append(a, MetaData{
-        .model_transform = transform,
-        .material_index = material_index,
-        .index_count = @as(u32, @intCast(mesh.indices.len)),
-        .index_offset = @intCast(mesh_range.index.offset),
-        .vertex_offset = @intCast(mesh_range.vertex.offset),
-    });
-    try self.meshes.append(a, .{
-        .ranges = mesh_range,
-    });
-}
-
-pub fn appendMeshWithMaterialLookup(
-    self: *@This(),
-    a: std.mem.Allocator,
-    mesh: core.lib.mesh.Mesh3D,
-    transform: core.lib.math.Mat4,
-    material_lookup_offset: u32,
-    mat_lib: core.resources.Materials.MaterialLibrary,
-    material_infos: []core.loaders.obj.MaterialInfo,
-) std.mem.Allocator.Error!void {
-    defer self.amt_meshes += 1;
-    const mesh_range = MeshRanges{
-        .vertex = .{
-            .offset = @as(u32, @intCast(self.vertices.items.len)),
-            .range = @as(u32, @intCast(mesh.vertices.len)),
-        },
-        .index = .{
-            .offset = @as(u32, @intCast(self.indices.items.len)),
-            .range = @as(u32, @intCast(mesh.indices.len)),
-        },
-        .metadata = .{
-            .offset = @as(u32, @intCast(self.meta_data.items.len)),
-            .range = @as(u32, @intCast(material_infos.len)),
-        },
-    };
-
-    try self.vertices.appendSlice(a, mesh.vertices);
-    try self.indices.appendSlice(a, mesh.indices);
-
-    for (material_infos) |mat_info| {
-        const material_entry = mat_lib.metadata.get(mat_info.material_name) orelse std.debug.panic(
-            \\ Material not found: {s}
-        , .{mat_info.material_name}) + material_lookup_offset;
-
-        try self.meta_data.append(a, MetaData{
-            .model_transform = transform,
-            .material_index = @as(u32, @intCast(material_entry.@"0")),
-            .index_count = mat_info.range.range,
-            .index_offset = @intCast(mesh_range.index.offset + mat_info.range.offset),
-            .vertex_offset = @intCast(mesh_range.vertex.offset),
-        });
-    }
+    // try self.meta_data.append(a, MetaData{
+    //     .model_transform = .IDENTITY,
+    //     .material_index = 0,
+    //     //     .index_count = @as(u32, @intCast(mesh.indices.len)),
+    //     //     .index_offset = @intCast(mesh_range.index.offset),
+    //     .vertex_offset = @intCast(mesh_range.vertex.offset),
+    // });
     try self.meshes.append(a, .{
         .ranges = mesh_range,
     });
@@ -248,13 +213,13 @@ pub fn createDescriptorSetLayout(
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
-        .{
-            .binding = bindings.metadata,
-            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
-            .pImmutableSamplers = null,
-        },
+        // .{
+        //     .binding = bindings.metadata,
+        //     .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        //     .descriptorCount = 1,
+        //     .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        //     .pImmutableSamplers = null,
+        // },
     };
 
     const ci = vk.DescriptorSetLayoutCreateInfo{
@@ -276,7 +241,7 @@ pub fn upload(
 ) AllocatedData {
     var vertex_buffer: vma_usage.AllocatedBuffer = undefined;
     var index_buffer: vma_usage.AllocatedBuffer = undefined;
-    var metadata: vma_usage.MappedBuffer = undefined;
+    // var metadata: vma_usage.MappedBuffer = undefined;
     var desc_set: vk.DescriptorSet = undefined;
 
     const vert_alloc_size, const idx_alloc_size = .{
@@ -362,27 +327,27 @@ pub fn upload(
         .size = idx_alloc_size,
     });
 
-    const metadata_alloc = vma_usage.AllocatedBuffer.create(
-        allocs.vma,
-        @sizeOf(MetaData) * self.amt_meshes,
-        vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
-        0,
-    );
+    // const metadata_alloc = vma_usage.AllocatedBuffer.create(
+    //     allocs.vma,
+    //     @sizeOf(MetaData) * self.meta_data.items.len,
+    //     vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+    //     core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+    //     0,
+    // );
 
-    metadata = vma_usage.MappedBuffer{
-        .allocation = metadata_alloc,
-    };
+    // metadata = vma_usage.MappedBuffer{
+    // .allocation = metadata_alloc,
+    // };
 
-    checkVk(core.clibs.vma.MapMemory(
-        allocs.vma,
-        metadata_alloc.allocation,
-        &metadata.mapped,
-    )) catch @panic("Failed to map metadata");
+    // checkVk(core.clibs.vma.MapMemory(
+    //     allocs.vma,
+    //     metadata_alloc.allocation,
+    //     &metadata.mapped,
+    // )) catch @panic("Failed to map metadata");
 
-    const aligned_metadata: [*]MetaData = @ptrCast(@alignCast(metadata.mapped));
+    // const aligned_metadata: [*]MetaData = @ptrCast(@alignCast(metadata.mapped));
 
-    @memcpy(aligned_metadata, self.meta_data.items);
+    // @memcpy(aligned_metadata, self.meta_data.items);
 
     const ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -397,7 +362,7 @@ pub fn upload(
 
     return .{
         .index_buffer = index_buffer,
-        .metadata = metadata,
+        // .metadata = metadata,
         .vertex_buffer = vertex_buffer,
         .descriptor_set = desc_set,
     };

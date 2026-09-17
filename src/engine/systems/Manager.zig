@@ -2,15 +2,16 @@ const std = @import("std");
 const core = @import("../../root.zig");
 const log = std.log.scoped(.SystemManager);
 const vk = core.clibs.vk;
-pub const MeshManipulation = @import("./MeshManipulation.zig");
+// pub const MeshManipulation = @import("./MeshManipulation.zig");
 pub const Maze = @import("./Maze.zig");
 pub const Debug = @import("./Debug.zig");
 pub const Camera = @import("./Camera.zig");
 pub const DrawBackground = @import("./DrawBackground.zig");
+pub const Mesh3DInstancing = @import("./Mesh3DInstancing.zig");
 
 // down the line some kind of container abstraction might be good for individual systems, but
 // for now they will all just exist as explicit fields
-mesh_manipulation: MeshManipulation,
+// mesh_manipulation: MeshManipulation,
 maze: Maze,
 camera: Camera,
 draw_background: DrawBackground,
@@ -24,7 +25,7 @@ pub fn init(
     maze_system_ci: core.engine.systems.Maze.CreateInfo,
 ) std.mem.Allocator.Error!@This() {
     return .{
-        .mesh_manipulation = .{},
+        // .mesh_manipulation = .{},
         .maze = try Maze.init(a, world, resources, maze_system_ci),
         .debug = .{},
         .camera = try Camera.init(a, resources, world, .{}, swapchain_extent),
@@ -38,7 +39,7 @@ pub fn deinit(
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    self.mesh_manipulation.deinit(allocs);
+    // self.mesh_manipulation.deinit(allocs);
     self.maze.deinit(allocs.std, device, alloc_cbs);
     self.debug.deinit(allocs.std);
     self.draw_background.deinit(device, alloc_cbs);
@@ -68,6 +69,11 @@ pub fn updateSets(
 
     allocated_resources.mapped_buffers.updateBufferSet(
         device,
+        core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.INSTANCE_SET_NAME,
+    );
+
+    allocated_resources.mapped_buffers.updateBufferSet(
+        device,
         Maze.COMPUTE_MAZE_SET_NAME,
     );
 
@@ -88,9 +94,10 @@ pub fn updateSets(
 pub fn bind(
     self: *@This(),
     a: std.mem.Allocator,
+    resources: core.resources.Manager,
     alloc_resources: core.resources.Manager.AllocatedData,
 ) void {
-    self.debug.bind(a, alloc_resources) catch @panic("OOM");
+    self.debug.bind(a, resources, alloc_resources) catch @panic("OOM");
 }
 
 pub fn update(self: *@This(), engine: *core.engine.Engine) void {
@@ -110,12 +117,12 @@ pub fn initComputePipelines(
 
 pub fn trySyncResources(
     self: *@This(),
-    resources: core.resources.Manager,
+    _: core.resources.Manager,
     allocated_resources: core.resources.Manager.AllocatedData,
-    world: *core.engine.world.GameWorld,
+    _: *core.engine.world.GameWorld,
 ) void {
     self.maze.trySyncResources(allocated_resources);
-    self.mesh_manipulation.trySyncResources(resources, allocated_resources, world);
+    // self.mesh_manipulation.trySyncResources(resources, allocated_resources, world);
     self.camera.trySyncResources(allocated_resources);
 }
 
@@ -124,13 +131,13 @@ pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
     self.camera.drawImgui(engine);
     self.draw_background.drawImgui();
     self.maze.drawImgui();
-    self.mesh_manipulation.drawImgui(
-        engine.allocs.std,
-        &engine.mesh3D_pipeline,
-        &engine.world,
-        engine.resources,
-        engine.allocated_resources,
-    );
+    // self.mesh_manipulation.drawImgui(
+    //     engine.allocs.std,
+    //     &engine.mesh3D_pipeline,
+    //     &engine.world,
+    //     engine.resources,
+    //     engine.allocated_resources,
+    // );
 }
 
 pub fn recordComputeCommands(

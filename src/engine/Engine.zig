@@ -45,6 +45,7 @@ world: core.engine.world.GameWorld,
 system_manager: core.engine.systems.Manager = undefined,
 
 mesh3D_pipeline: Mesh3DPipeline = undefined,
+mesh3D_pipeline_render_system: Mesh3DPipeline.RenderSystem = undefined,
 mesh2D_pipeline: Mesh2DPipeline = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
@@ -91,6 +92,7 @@ pub fn deinit(self: *Self) void {
     self.allocated_resources.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     self.mesh3D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
+    self.mesh3D_pipeline_render_system.deinit(self.allocs.std);
     self.mesh2D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
 
     self.system_manager.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
@@ -144,6 +146,8 @@ pub fn run(self: *Self) void {
             self.allocated_resources,
             &self.world,
         );
+
+        self.mesh3D_pipeline_render_system.trySyncResources(self.allocated_resources);
 
         self.drawImgui();
         self.drawFrame();
@@ -297,6 +301,13 @@ pub fn allocateResources(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("OOM");
 
+    Mesh3DPipeline.RenderSystem.registerSets(
+        self.allocs.std,
+        self.logical_device.handle,
+        &self.resources,
+        self.alloc_cbs,
+    ) catch @panic("OOM");
+
     // BAD??
     const max_sets = 16;
     self.allocated_resources = self.resources.upload(
@@ -304,17 +315,17 @@ pub fn allocateResources(self: *Self) void {
         max_sets,
         &self.upload_context,
         self.logical_device,
-        self.physical_device,
         self.alloc_cbs,
     ) catch @panic("OOM");
 
     self.allocated_resources.materials.updateStaticTextureSet(
+        self.resources.materials,
         self.allocs.std,
         self.logical_device.handle,
         core.resources.Materials.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
-    self.system_manager.bind(self.allocs.std, self.allocated_resources);
+    self.system_manager.bind(self.allocs.std, self.resources, self.allocated_resources);
     self.system_manager.updateSets(self.logical_device.handle, &self.allocated_resources);
 }
 
@@ -330,6 +341,11 @@ pub fn initSystems(
         self.swapchain.extent,
         maze_system_ci,
     ) catch @panic("OOM");
+    self.mesh3D_pipeline_render_system = Mesh3DPipeline.RenderSystem.init(
+        self.allocs.std,
+        &self.world,
+        &self.resources,
+    ) catch @panic("OOM");
 }
 
 pub fn initPipelines(
@@ -337,23 +353,29 @@ pub fn initPipelines(
 ) void {
     self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
 
-    var default_graphics_pipeline_description_layouts =
-        core.engine.graphics_pipelines.MeshPipelineDescription.Layouts.init(.{
+    self.initMesh3DPipeline(
+        core.engine.graphics_pipelines.Mesh3DPipeline.Description.Layouts.init(.{
             .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
             .samplers = self.resources.materials.samplers_descriptor_set_layout,
             .texture = self.resources.materials.all_textures_descriptor_set_layout,
             .meshes = self.resources.meshes3D.descriptor_set_layout,
-        });
+            .instances = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.INSTANCE_SET_NAME).?.layout,
+        }),
+    );
 
-    self.initMesh3DPipeline(default_graphics_pipeline_description_layouts);
-
-    default_graphics_pipeline_description_layouts.set(.meshes, self.resources.meshes2D.descriptor_set_layout);
-    self.initMesh2DPipeline(default_graphics_pipeline_description_layouts);
+    self.initMesh2DPipeline(
+        core.engine.graphics_pipelines.MeshPipelineDescription.Layouts.init(.{
+            .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+            .samplers = self.resources.materials.samplers_descriptor_set_layout,
+            .texture = self.resources.materials.all_textures_descriptor_set_layout,
+            .meshes = self.resources.meshes2D.descriptor_set_layout,
+        }),
+    );
 }
 
 fn initMesh3DPipeline(
     self: *Self,
-    default_graphics_pipeline_description_layouts: core.engine.graphics_pipelines.MeshPipelineDescription.Layouts,
+    layouts: core.engine.graphics_pipelines.Mesh3DPipeline.Description.Layouts,
 ) void {
     const vert_shader = core.engine.shaders.createShaderModule(
         "mesh3D.vert",
@@ -380,7 +402,7 @@ fn initMesh3DPipeline(
 
     self.mesh3D_pipeline = Mesh3DPipeline.init(
         .{
-            .layouts = default_graphics_pipeline_description_layouts,
+            .layouts = layouts,
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
@@ -515,6 +537,7 @@ fn drawImgui(self: *Self) void {
     c.imgui.NewFrame();
 
     self.system_manager.drawImgui(self);
+    self.mesh3D_pipeline_render_system.drawImgui(self.resources.meshes3D, self.resources.materials);
 
     c.imgui.Render();
 }
@@ -651,28 +674,34 @@ fn recordCommandBuffer(
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
-    var graphics_pipeline_mesh_description_sets =
-        core.engine.graphics_pipelines.MeshPipelineDescription.Sets.init(.{
+    self.mesh3D_pipeline.bind(frame.main_command_buffer);
+    self.mesh3D_pipeline.recordCommands(
+        self.mesh3D_pipeline_render_system,
+        self.resources,
+
+        core.engine.graphics_pipelines.Mesh3DPipeline.Description.Sets.init(.{
             .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
             .samplers = self.allocated_resources.materials.sampler_set,
             .meshes = self.allocated_resources.meshes3D.descriptor_set,
             .texture = self.allocated_resources.materials.all_textures_descriptor_set,
-        });
-
-    self.mesh3D_pipeline.bind(frame.main_command_buffer);
-    self.mesh3D_pipeline.recordCommands(
-        &self.world,
-        graphics_pipeline_mesh_description_sets,
+            .instances = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.INSTANCE_SET_NAME).?.set,
+        }),
         frame.main_command_buffer,
     );
 
-    graphics_pipeline_mesh_description_sets.set(.meshes, self.allocated_resources.meshes2D.descriptor_set);
     self.mesh2D_pipeline.bind(frame.main_command_buffer);
     self.mesh2D_pipeline.recordCommands(
         &self.world,
         self.swapchain.extent,
         self.allocated_resources,
-        graphics_pipeline_mesh_description_sets,
+
+        core.engine.graphics_pipelines.MeshPipelineDescription.Sets.init(.{
+            .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+            .samplers = self.allocated_resources.materials.sampler_set,
+            .meshes = self.allocated_resources.meshes2D.descriptor_set,
+            .texture = self.allocated_resources.materials.all_textures_descriptor_set,
+        }),
+
         frame.main_command_buffer,
     );
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);

@@ -66,6 +66,7 @@ pub fn readObjDirectory(a: std.mem.Allocator, io: std.Io, dir_path: []const u8) 
 // remove ownership of allocator
 pub const ObjFile = struct {
     allocator: std.mem.Allocator,
+    name: []u8,
     material_library_name: []u8,
 
     objects: []Object,
@@ -75,6 +76,7 @@ pub const ObjFile = struct {
     uvs: [][2]f32,
 
     pub fn deinit(self: *@This()) void {
+        self.allocator.free(self.name);
         self.allocator.free(self.material_library_name);
         self.allocator.free(self.vertices);
         self.allocator.free(self.normals);
@@ -167,6 +169,7 @@ pub fn parseFile(a: std.mem.Allocator, io: std.Io, filepath: []const u8) !ObjFil
     return ObjFile{
         .allocator = a,
         .objects = try ctx.objects.toOwnedSlice(a),
+        .name = try a.dupe(u8, filepath),
 
         .material_library_name = try a.dupe(u8, ctx.material_library_name),
         .vertices = try ctx.vertices.toOwnedSlice(a),

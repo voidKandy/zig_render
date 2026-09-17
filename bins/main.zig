@@ -132,9 +132,7 @@ pub fn main(init: std.process.Init) void {
     };
 
     engine.initSystems(maze_system_ci);
-
     engine.allocateResources();
-
     engine.initPipelines();
 
     engine.run();

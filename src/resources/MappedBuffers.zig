@@ -102,6 +102,8 @@ pub fn upload(
 
     while (all_mapped_iter.next()) |mapped| {
         const ci = mapped.value_ptr;
+        std.debug.assert(ci.alloc_size > 0);
+
         const alloc = core.bindings.vma_usage.AllocatedBuffer.create(
             allocs.vma,
             ci.alloc_size,

@@ -30,10 +30,7 @@ pub const MaterialData = struct {
         self: @This(),
         vma_a: vma.Allocator,
         upload_ctx: *vki.UploadContext,
-        log_device: vki.LogicalDevice,
-        // TODO
-        // remove this
-        _: vki.PhysicalDevice,
+        device: vki.LogicalDevice,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) core.bindings.vulkan_init.VkError!vma_usage.AllocatedImage {
         const image_size = @as(vk.DeviceSize, @intCast(self.width * self.height * 4));
@@ -69,7 +66,7 @@ pub const MaterialData = struct {
             vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
         );
 
-        upload_ctx.immediateSubmit(log_device, struct {
+        upload_ctx.immediateSubmit(device, struct {
             image: vk.Image,
             extent: vk.Extent3D,
             staging_buffer: vma_usage.AllocatedBuffer,
@@ -181,18 +178,18 @@ pub const MaterialData = struct {
                 .layerCount = 1,
             },
         };
-        checkVk(vk.CreateImageView(log_device.handle, &image_view_ci, alloc_cbs, &image.view)) catch @panic("Failed to create image view");
+        checkVk(vk.CreateImageView(device.handle, &image_view_ci, alloc_cbs, &image.view)) catch @panic("Failed to create image view");
 
         return image;
     }
 };
 
-const MaterialLibraryEntry = struct {
-    library: MaterialLibrary,
-    offset: u32,
+pub const TextureCreate = union(enum) {
+    file: MaterialData,
+    writable: WritableTextureCreate,
 };
 
-pub const CreateTextureEntry = struct {
+pub const WritableTextureCreate = struct {
     extent: vk.Extent3D,
     format: vk.Format,
     usages: vk.ImageUsageFlags,
@@ -201,17 +198,20 @@ pub const CreateTextureEntry = struct {
 };
 
 material_indices: std.StringHashMapUnmanaged(usize) = .empty,
-material_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
+material_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8) = .empty,
+
+creates: std.ArrayList(TextureCreate) = .empty,
 
 /// **DO NOT** manually mutate
 /// use `appendMtlLibrary` to ensure lookup tables are populated
-libraries: std.StringHashMapUnmanaged(MaterialLibraryEntry) = .empty,
+/// only held onto as to not invalidate any texture creates that are data from any library
+libraries: std.StringHashMapUnmanaged(MaterialLibrary) = .empty,
 /// these are textures that are written to via compute shaders
 /// or other means
 /// specifically for non-static data
 /// **DO NOT** manually mutate
 /// use `appendWritableTexture` to ensure lookup tables are populated
-textures: std.StringHashMapUnmanaged(CreateTextureEntry) = .empty,
+// textures: std.StringHashMapUnmanaged(WritableTextureCreate) = .empty,
 /// this is passed to AllocatedData for deinitialization
 sampler: vk.Sampler = undefined,
 
@@ -252,10 +252,10 @@ pub fn deinit(
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     var libs_iter = self.libraries.valueIterator();
-    while (libs_iter.next()) |m| {
-        m.library.deinit(a);
+    while (libs_iter.next()) |l| {
+        l.deinit(a);
     }
-    self.textures.deinit(a);
+    self.creates.deinit(a);
 
     var writable_tx_iter = self.writable_textures_descriptor_set_layouts.valueIterator();
     while (writable_tx_iter.next()) |layout| {
@@ -270,35 +270,31 @@ pub fn deinit(
 pub fn appendMtlLibrary(self: *@This(), a: std.mem.Allocator, file: core.loaders.mtl.MtlFile) std.mem.Allocator.Error!void {
     const lib = MaterialLibrary.initFromMaterialFile(a, file) catch @panic("failed to create MTL");
 
-    const offset = self.amountTotalTextures();
+    const offset = self.creates.items.len;
     for (lib.material_names, 0..) |name, i| {
         const full_name = try std.fmt.allocPrint(a, "{s}.{s}", .{ lib.library_name, name });
         try self.material_indices.put(a, full_name, i + offset);
-        try self.material_names_reverse_lookup.put(a, i + offset, full_name);
+        const zname = try a.dupeZ(u8, full_name);
+        try self.material_names_reverse_lookup.put(a, i + offset, zname);
+
+        const data = lib.getMaterialData(name) orelse std.debug.panic(
+            \\ material '{s}' has no data??
+        , .{name});
+
+        try self.creates.append(a, .{ .file = data });
     }
 
-    try self.libraries.put(a, lib.library_name, .{
-        .library = lib,
-        .offset = offset,
-    });
+    try self.libraries.put(a, lib.library_name, lib);
 }
 
-pub fn appendWritableTexture(self: *@This(), a: std.mem.Allocator, name: []const u8, cr_tx: CreateTextureEntry) std.mem.Allocator.Error!void {
+pub fn appendWritableTexture(self: *@This(), a: std.mem.Allocator, name: []const u8, cr_tx: WritableTextureCreate) std.mem.Allocator.Error!void {
     const idx = self.material_indices.count();
     std.debug.assert(self.material_names_reverse_lookup.count() == idx);
     try self.material_indices.put(a, name, idx);
-    try self.material_names_reverse_lookup.put(a, idx, name);
-    try self.textures.put(a, name, cr_tx);
-}
-
-pub fn amountTotalTextures(self: Self) u32 {
-    var count = self.textures.size;
-    var iter = self.libraries.valueIterator();
-
-    while (iter.next()) |v|
-        count += @as(u32, @intCast(v.library.material_names.len));
-
-    return count;
+    const zname = try a.dupeZ(u8, name);
+    try self.material_names_reverse_lookup.put(a, idx, zname);
+    try self.creates.append(a, .{ .writable = cr_tx });
+    // try self.textures.put(a, name, cr_tx);
 }
 
 /// This is NOT the same way bindings are used in Meshes3D
@@ -345,7 +341,7 @@ pub fn createDescriptorSetLayout(
         &self.samplers_descriptor_set_layout,
     )) catch @panic("Failed to create sampler descriptor set layout");
 
-    const count = self.amountTotalTextures();
+    const count = self.creates.items.len;
 
     const tx_bind = vk.DescriptorSetLayoutBinding{
         .binding = bindings.texture,
@@ -407,9 +403,7 @@ fn createWritableTextureSetLayout(
     var bindings_buf: [32]vk.DescriptorSetLayoutBinding = undefined;
 
     for (names, 0..) |name, i| {
-        // fail fast if caller passed a name that doesn't exist —
-        // catches typos/renames at layout-creation time, not at draw time
-        if (!self.textures.contains(name)) std.debug.panic(
+        if (!self.material_indices.contains(name)) std.debug.panic(
             \\ did not find texture with name: '{s}'
         , .{name});
 
@@ -439,62 +433,42 @@ pub fn upload(
     pool: vk.DescriptorPool,
     upload_ctx: *core.bindings.vulkan_init.UploadContext,
     logical_device: vki.LogicalDevice,
-    physical_device: vki.PhysicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!AllocatedData {
-    var material_indices: std.StringHashMapUnmanaged(usize) = .empty;
-    var material_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8) = .empty;
-
-    var libs = std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData).empty;
-    var mat_libs_iter = self.libraries.iterator();
-    while (mat_libs_iter.next()) |entry| {
-        const uploaded = entry.value_ptr.library.upload(
-            allocs,
-            upload_ctx,
-            logical_device,
-            physical_device,
-            alloc_cbs,
-        );
-        libs.put(allocs.std, entry.key_ptr.*, uploaded) catch @panic("OOM");
-
-        for (entry.value_ptr.library.material_names, 0..) |name, i| {
-            try material_indices.put(allocs.std, name, i + entry.value_ptr.offset);
-            try material_names_reverse_lookup.put(allocs.std, i + entry.value_ptr.offset, name);
-        }
-    }
-
     var textures = std.StringHashMapUnmanaged(vma_usage.AllocatedImage).empty;
-    try textures.ensureTotalCapacity(allocs.std, self.textures.size);
-    var tx_iter = self.textures.iterator();
-    while (tx_iter.next()) |entry| {
-        const ci = entry.value_ptr;
+    try textures.ensureTotalCapacity(allocs.std, @as(u32, @intCast(self.creates.items.len)));
+    for (self.creates.items, 0..) |tx_create, i| {
+        const name = self.material_names_reverse_lookup.get(i).?;
+        switch (tx_create) {
+            .file => |data| {
+                const image = data.upload(allocs.vma, upload_ctx, logical_device, alloc_cbs) catch @panic("Failed to upload file data for material");
+                textures.putAssumeCapacity(name, image);
+            },
+            .writable => |ci| {
+                if (ci.extent.width == 0 or ci.extent.height == 0 or ci.extent.depth == 0)
+                    std.debug.panic(
+                        \\ allocating image with 0 width/height/depth??
+                        \\ extent:
+                        \\   width: {d} 
+                        \\   height: {d} 
+                        \\   depth: {d} 
+                    , .{ ci.extent.width, ci.extent.height, ci.extent.depth });
+                var image = vma_usage.AllocatedImage.init(
+                    allocs.vma,
+                    ci.format,
+                    ci.extent,
+                    ci.usages,
+                );
+                const view_ci = vki.imageViewCreateInfo(image.format, image.image, ci.aspect_flags);
 
-        if (ci.extent.width == 0 or ci.extent.height == 0 or ci.extent.depth == 0)
-            std.debug.panic(
-                \\ allocating image with 0 width/height/depth??
-                \\ extent:
-                \\   width: {d} 
-                \\   height: {d} 
-                \\   depth: {d} 
-            , .{ ci.extent.width, ci.extent.height, ci.extent.depth });
-        var image = vma_usage.AllocatedImage.init(
-            allocs.vma,
-            ci.format,
-            ci.extent,
-            ci.usages,
-        );
-        const view_ci = vki.imageViewCreateInfo(image.format, image.image, ci.aspect_flags);
+                checkVk(vk.CreateImageView(logical_device.handle, &view_ci, alloc_cbs, &image.view)) catch
+                    @panic("failed to create maze image view");
 
-        checkVk(vk.CreateImageView(logical_device.handle, &view_ci, alloc_cbs, &image.view)) catch
-            @panic("failed to create maze image view");
+                if (ci.initial_transition_function) |func| func(logical_device, upload_ctx, image.image);
 
-        if (ci.initial_transition_function) |func| func(logical_device, upload_ctx, image.image);
-
-        textures.putAssumeCapacity(entry.key_ptr.*, image);
-        const name = try allocs.std.dupeZ(u8, entry.key_ptr.*);
-
-        try material_indices.put(allocs.std, name, material_indices.count());
-        try material_names_reverse_lookup.put(allocs.std, material_names_reverse_lookup.count(), name);
+                textures.putAssumeCapacity(name, image);
+            },
+        }
     }
 
     var smpl_set: vk.DescriptorSet = undefined;
@@ -551,12 +525,12 @@ pub fn upload(
     }
 
     return .{
-        .libraries = libs,
+        // .libraries = libs,
         .textures = textures,
         .sampler = self.sampler,
 
-        .material_indices = material_indices,
-        .material_names_reverse_lookup = material_names_reverse_lookup,
+        // .material_indices = self.material_indices,
+        // .material_names_reverse_lookup = self.material_names_reverse_lookup,
         .sampler_set = smpl_set,
         .all_textures_descriptor_set = tx_set,
         .writable_textures_descriptor_sets = writable_sets,
@@ -564,10 +538,10 @@ pub fn upload(
 }
 
 pub const AllocatedData = struct {
-    material_indices: std.StringHashMapUnmanaged(usize),
-    material_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8),
+    // material_indices: std.StringHashMapUnmanaged(usize),
+    // material_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8),
 
-    libraries: std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData),
+    // libraries: std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData),
 
     /// All writable textures
     textures: std.StringHashMapUnmanaged(vma_usage.AllocatedImage),
@@ -594,18 +568,18 @@ pub const AllocatedData = struct {
         device: core.clibs.vk.Device,
         alloc_cbs: ?*core.clibs.vk.AllocationCallbacks,
     ) void {
-        var lib_iter = self.libraries.valueIterator();
-        while (lib_iter.next()) |m|
-            m.deinit(allocs, device, alloc_cbs);
-        self.libraries.deinit(allocs.std);
+        // var lib_iter = self.libraries.valueIterator();
+        // while (lib_iter.next()) |m|
+        // m.deinit(allocs, device, alloc_cbs);
+        // self.libraries.deinit(allocs.std);
 
         var tx_iter = self.textures.valueIterator();
         while (tx_iter.next()) |t|
             t.deinit(allocs.vma, device, alloc_cbs);
         self.textures.deinit(allocs.std);
 
-        self.material_indices.deinit(allocs.std);
-        self.material_names_reverse_lookup.deinit(allocs.std);
+        // self.material_indices.deinit(allocs.std);
+        // self.material_names_reverse_lookup.deinit(allocs.std);
         self.writable_textures_descriptor_sets.deinit(allocs.std);
 
         vk.DestroySampler(device, self.sampler, alloc_cbs);
@@ -644,41 +618,28 @@ pub const AllocatedData = struct {
 
     pub fn updateStaticTextureSet(
         self: @This(),
+        materials: Self,
         a: std.mem.Allocator,
         device: vk.Device,
         bindings: Bindings,
     ) std.mem.Allocator.Error!void {
-        const texture_count = self.material_indices.count();
+        const texture_count = self.textures.count();
 
         var image_infos = try a.alloc(vk.DescriptorImageInfo, texture_count);
         defer a.free(image_infos);
 
-        var lib_iter = self.libraries.valueIterator();
+        for (0..texture_count) |i| {
+            const name = materials.material_names_reverse_lookup.get(i).?;
 
-        var i: usize = 0;
-        while (lib_iter.next()) |val| {
-            for (val.images) |img| {
-                image_infos[i] = .{
-                    .sampler = self.sampler,
-                    .imageView = img.view,
-                    .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                };
-                i += 1;
-            }
-        }
+            const img = self.textures.get(name) orelse
+                std.debug.panic("material {d} ({s}) was not uploaded", .{ i, name });
 
-        var tx_iter = self.textures.iterator();
-        while (tx_iter.next()) |entry| {
-            const img = entry.value_ptr;
             image_infos[i] = .{
                 .sampler = self.sampler,
                 .imageView = img.view,
                 .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             };
-            i += 1;
         }
-
-        std.debug.assert(i == texture_count);
 
         const texture_write = vk.WriteDescriptorSet{
             .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -783,8 +744,6 @@ pub const MaterialLibrary = struct {
 
     const AllocatedData = struct {
         images: []vma_usage.AllocatedImage,
-        // sampler: vk.Sampler,
-        // textures: []Texture,
 
         pub fn deinit(
             self: *@This(),
