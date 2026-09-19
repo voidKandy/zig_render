@@ -338,9 +338,24 @@ pub const RenderSystem = struct {
         return self;
     }
 
-    pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
+    pub fn deinit(
+        self: *@This(),
+        allocs: core.engine.Allocators,
+        _: vk.Device,
+        _: ?*vk.AllocationCallbacks,
+    ) void {
         self.ranges.deinit();
-        a.free(self.instances);
+        allocs.std.free(self.instances);
+    }
+
+    pub fn updateSets(
+        device: vk.Device,
+        allocated_resources: *core.resources.Manager.AllocatedData,
+    ) void {
+        allocated_resources.mapped_buffers.updateBufferSet(
+            device,
+            core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.INSTANCE_SET_NAME,
+        );
     }
 
     pub const INSTANCES_BUFFER_NAME = "instances";
@@ -473,11 +488,7 @@ pub const RenderSystem = struct {
         };
     }
 
-    pub fn drawImgui(
-        self: *@This(),
-        meshes3D: core.resources.Meshes3D,
-        materials: core.resources.Materials,
-    ) void {
+    pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
         var open = true;
         const shown = imgui.Begin("Mesh3D Rendering", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
         if (!shown) return;
@@ -486,7 +497,7 @@ pub const RenderSystem = struct {
         var iter = self.ranges.iterator();
 
         while (iter.next()) |entry| {
-            const name = meshes3D.mesh_names_reverse_lookup.get(@intCast(entry.key_ptr.*)) orelse std.debug.panic(
+            const name = engine.resources.meshes3D.mesh_names_reverse_lookup.get(@intCast(entry.key_ptr.*)) orelse std.debug.panic(
                 \\ tried to get an invalid mesh index: {d}
             , .{entry.key_ptr.*});
 
@@ -500,7 +511,7 @@ pub const RenderSystem = struct {
                 const zbuf = std.fmt.bufPrintZ(&buf, "instance: {d}", .{inst.entity_id}) catch @panic("Buffer couldnt print??");
                 if (imgui.TreeNode(zbuf.ptr)) {
                     defer imgui.TreePop();
-                    const mtl_name = materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");
+                    const mtl_name = engine.resources.materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");
                     imgui.Text("Material: %s, index: %d", mtl_name.ptr, inst.material_idx.*);
 
                     const m = inst.model_transform.*;

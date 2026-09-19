@@ -41,7 +41,7 @@ pub fn init(
     };
 }
 
-pub fn initPipeline(
+pub fn initPipelines(
     self: *@This(),
     device: vk.Device,
     resources: core.resources.Manager,
@@ -51,7 +51,7 @@ pub fn initPipeline(
         ComputePipeline.init(device, resources, alloc_cbs);
 }
 
-pub fn deinit(self: *@This(), device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: *@This(), _: core.engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.pipeline.deinit(device, alloc_cbs);
 }
 
@@ -70,13 +70,25 @@ pub fn registerSets(
     );
 }
 
-pub fn drawImgui(self: *@This()) void {
+pub fn updateSets(
+    device: vk.Device,
+    allocated_resources: *core.resources.Manager.AllocatedData,
+) void {
+    allocated_resources.materials.updateWritableTextureSet(
+        device,
+        BACKGROUND_SET_NAME,
+    );
+}
+
+pub fn drawImgui(self: *@This(), _: *core.engine.Engine) void {
     var open = true;
     const shown = imgui.Begin("Draw Background System", &open, 0);
     defer imgui.End();
 
     if (shown) {
-        var selected = self.pipeline.effects.getPtr(self.pipeline.current_effect) orelse @panic("Invalid current effect");
+        var selected = self.pipeline.effects.getPtr(self.pipeline.current_effect) orelse std.debug.panic(
+            \\ Invalid current effect: '{s}'
+        , .{@tagName(self.pipeline.current_effect)});
 
         imgui.Text("Selected effect: ", @tagName(self.pipeline.current_effect).ptr);
         if (imgui.BeginCombo("Background Effects", @tagName(self.pipeline.current_effect).ptr, 0)) {
@@ -92,6 +104,111 @@ pub fn drawImgui(self: *@This()) void {
         _ = imgui.SliderFloat4("data3", &selected.push_constants.data3.x, 0.0, 1.0);
         _ = imgui.SliderFloat4("data4", &selected.push_constants.data4.x, 0.0, 1.0);
     }
+}
+
+pub fn recordComputeCommands(
+    self: @This(),
+    // alloc_resources: core.resources.Manager.AllocatedData,
+    // swapchain: core.bindings.vulkan_init.Swapchain,
+    // framebuffer_index: usize,
+    // write_texture_set: vk.DescriptorSet,
+    // cmd: vk.CommandBuffer,
+
+    engine: core.engine.Engine,
+    cmd: vk.CommandBuffer,
+    framebuffer_index: u32,
+) void {
+    self.pipeline.bind(cmd);
+    const draw_image = engine.allocated_resources.materials.textures.get(BACKGROUND_IMAGE_NAME).?;
+    const tex_set = engine.allocated_resources.materials.writable_textures_descriptor_sets.get(BACKGROUND_SET_NAME).?.set;
+
+    core.bindings.vulkan_util.transitionImageLayout(
+        cmd,
+        draw_image.image,
+        vk.IMAGE_LAYOUT_UNDEFINED,
+        vk.IMAGE_LAYOUT_GENERAL,
+        vk.ACCESS_MEMORY_WRITE_BIT,
+        vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
+        //BAD!
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    );
+
+    const effect = self.pipeline.effects.get(self.pipeline.current_effect) orelse std.debug.panic(
+        \\ Attempted to get effect with name '{s}' but it doesn't exist??
+    , .{@tagName(self.pipeline.current_effect)});
+
+    vk.CmdBindDescriptorSets(
+        cmd,
+        vk.PIPELINE_BIND_POINT_COMPUTE,
+        self.pipeline.layout,
+        0,
+        1,
+        &tex_set,
+        0,
+        null,
+    );
+
+    vk.CmdPushConstants(
+        cmd,
+        self.pipeline.layout,
+        vk.SHADER_STAGE_COMPUTE_BIT,
+        0,
+        @sizeOf(ComputePipeline.PushConstants),
+        &effect.push_constants,
+    );
+
+    // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
+    const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(draw_image.extent.width)) / 16.0));
+    const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(draw_image.extent.height)) / 16.0));
+    vk.CmdDispatch(cmd, w, h, 1);
+
+    core.bindings.vulkan_util.transitionImageLayout(
+        cmd,
+        draw_image.image,
+        vk.IMAGE_LAYOUT_GENERAL,
+        vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        vk.ACCESS_TRANSFER_WRITE_BIT | vk.ACCESS_TRANSFER_READ_BIT,
+        //BAD!
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    );
+
+    core.bindings.vulkan_util.transitionImageLayout(
+        cmd,
+        engine.swapchain.images[framebuffer_index],
+        vk.IMAGE_LAYOUT_UNDEFINED,
+        vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        vk.ACCESS_TRANSFER_READ_BIT,
+        vk.ACCESS_MEMORY_READ_BIT,
+        //BAD!
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    );
+
+    core.bindings.vulkan_util.copyImageToImage(
+        cmd,
+        draw_image.image,
+        engine.swapchain.images[framebuffer_index],
+        vk.Extent2D{
+            .height = draw_image.extent.height,
+            .width = draw_image.extent.width,
+        },
+        engine.swapchain.extent,
+    );
+
+    core.bindings.vulkan_util.transitionImageLayout(
+        cmd,
+        engine.swapchain.images[framebuffer_index],
+        vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        vk.ACCESS_MEMORY_WRITE_BIT,
+        vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
+        //BAD!
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    );
 }
 
 pub const ComputePipeline = struct {
@@ -147,14 +264,14 @@ pub const ComputePipeline = struct {
     effects: std.EnumMap(Effect, EffectData) = undefined,
     current_effect: Effect = @enumFromInt(0),
 
-    pipeline_layout: vk.PipelineLayout = undefined,
+    layout: vk.PipelineLayout = undefined,
 
     pub fn deinit(self: *@This(), device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
         var iter = self.effects.iterator();
         while (iter.next()) |eff|
             vk.DestroyPipeline(device, eff.value.pipeline, alloc_cbs);
 
-        vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
+        vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
     }
 
     pub fn init(
@@ -185,7 +302,7 @@ pub const ComputePipeline = struct {
             .pushConstantRangeCount = 1,
             .pPushConstantRanges = &push_constant,
         };
-        checkVk(vk.CreatePipelineLayout(device, &layout_ci, alloc_cbs, &self.pipeline_layout)) catch
+        checkVk(vk.CreatePipelineLayout(device, &layout_ci, alloc_cbs, &self.layout)) catch
             @panic("failed to create main compute pipeline layout");
 
         self.effects = std.EnumMap(Effect, EffectData).initFull(.{});
@@ -206,7 +323,7 @@ pub const ComputePipeline = struct {
             var ci = vk.ComputePipelineCreateInfo{
                 .sType = vk.STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
                 .pNext = null,
-                .layout = self.pipeline_layout,
+                .layout = self.layout,
                 .stage = stage_info,
             };
 
@@ -217,7 +334,7 @@ pub const ComputePipeline = struct {
         return self;
     }
 
-    pub fn bind(self: @This(), cmd: vk.CommandBuffer) void {
+    fn bind(self: @This(), cmd: vk.CommandBuffer) void {
         const effect =
             self.effects.get(self.current_effect) orelse std.debug.panic(
                 \\ tried to bind background pipeline '{s}' but it does not exist??
@@ -226,98 +343,6 @@ pub const ComputePipeline = struct {
             cmd,
             vk.PIPELINE_BIND_POINT_COMPUTE,
             effect.pipeline,
-        );
-    }
-
-    pub fn recordCommands(
-        self: @This(),
-        alloc_resources: core.resources.Manager.AllocatedData,
-        swapchain: core.bindings.vulkan_init.Swapchain,
-        framebuffer_index: usize,
-        write_texture_set: vk.DescriptorSet,
-        cmd: vk.CommandBuffer,
-    ) void {
-        const draw_image = alloc_resources.materials.textures.get(BACKGROUND_IMAGE_NAME).?;
-
-        core.bindings.vulkan_util.transitionImageLayout(
-            cmd,
-            draw_image.image,
-            vk.IMAGE_LAYOUT_UNDEFINED,
-            vk.IMAGE_LAYOUT_GENERAL,
-            vk.ACCESS_MEMORY_WRITE_BIT,
-            vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
-            //BAD!
-            vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
-            vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
-        );
-
-        const effect = self.effects.get(self.current_effect) orelse std.debug.panic(
-            \\ Attempted to get effect with name '{s}' but it doesn't exist??
-        , .{@tagName(self.current_effect)});
-
-        vk.CmdBindDescriptorSets(
-            cmd,
-            vk.PIPELINE_BIND_POINT_COMPUTE,
-            self.pipeline_layout,
-            0,
-            1,
-            &write_texture_set,
-            0,
-            null,
-        );
-
-        vk.CmdPushConstants(cmd, self.pipeline_layout, vk.SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(PushConstants), &effect.push_constants);
-
-        // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
-        const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(draw_image.extent.width)) / 16.0));
-        const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(draw_image.extent.height)) / 16.0));
-        vk.CmdDispatch(cmd, w, h, 1);
-
-        core.bindings.vulkan_util.transitionImageLayout(
-            cmd,
-            draw_image.image,
-            vk.IMAGE_LAYOUT_GENERAL,
-            vk.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            vk.ACCESS_TRANSFER_WRITE_BIT | vk.ACCESS_TRANSFER_READ_BIT,
-            //BAD!
-            vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
-            vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
-        );
-
-        core.bindings.vulkan_util.transitionImageLayout(
-            cmd,
-            swapchain.images[framebuffer_index],
-            vk.IMAGE_LAYOUT_UNDEFINED,
-            vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            vk.ACCESS_TRANSFER_READ_BIT,
-            vk.ACCESS_MEMORY_READ_BIT,
-            //BAD!
-            vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
-            vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
-        );
-
-        core.bindings.vulkan_util.copyImageToImage(
-            cmd,
-            draw_image.image,
-            swapchain.images[framebuffer_index],
-            vk.Extent2D{
-                .height = draw_image.extent.height,
-                .width = draw_image.extent.width,
-            },
-            swapchain.extent,
-        );
-
-        core.bindings.vulkan_util.transitionImageLayout(
-            cmd,
-            swapchain.images[framebuffer_index],
-            vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            vk.ACCESS_MEMORY_WRITE_BIT,
-            vk.ACCESS_MEMORY_READ_BIT | vk.ACCESS_MEMORY_WRITE_BIT,
-            //BAD!
-            vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
-            vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
         );
     }
 };

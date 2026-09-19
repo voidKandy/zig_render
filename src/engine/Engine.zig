@@ -22,6 +22,14 @@ const INITIAL_WINDOW_EXTENT = vk.Extent2D{ .width = 1600, .height = 900 };
 
 const Self = @This();
 
+const SystemManager = core.engine.systems.Manager.NewSystem(&[_]type{
+    core.engine.systems.Maze,
+    core.engine.systems.Camera,
+    core.engine.systems.DrawBackground,
+    core.engine.systems.Debug,
+    core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem,
+});
+
 allocs: core.engine.Allocators,
 alloc_cbs: ?*vk.AllocationCallbacks,
 io: std.Io,
@@ -42,13 +50,12 @@ resources: core.resources.Manager = undefined,
 
 world: core.engine.world.GameWorld,
 
-system_manager: core.engine.systems.Manager = undefined,
-/// i would love for this to live in manager but it needs to be initailized before everything else
-physics: core.engine.systems.Physics = undefined,
-
 mesh3D_pipeline: Mesh3DPipeline = undefined,
-mesh3D_pipeline_render_system: Mesh3DPipeline.RenderSystem = undefined,
+// mesh3D_pipeline_render_system: Mesh3DPipeline.RenderSystem = undefined,
 mesh2D_pipeline: Mesh2DPipeline = undefined,
+
+system_manager: SystemManager = undefined,
+physics: core.engine.Physics = undefined,
 
 main_render_pass: vk.RenderPass = undefined,
 
@@ -94,7 +101,7 @@ pub fn deinit(self: *Self) void {
     self.allocated_resources.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     self.mesh3D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
-    self.mesh3D_pipeline_render_system.deinit(self.allocs.std);
+    // self.mesh3D_pipeline_render_system.deinit(self.allocs.std);
     self.mesh2D_pipeline.deinit(self.logical_device.handle, self.alloc_cbs);
 
     self.system_manager.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
@@ -145,13 +152,9 @@ pub fn run(self: *Self) void {
 
         self.physics.update(&self.world);
 
-        self.system_manager.trySyncResources(
-            self.resources,
-            self.allocated_resources,
-            &self.world,
-        );
+        self.system_manager.trySyncResources(self.allocated_resources);
 
-        self.mesh3D_pipeline_render_system.trySyncResources(self.allocated_resources);
+        // self.mesh3D_pipeline_render_system.trySyncResources(self.allocated_resources);
 
         self.drawImgui();
         self.drawFrame();
@@ -298,14 +301,7 @@ pub fn allocateResources(self: *Self) void {
         self.alloc_cbs,
     );
 
-    self.system_manager.registerSets(
-        self.allocs.std,
-        self.logical_device.handle,
-        &self.resources,
-        self.alloc_cbs,
-    ) catch @panic("OOM");
-
-    Mesh3DPipeline.RenderSystem.registerSets(
+    SystemManager.registerSets(
         self.allocs.std,
         self.logical_device.handle,
         &self.resources,
@@ -329,33 +325,31 @@ pub fn allocateResources(self: *Self) void {
         core.resources.Materials.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
-    self.system_manager.bind(self.allocs.std, self.resources, self.allocated_resources);
-    self.system_manager.updateSets(self.logical_device.handle, &self.allocated_resources);
+    // BAD??
+    self.system_manager.plexe.Debug.bind(self.allocs.std, self.resources, self.allocated_resources) catch
+        @panic("OOM");
+    SystemManager.updateSets(self.logical_device.handle, &self.allocated_resources);
 }
 
 pub fn initSystems(
     self: *Self,
-    maze_system_ci: core.engine.systems.Maze.CreateInfo,
+    systems: SystemManager.SystemPlexe,
 ) void {
     self.initImgui();
-    self.system_manager = core.engine.systems.Manager.init(
-        self.allocs.std,
-        &self.world,
-        &self.resources,
-        self.swapchain.extent,
-        maze_system_ci,
-    ) catch @panic("OOM");
-    self.mesh3D_pipeline_render_system = Mesh3DPipeline.RenderSystem.init(
-        self.allocs.std,
-        &self.world,
-        &self.resources,
-    ) catch @panic("OOM");
+    self.system_manager = SystemManager.init(
+        systems,
+    );
+    // self.mesh3D_pipeline_render_system = Mesh3DPipeline.RenderSystem.init(
+    //     self.allocs.std,
+    //     &self.world,
+    //     &self.resources,
+    // ) catch @panic("OOM");
 }
 
 pub fn initPipelines(
     self: *Self,
 ) void {
-    self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
+    self.system_manager.initPipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
 
     self.initMesh3DPipeline(
         core.engine.graphics_pipelines.Mesh3DPipeline.Description.Layouts.init(.{
@@ -541,7 +535,7 @@ fn drawImgui(self: *Self) void {
     c.imgui.NewFrame();
 
     self.system_manager.drawImgui(self);
-    self.mesh3D_pipeline_render_system.drawImgui(self.resources.meshes3D, self.resources.materials);
+    // self.mesh3D_pipeline_render_system.drawImgui(self.resources.meshes3D, self.resources.materials);
 
     c.imgui.Render();
 }
@@ -680,7 +674,8 @@ fn recordCommandBuffer(
 
     self.mesh3D_pipeline.bind(frame.main_command_buffer);
     self.mesh3D_pipeline.recordCommands(
-        self.mesh3D_pipeline_render_system,
+        // BAD??
+        self.system_manager.plexe.RenderSystem,
         self.resources,
 
         core.engine.graphics_pipelines.Mesh3DPipeline.Description.Sets.init(.{
@@ -708,6 +703,12 @@ fn recordCommandBuffer(
 
         frame.main_command_buffer,
     );
+
+    if (self.physics.debug_pipeline) |dbg| {
+        dbg.bind(frame.main_command_buffer);
+        // dbg.recordCommands(vertex_buffer: (unknown type), vertex_count: u32, sets: EnumArray(enum {...},V), cmd: (unknown type))
+    }
+
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }
 

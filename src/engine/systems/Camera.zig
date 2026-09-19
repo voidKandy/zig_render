@@ -63,6 +63,16 @@ pub fn registerSets(
     );
 }
 
+pub fn updateSets(
+    device: vk.Device,
+    allocated_resources: *core.resources.Manager.AllocatedData,
+) void {
+    allocated_resources.mapped_buffers.updateBufferSet(
+        device,
+        CAMERA_SET_NAME,
+    );
+}
+
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
     const aligned: *Camera.GPUData = @ptrCast(
         @alignCast(alloc_resources.mapped_buffers.buffers.get(CAMERA_RESOURCE_NAME).?.mapped),

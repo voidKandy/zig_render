@@ -46,23 +46,36 @@ pub fn main(init: std.process.Init) void {
         core.loaders.obj.readObjDirectory(a, init.io, "assets/meshes") catch @panic("failed to read objects"),
     };
 
+    const user_create_meshes = &[_]core.resources.Manager.Mesh3DCreateInfo{
+        .{ .create_mesh = .{
+            .info = .{
+                .mesh = core.lib.mesh.Mesh3D.box(a, 10.0, 10.0, 1.0) catch @panic("OOM"),
+                .name = "large_flat_box",
+            },
+        } },
+    };
+
     defer {
         for (all_objects) |obj_files| {
             for (obj_files) |*obj|
                 obj.deinit();
             a.free(obj_files);
         }
+
+        for (user_create_meshes) |m| {
+            m.create_mesh.info.mesh.deinit(a);
+        }
     }
 
-    const amt_meshes_objects = blk: {
+    const amt_mesh_creates = blk: {
         var total: usize = 0;
         for (all_objects) |files| total += files.len;
-        break :blk total;
+        break :blk total + user_create_meshes.len;
     };
 
     const meshes_objects = a.alloc(
         core.resources.Manager.Mesh3DCreateInfo,
-        amt_meshes_objects,
+        amt_mesh_creates,
     ) catch @panic("failed to alloc meshes_objects");
     defer a.free(meshes_objects);
 
@@ -76,6 +89,10 @@ pub fn main(init: std.process.Init) void {
             };
         }
         k += files.len;
+    }
+
+    for (user_create_meshes) |m| {
+        meshes_objects[k] = m;
     }
 
     var engine = core.engine.Engine.init(
@@ -93,11 +110,11 @@ pub fn main(init: std.process.Init) void {
     );
     defer engine.deinit();
 
-    engine.physics = .init();
+    engine.physics = .init(.{}, engine.alloc_cbs);
 
     // BAD
     // dont like consumer calling this
-    engine.resources.registerInWorld(&engine.world, engine.physics.world);
+    createEntities(engine.resources, &engine.world, engine.physics.world);
     const maze_system_ci = core.engine.systems.Maze.CreateInfo{
         .push_constants = core.engine.systems.Maze.PushConstants{
             .width = 10,
@@ -132,9 +149,122 @@ pub fn main(init: std.process.Init) void {
         },
     };
 
-    engine.initSystems(maze_system_ci);
+    engine.initSystems(.{
+        .Maze = core.engine.systems.Maze.init(a, &engine.world, &engine.resources, maze_system_ci) catch @panic("OOM"),
+        .Debug = .{},
+        .Camera = core.engine.systems.Camera.init(a, &engine.resources, &engine.world, .{}, engine.swapchain.extent) catch @panic("OOM"),
+        .DrawBackground = core.engine.systems.DrawBackground.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM"),
+        .RenderSystem = core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.init(a, &engine.world, &engine.resources) catch @panic("OOM"),
+        // .PhysicsDebug = core.engine.systems.PhysicsDebug{},
+    });
     engine.allocateResources();
     engine.initPipelines();
 
     engine.run();
+}
+
+fn createEntities(
+    resources: core.resources.Manager,
+    world: *core.engine.world.GameWorld,
+    physics_world: core.clibs.box3D.WorldId,
+) void {
+    for (0..3) |i| {
+        var ent = world.entities.register(null) catch @panic("OOM");
+        ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
+            resources,
+            .{
+                .mesh = "viking_room.obj",
+                .material = "globals.viking_room",
+            },
+        ));
+
+        var tx = core.engine.world.Transform{};
+        tx.matrix = tx.matrix.translate(.{
+            .x = 0.0,
+            .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
+            .z = 1.0,
+        });
+        ent.addComponent(.transform, tx);
+
+        var body_def = core.clibs.box3D.DefaultBodyDef();
+        body_def.type = core.clibs.box3D.BODY_TYPE_DYNAMIC;
+        body_def.position = .{
+            .x = 0.0,
+            .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
+            .z = 1.0,
+        };
+
+        const body_id = core.clibs.box3D.CreateBody(physics_world, &body_def);
+
+        ent.addComponent(.rigid_body, core.engine.world.RigidBody{
+            .id = body_id,
+        });
+
+        var shape_def = core.clibs.box3D.DefaultShapeDef();
+        shape_def.density = 1.0;
+
+        const box = core.clibs.box3D.MakeBoxHull(
+            0.5,
+            0.5,
+            0.5,
+        );
+
+        _ = core.clibs.box3D.CreateHullShape(
+            body_id,
+            &shape_def,
+            &box.base,
+        );
+    }
+    var ent = world.entities.register(null) catch @panic("OOM");
+    ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
+        resources,
+        .{
+            .mesh = "large_flat_box",
+            .material = "debug.gray",
+        },
+    ));
+
+    var tx = core.engine.world.Transform{};
+    tx.matrix = tx.matrix.translate(.{
+        .x = 2.0,
+        .y = 1.5,
+        .z = 0.5,
+    });
+    ent.addComponent(.transform, tx);
+
+    var body_def = core.clibs.box3D.DefaultBodyDef();
+    body_def.type = core.clibs.box3D.BODY_TYPE_STATIC;
+    body_def.position = .{
+        .x = 2.0,
+        .y = 1.5,
+        .z = 0.5,
+    };
+
+    const body_id = core.clibs.box3D.CreateBody(physics_world, &body_def);
+
+    ent.addComponent(.rigid_body, core.engine.world.RigidBody{
+        .id = body_id,
+    });
+
+    var shape_def = core.clibs.box3D.DefaultShapeDef();
+    shape_def.density = 0.0;
+
+    const box = core.clibs.box3D.MakeBoxHull(
+        10.0,
+        10.0,
+        1.0,
+    );
+
+    _ = core.clibs.box3D.CreateHullShape(
+        body_id,
+        &shape_def,
+        &box.base,
+    );
+
+    // for (self.meshes2D.ranges.items) |ranges| {
+    //     var ent = world.entities.register(null) catch @panic("OOM");
+    //     ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
+    //         .ranges = ranges,
+    //     });
+    // }
 }

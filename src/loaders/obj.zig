@@ -156,7 +156,11 @@ pub fn parseFile(a: std.mem.Allocator, io: std.Io, filepath: []const u8) !ObjFil
     try ctx.uvs.append(ctx.allocator, .{ 0, 0 });
 
     var file_reader = file.reader(io, &.{});
-    // const file_size = try file_reader.getSize();
+
+    const obj_name = blk: {
+        const start = std.mem.lastIndexOfScalar(u8, filepath[0..], std.fs.path.sep) orelse 0;
+        break :blk try a.dupe(u8, filepath[start + 1 ..]);
+    };
 
     const file_content = try file_reader.interface.allocRemaining(a, .unlimited);
     defer a.free(file_content);
@@ -169,7 +173,7 @@ pub fn parseFile(a: std.mem.Allocator, io: std.Io, filepath: []const u8) !ObjFil
     return ObjFile{
         .allocator = a,
         .objects = try ctx.objects.toOwnedSlice(a),
-        .name = try a.dupe(u8, filepath),
+        .name = obj_name,
 
         .material_library_name = try a.dupe(u8, ctx.material_library_name),
         .vertices = try ctx.vertices.toOwnedSlice(a),

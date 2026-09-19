@@ -70,8 +70,9 @@ pub fn parseFile(a: Allocator, io: std.Io, filepath: []const u8) !MtlFile {
     const file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
     defer file.close(io);
 
-    const last_slash_idx = if (std.mem.indexOfScalar(u8, filepath, '/')) |i| i + 1 else 0;
-    const name = try a.dupe(u8, filepath[last_slash_idx..]);
+    const last_slash_idx = if (std.mem.lastIndexOfScalar(u8, filepath, '/')) |i| i + 1 else 0;
+    const obj_idx = std.ascii.indexOfIgnoreCase(filepath, ".mtl").?;
+    const name = try a.dupe(u8, filepath[last_slash_idx..obj_idx]);
 
     var arena_state = std.heap.ArenaAllocator.init(a);
     defer arena_state.deinit();

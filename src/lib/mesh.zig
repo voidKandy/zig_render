@@ -59,6 +59,104 @@ pub const Mesh3D = struct {
         }
     };
 
+    pub fn box(a: std.mem.Allocator, size_x: f32, size_y: f32, size_z: f32) std.mem.Allocator.Error!Mesh3D {
+        const hx = size_x / 2.0;
+        const hy = size_y / 2.0;
+        const hz = size_z / 2.0;
+        const white = Vec4.make(1, 1, 1, 1);
+
+        const vertices = try a.alloc(Vertex3D, 24);
+
+        const Face = struct {
+            corners: [4]Vec3,
+            normal: Vec4,
+        };
+
+        const faces = [_]Face{
+            .{
+                .corners = .{ Vec3.make(hx, -hy, -hz), Vec3.make(hx, -hy, hz), Vec3.make(hx, hy, hz), Vec3.make(hx, hy, -hz) },
+                .normal = Vec4.make(1, 0, 0, 0),
+            },
+            .{
+                .corners = .{
+                    Vec3.make(-hx, -hy, hz),
+                    Vec3.make(-hx, -hy, -hz),
+                    Vec3.make(-hx, hy, -hz),
+                    Vec3.make(-hx, hy, hz),
+                },
+                .normal = Vec4.make(-1, 0, 0, 0),
+            },
+            .{
+                .corners = .{
+                    Vec3.make(-hx, hy, -hz),
+                    Vec3.make(hx, hy, -hz),
+                    Vec3.make(hx, hy, hz),
+                    Vec3.make(-hx, hy, hz),
+                },
+                .normal = Vec4.make(0, 1, 0, 0),
+            },
+            .{
+                .corners = .{
+                    Vec3.make(-hx, -hy, hz),
+                    Vec3.make(hx, -hy, hz),
+                    Vec3.make(hx, -hy, -hz),
+                    Vec3.make(-hx, -hy, -hz),
+                },
+                .normal = Vec4.make(0, -1, 0, 0),
+            },
+            .{
+                .corners = .{
+                    Vec3.make(-hx, -hy, hz),
+                    Vec3.make(hx, -hy, hz),
+                    Vec3.make(hx, hy, hz),
+                    Vec3.make(-hx, hy, hz),
+                },
+                .normal = Vec4.make(0, 0, 1, 0),
+            },
+            .{
+                .corners = .{
+                    Vec3.make(hx, -hy, -hz),
+                    Vec3.make(-hx, -hy, -hz),
+                    Vec3.make(-hx, hy, -hz),
+                    Vec3.make(hx, hy, -hz),
+                },
+                .normal = Vec4.make(0, 0, -1, 0),
+            },
+        };
+
+        const uvs = [_]Vec2{ Vec2.make(0, 0), Vec2.make(1, 0), Vec2.make(1, 1), Vec2.make(0, 1) };
+
+        for (faces, 0..) |face, f| {
+            for (0..4) |k| {
+                const p = face.corners[k];
+                vertices[f * 4 + k] = .{
+                    .position = Vec4.make(p.x, p.y, p.z, 1.0),
+                    .normal = face.normal,
+                    .color = white,
+                    .uv = uvs[k],
+                };
+            }
+        }
+
+        const indices = try a.alloc(u32, 36);
+        for (0..6) |f| {
+            const base: u32 = @intCast(f * 4);
+            const off = f * 6;
+            // CCW winding per face, consistent with FRONT_FACE_COUNTER_CLOCKWISE
+            indices[off + 0] = base + 0;
+            indices[off + 1] = base + 2;
+            indices[off + 2] = base + 1;
+            indices[off + 3] = base + 0;
+            indices[off + 4] = base + 3;
+            indices[off + 5] = base + 2;
+        }
+
+        return .{
+            .vertices = vertices,
+            .indices = indices,
+        };
+    }
+
     pub fn fromObjFile(a: std.mem.Allocator, obj_file: core.loaders.obj.ObjFile) std.mem.Allocator.Error!Self {
         if (obj_file.objects.len == 0) @panic("tried to turn an empty object into a mesh");
         if (obj_file.objects.len > 1) for (obj_file.objects) |object| {

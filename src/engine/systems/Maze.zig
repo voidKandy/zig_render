@@ -181,14 +181,30 @@ pub fn init(
     };
 }
 
-pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
-    self.maze.deinit(a);
-    a.free(self.maze_gpu_cells);
+pub fn updateSets(
+    device: vk.Device,
+    allocated_resources: *core.resources.Manager.AllocatedData,
+) void {
+    allocated_resources.mapped_buffers.updateBufferSet(
+        device,
+        COMPUTE_MAZE_SET_NAME,
+    );
+
+    allocated_resources.materials.updateWritableTextureSet(
+        device,
+        COMPUTE_MAZE_SET_NAME,
+    );
+}
+
+pub fn deinit(self: *@This(), allocs: core.engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+    self.maze.deinit(allocs.std);
+    allocs.std.free(self.maze_gpu_cells);
     self.pipeline.deinit(device, alloc_cbs);
 }
 
-pub fn initPipeline(
+pub fn initPipelines(
     self: *@This(),
+    _: vk.Device,
     resources: core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
@@ -237,6 +253,7 @@ pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.
 
 pub fn update(
     self: *@This(),
+    _: *core.engine.Engine,
 ) void {
     if (self.maze_update) {
         for (self.maze.cells) |*c|
@@ -255,8 +272,71 @@ pub fn update(
     // }
 }
 
+pub fn recordComputeCommands(
+    self: @This(),
+    engine: core.engine.Engine,
+    cmd: vk.CommandBuffer,
+    _: u32,
+) void {
+    self.pipeline.bind(cmd);
+    const sets = [_]vk.DescriptorSet{
+        engine.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        engine.allocated_resources.materials.writable_textures_descriptor_sets.get(core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME).?.set,
+        engine.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Maze.COMPUTE_MAZE_SET_NAME).?.set,
+    };
+    vk.CmdBindDescriptorSets(
+        cmd,
+        vk.PIPELINE_BIND_POINT_COMPUTE,
+        self.pipeline.layout,
+        0,
+        sets.len,
+        &sets,
+        0,
+        null,
+    );
+
+    vk.CmdPushConstants(
+        cmd,
+        self.pipeline.layout,
+        vk.SHADER_STAGE_COMPUTE_BIT,
+        0,
+        @sizeOf(core.engine.systems.Maze.PushConstants),
+        &self.push_constants,
+    );
+
+    const maze_image = engine.allocated_resources.materials.textures.get(MAZE_RESOURCE_NAME).?;
+
+    // transition to GENERAL for compute write
+    core.bindings.vulkan_util.transitionImageLayout(
+        cmd,
+        maze_image.image,
+        vk.IMAGE_LAYOUT_UNDEFINED,
+        vk.IMAGE_LAYOUT_GENERAL,
+        0,
+        vk.ACCESS_SHADER_WRITE_BIT,
+        vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+    );
+    const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.maze.width * self.push_constants.pixels_per_cell)) / 8.0));
+    const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(self.maze.height * self.push_constants.pixels_per_cell)) / 8.0));
+    vk.CmdDispatch(cmd, w, h, 1);
+
+    // transition to SHADER_READ_ONLY so HUD can sample it
+    core.bindings.vulkan_util.transitionImageLayout(
+        cmd,
+        maze_image.image,
+        vk.IMAGE_LAYOUT_GENERAL,
+        vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        vk.ACCESS_SHADER_WRITE_BIT,
+        vk.ACCESS_SHADER_READ_BIT,
+        vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+    );
+}
+
 pub fn drawImgui(
     self: *@This(),
+    _: *core.engine.Engine,
     // ui_set: core.clibs.vk.DescriptorSet,
 ) void {
     var open = true;
@@ -278,7 +358,7 @@ pub fn drawImgui(
 
 const ComputePipeline = struct {
     pipeline: vk.Pipeline = undefined,
-    pipeline_layout: vk.PipelineLayout = undefined,
+    layout: vk.PipelineLayout = undefined,
 
     /// TODO
     /// remove device from this
@@ -289,7 +369,7 @@ const ComputePipeline = struct {
 
     pub fn deinit(self: *@This(), device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
         vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
-        vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
+        vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
     }
 
     pub fn init(
@@ -329,7 +409,7 @@ const ComputePipeline = struct {
             .pushConstantRangeCount = 1,
             .pPushConstantRanges = &push_constant,
         };
-        checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.pipeline_layout)) catch
+        checkVk(vk.CreatePipelineLayout(pd.device, &layout_ci, alloc_cbs, &self.layout)) catch
             @panic("failed to create main compute pipeline layout");
 
         const stage = vk.PipelineShaderStageCreateInfo{
@@ -340,7 +420,7 @@ const ComputePipeline = struct {
         };
         const ci = vk.ComputePipelineCreateInfo{
             .sType = vk.STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-            .layout = self.pipeline_layout,
+            .layout = self.layout,
             .stage = stage,
         };
         checkVk(vk.CreateComputePipelines(pd.device, null, 1, &ci, alloc_cbs, &self.pipeline)) catch
@@ -349,67 +429,7 @@ const ComputePipeline = struct {
         return self;
     }
 
-    pub fn bind(self: @This(), cmd: vk.CommandBuffer) void {
+    fn bind(self: @This(), cmd: vk.CommandBuffer) void {
         vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
-    }
-
-    pub fn recordCommands(
-        self: @This(),
-        alloc_resources: core.resources.Manager.AllocatedData,
-        camera_descriptor_set: vk.DescriptorSet,
-        write_texture_set: vk.DescriptorSet,
-        mapped_buffer_set: vk.DescriptorSet,
-        maze_system: core.engine.systems.Maze,
-        cmd: vk.CommandBuffer,
-    ) void {
-        const sets = [_]vk.DescriptorSet{ camera_descriptor_set, write_texture_set, mapped_buffer_set };
-        vk.CmdBindDescriptorSets(
-            cmd,
-            vk.PIPELINE_BIND_POINT_COMPUTE,
-            self.pipeline_layout,
-            0,
-            sets.len,
-            &sets,
-            0,
-            null,
-        );
-
-        vk.CmdPushConstants(
-            cmd,
-            self.pipeline_layout,
-            vk.SHADER_STAGE_COMPUTE_BIT,
-            0,
-            @sizeOf(core.engine.systems.Maze.PushConstants),
-            &maze_system.push_constants,
-        );
-
-        const maze_image = alloc_resources.materials.textures.get(MAZE_RESOURCE_NAME).?;
-
-        // transition to GENERAL for compute write
-        core.bindings.vulkan_util.transitionImageLayout(
-            cmd,
-            maze_image.image,
-            vk.IMAGE_LAYOUT_UNDEFINED,
-            vk.IMAGE_LAYOUT_GENERAL,
-            0,
-            vk.ACCESS_SHADER_WRITE_BIT,
-            vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        );
-        const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(maze_system.maze.width * maze_system.push_constants.pixels_per_cell)) / 8.0));
-        const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(maze_system.maze.height * maze_system.push_constants.pixels_per_cell)) / 8.0));
-        vk.CmdDispatch(cmd, w, h, 1);
-
-        // transition to SHADER_READ_ONLY so HUD can sample it
-        core.bindings.vulkan_util.transitionImageLayout(
-            cmd,
-            maze_image.image,
-            vk.IMAGE_LAYOUT_GENERAL,
-            vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            vk.ACCESS_SHADER_WRITE_BIT,
-            vk.ACCESS_SHADER_READ_BIT,
-            vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        );
     }
 };

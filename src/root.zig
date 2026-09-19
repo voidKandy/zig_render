@@ -25,20 +25,23 @@ pub const engine = struct {
     pub const Input = @import("engine/Input.zig");
     pub const shaders = @import("engine/shaders.zig");
 
+    pub const Physics = @import("engine/Physics.zig");
+
     pub const systems = struct {
         pub const Manager = @import("engine/systems/Manager.zig");
-        pub const Physics = @import("engine/systems/Physics.zig");
-        // pub const MeshManipulation = @import("engine/systems/MeshManipulation.zig");
-        pub const Mesh3DInstancing = @import("engine/systems/Mesh3DInstancing.zig");
         pub const Maze = @import("engine/systems/Maze.zig");
         pub const Debug = @import("engine/systems/Debug.zig");
         pub const Camera = @import("engine/systems/Camera.zig");
         pub const DrawBackground = @import("engine/systems/DrawBackground.zig");
+        test {
+            std.testing.refAllDecls(@This());
+        }
     };
 
     pub const graphics_pipelines = struct {
-        pub const Mesh3DPipeline = @import("engine/pipelines/Mesh3DPipeline.zig");
-        pub const Mesh2DPipeline = @import("engine/pipelines/Mesh2DPipeline.zig");
+        pub const Mesh3DPipeline = @import("engine/graphics_pipelines/Mesh3DPipeline.zig");
+        pub const Mesh2DPipeline = @import("engine/graphics_pipelines/Mesh2DPipeline.zig");
+        pub const PhysicsDebugPipeline = @import("engine/graphics_pipelines/PhysicsDebugPipeline.zig");
 
         const MeshPipelineDescriptorSets =
             enum {

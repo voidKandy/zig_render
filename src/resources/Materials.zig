@@ -817,9 +817,6 @@ pub const MaterialLibrary = struct {
                     .width = width,
                 };
                 defer core.clibs.stbi.image_free(image_data);
-                log.debug(
-                    \\ Material '{s}' loaded
-                , .{mat.name});
 
                 try materials.appendSlice(a, image_data[0..byte_count]);
                 try metadatas.put(a, mat.name, .{ metadatas.size, md });
@@ -841,9 +838,16 @@ pub const MaterialLibrary = struct {
                 try materials.appendSlice(a, &pixel);
                 try metadatas.put(a, mat.name, .{ metadatas.size, md });
                 try material_names.append(a, try a.dupeZ(u8, mat.name));
-                log.debug("Material '{s}' loaded as flat color", .{mat.name});
             }
         }
+
+        log.debug("All materials on file: ", .{});
+        for (material_names.items) |m| {
+            log.debug(
+                \\ '{s}'
+            , .{m});
+        }
+
         return .{
             .materials_blob = try materials.toOwnedSlice(a),
             .metadata = metadatas,

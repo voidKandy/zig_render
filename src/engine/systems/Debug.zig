@@ -8,8 +8,13 @@ const Debug = @This();
 
 materials_textures_sets: std.StringHashMapUnmanaged(vk.DescriptorSet) = .empty,
 
-pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
-    self.materials_textures_sets.deinit(a);
+pub fn deinit(
+    self: *@This(),
+    allocs: core.engine.Allocators,
+    _: vk.Device,
+    _: ?*vk.AllocationCallbacks,
+) void {
+    self.materials_textures_sets.deinit(allocs.std);
 }
 
 pub fn bind(
@@ -54,9 +59,10 @@ pub fn bind(
 
 pub fn drawImgui(
     self: *@This(),
-    window: *sdl.Window,
+    engine: *core.engine.Engine,
 ) void {
     var open = true;
+    const window = engine.window;
     const shown = imgui.Begin("Debug", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
     if (!shown) return;

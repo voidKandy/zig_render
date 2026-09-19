@@ -53,7 +53,6 @@ pub fn createAndRegisterBufferSetLayout(
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!void {
     var layout: vk.DescriptorSetLayout = undefined;
-    // var all_names = try a.alloc([]const u8, buffer_infos.len);
     std.debug.assert(buffer_infos.len <= 32);
     var bindings: [32]vk.DescriptorSetLayoutBinding = undefined;
     for (buffer_infos, 0..) |info, i| {
@@ -68,7 +67,6 @@ pub fn createAndRegisterBufferSetLayout(
             .stageFlags = info.stage_flags,
             .pImmutableSamplers = null,
         };
-        // all_names[i] = info.name;
     }
 
     const ci = vk.DescriptorSetLayoutCreateInfo{
@@ -154,35 +152,6 @@ pub fn upload(
     };
 }
 
-// pub fn createDescriptorSetLayoutBinding(
-//     self: @This(),
-//     buffer_name: []const u8,
-//     binding: u32,
-//     desc_type: vk.DescriptorType,
-//     stage_flags: u32,
-// ) vk.DescriptorSetLayoutBinding {
-//     if (!self.creates.contains(buffer_name)) std.debug.panic(
-//         \\ Tried to create a set layout binding for a buffer that is not present: '{s}'
-//     , .{buffer_name});
-
-//     return vk.DescriptorSetLayoutBinding{
-//         .binding = binding,
-//         .descriptorType = desc_type,
-//         .descriptorCount = 1,
-//         .stageFlags = stage_flags,
-//         .pImmutableSamplers = null,
-//     };
-
-// const ci = vk.DescriptorSetLayoutCreateInfo{
-//     .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-//     .bindingCount = @as(u32, @intCast(bindings.len)),
-//     .pBindings = bindings.ptr,
-// };
-
-// checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.descriptor_set_layout)) catch
-//     @panic("failed to create main compute descriptor set layout");
-// }
-
 pub const AllocatedData = struct {
     buffers: std.StringHashMapUnmanaged(core.bindings.vma_usage.MappedBuffer) = .empty,
     buffer_sets: std.StringHashMapUnmanaged(BufferSet) = .empty,
@@ -201,45 +170,8 @@ pub const AllocatedData = struct {
             entry.value_ptr.deinit(allocs.vma);
         }
         self.buffers.deinit(allocs.std);
-
-        // var set_iter = self.buffer_sets.valueIterator();
-        // while (set_iter.next()) |set| {
-        //     allocs.std.free(set.names);
-        // }
         self.buffer_sets.deinit(allocs.std);
     }
-
-    // pub fn createDescriptorSetWrite(
-    //     self: @This(),
-    //     set: vk.DescriptorSet,
-    //     buffer_name: []const u8,
-    //     binding: u32,
-    //     offset: u32,
-    //     desc_type: vk.DescriptorType,
-    //     buf_info_out: *vk.DescriptorBufferInfo,
-    // ) vk.WriteDescriptorSet {
-    //     if (!self.buffers.contains(buffer_name)) std.debug.panic(
-    //         \\ Tried to create a set write for a buffer that is not present: '{s}'
-    //     , .{buffer_name});
-
-    //     const buf = self.buffers.get(buffer_name).?;
-
-    //     buf_info_out.* = vk.DescriptorBufferInfo{
-    //         .buffer = buf.allocation.buffer,
-    //         .offset = offset,
-    //         .range = vk.WHOLE_SIZE,
-    //     };
-
-    //     return vk.WriteDescriptorSet{
-    //         .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-    //         .dstSet = set,
-    //         .dstBinding = binding,
-    //         .dstArrayElement = 0,
-    //         .descriptorCount = 1,
-    //         .descriptorType = desc_type,
-    //         .pBufferInfo = buf_info_out,
-    //     };
-    // }
 
     pub fn updateBufferSet(
         self: @This(),

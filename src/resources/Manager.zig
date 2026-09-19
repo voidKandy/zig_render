@@ -18,12 +18,6 @@ pub const Mesh3DCreateInfo = struct {
         info: struct {
             mesh: core.lib.mesh.Mesh3D,
             name: []const u8,
-            // period separated by library name
-            // `debug.black`
-            // `debug.red`
-            // `maze`
-            // can be removed
-            material_name: []const u8 = "",
         },
     },
     transform: core.lib.math.Mat4 = .IDENTITY,

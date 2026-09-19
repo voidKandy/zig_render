@@ -4,6 +4,14 @@ pub const box3D = struct {
     pub const WorldId = c.b3WorldId;
     pub const BodyId = c.b3BodyId;
 
+    pub const Pos = c.b3Pos;
+    pub const HexColor = c.b3HexColor;
+    pub const AABB = c.b3AABB;
+
+    pub const DefaultDebugDraw = c.b3DefaultDebugDraw;
+    pub const DebugDraw = c.b3DebugDraw;
+    pub const World_Draw = c.b3World_Draw;
+
     pub const BodyDef = c.b3BodyDef;
     pub const BodyType = c.b3BodyType;
     pub const MotionLocks = c.b3MotionLocks;
@@ -81,6 +89,7 @@ pub const box3D = struct {
     pub const CreateHullShape = c.b3CreateHullShape;
 
     pub const World_Step = c.b3World_Step;
+    pub const WorldTransform = c.b3WorldTransform;
 
     pub const ShapeDef = c.b3ShapeDef;
     pub const Box = c.b3Box;
