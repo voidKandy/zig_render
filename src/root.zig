@@ -28,11 +28,12 @@ pub const engine = struct {
     pub const Physics = @import("engine/Physics.zig");
 
     pub const systems = struct {
-        pub const Manager = @import("engine/systems/Manager.zig");
+        pub const manager = @import("engine/systems/manager.zig");
         pub const Maze = @import("engine/systems/Maze.zig");
         pub const Debug = @import("engine/systems/Debug.zig");
         pub const Camera = @import("engine/systems/Camera.zig");
         pub const DrawBackground = @import("engine/systems/DrawBackground.zig");
+        pub const PhysicsDebug = @import("engine/systems/PhysicsDebug.zig");
         test {
             std.testing.refAllDecls(@This());
         }
@@ -41,24 +42,21 @@ pub const engine = struct {
     pub const graphics_pipelines = struct {
         pub const Mesh3DPipeline = @import("engine/graphics_pipelines/Mesh3DPipeline.zig");
         pub const Mesh2DPipeline = @import("engine/graphics_pipelines/Mesh2DPipeline.zig");
-        pub const PhysicsDebugPipeline = @import("engine/graphics_pipelines/PhysicsDebugPipeline.zig");
 
-        const MeshPipelineDescriptorSets =
-            enum {
-                camera,
-                samplers,
-                texture,
-                meshes,
-            };
+        const DescriptionOptions = struct {
+            Enum: type,
+            push_constants: ?struct {
+                type,
+                clibs.vk.ShaderStageFlags,
+            } = null,
+        };
 
-        pub const MeshPipelineDescription = Description(MeshPipelineDescriptorSets);
-
-        pub fn Description(DescriptorSets: type) type {
-            _ = @typeInfo(DescriptorSets).@"enum";
+        pub fn Description(opts: DescriptionOptions) type {
+            _ = @typeInfo(opts.Enum).@"enum";
 
             return struct {
-                pub const Layouts = std.EnumArray(DescriptorSets, clibs.vk.DescriptorSetLayout);
-                pub const Sets = std.EnumArray(DescriptorSets, clibs.vk.DescriptorSet);
+                pub const Layouts = std.EnumArray(opts.Enum, clibs.vk.DescriptorSetLayout);
+                pub const Sets = std.EnumArray(opts.Enum, clibs.vk.DescriptorSet);
 
                 layouts: Layouts,
                 device: clibs.vk.Device,
@@ -69,30 +67,29 @@ pub const engine = struct {
                 depth_compare_op: ?clibs.vk.CompareOp,
 
                 pub fn createPipelineLayout(
-                    self: @This(),
-                    PushConstants: ?type,
+                    layouts: Layouts,
+                    device: clibs.vk.Device,
                     alloc_cbs: ?*clibs.vk.AllocationCallbacks,
                 ) clibs.vk.PipelineLayout {
                     var layout: clibs.vk.PipelineLayout = undefined;
                     var ci = clibs.vk.PipelineLayoutCreateInfo{
                         .sType = clibs.vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-                        .setLayoutCount = self.layouts.values.len,
-                        .pSetLayouts = &self.layouts.values,
+                        .setLayoutCount = layouts.values.len,
+                        .pSetLayouts = &layouts.values,
                     };
 
-                    if (PushConstants) |P| {
+                    if (opts.push_constants) |pc_opts| {
                         const push_constant = clibs.vk.PushConstantRange{
                             .offset = 0,
-                            .size = @sizeOf(P),
-                            // THIS MAY NEED TO BE MORE CONFIGURABLE
-                            .stageFlags = clibs.vk.SHADER_STAGE_VERTEX_BIT,
+                            .size = @sizeOf(pc_opts.@"0"),
+                            .stageFlags = pc_opts.@"1",
                         };
                         ci.pushConstantRangeCount = 1;
                         ci.pPushConstantRanges = &push_constant;
                     }
 
                     bindings.vulkan_init.checkVk(clibs.vk.CreatePipelineLayout(
-                        self.device,
+                        device,
                         &ci,
                         alloc_cbs,
                         &layout,

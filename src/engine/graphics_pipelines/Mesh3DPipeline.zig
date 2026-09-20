@@ -33,7 +33,12 @@ pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallback
     // self.render_system.deinit(a);
 }
 
-pub const Description = core.engine.graphics_pipelines.Description(enum { camera, samplers, texture, meshes, instances });
+pub const Description = core.engine.graphics_pipelines.Description(.{
+    .Enum = enum { camera, samplers, texture, meshes, instances },
+    .push_constants = .{
+        PushConstants, vk.SHADER_STAGE_VERTEX_BIT,
+    },
+});
 
 pub fn init(
     pd: Description,
@@ -142,7 +147,7 @@ pub fn init(
         .pAttachments = &blend_attach_state,
     };
 
-    self.pipeline_layout = pd.createPipelineLayout(PushConstants, alloc_cbs);
+    self.pipeline_layout = Description.createPipelineLayout(pd.layouts, pd.device, alloc_cbs);
 
     const dynamic_states = [_]vk.DynamicState{
         vk.DYNAMIC_STATE_VIEWPORT,
@@ -488,7 +493,7 @@ pub const RenderSystem = struct {
         };
     }
 
-    pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
+    pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
         var open = true;
         const shown = imgui.Begin("Mesh3D Rendering", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
         if (!shown) return;
@@ -497,7 +502,7 @@ pub const RenderSystem = struct {
         var iter = self.ranges.iterator();
 
         while (iter.next()) |entry| {
-            const name = engine.resources.meshes3D.mesh_names_reverse_lookup.get(@intCast(entry.key_ptr.*)) orelse std.debug.panic(
+            const name = ctx.resources.meshes3D.mesh_names_reverse_lookup.get(@intCast(entry.key_ptr.*)) orelse std.debug.panic(
                 \\ tried to get an invalid mesh index: {d}
             , .{entry.key_ptr.*});
 
@@ -511,7 +516,7 @@ pub const RenderSystem = struct {
                 const zbuf = std.fmt.bufPrintZ(&buf, "instance: {d}", .{inst.entity_id}) catch @panic("Buffer couldnt print??");
                 if (imgui.TreeNode(zbuf.ptr)) {
                     defer imgui.TreePop();
-                    const mtl_name = engine.resources.materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");
+                    const mtl_name = ctx.resources.materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");
                     imgui.Text("Material: %s, index: %d", mtl_name.ptr, inst.material_idx.*);
 
                     const m = inst.model_transform.*;

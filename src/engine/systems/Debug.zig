@@ -57,17 +57,14 @@ pub fn bind(
 //     world: *core.engine.world.GameWorld,
 // ) void {}
 
-pub fn drawImgui(
-    self: *@This(),
-    engine: *core.engine.Engine,
-) void {
+pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
     var open = true;
-    const window = engine.window;
+    // const window = engine.window;
     const shown = imgui.Begin("Debug", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
     if (!shown) return;
 
-    const is_relative_mouse = sdl.GetWindowRelativeMouseMode(window) == true;
+    const is_relative_mouse = sdl.GetWindowRelativeMouseMode(ctx.window) == true;
     imgui.Text(if (is_relative_mouse) "Mouse: Relative" else "Mouse: Absolute");
     imgui.Text("Press escape to toggle mouse mode");
 

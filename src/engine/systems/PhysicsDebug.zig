@@ -16,30 +16,28 @@ const DrawBoundsFcn = *const fn (box3D.AABB, box3D.HexColor, ?*anyopaque) callco
 const DrawBoxFcn = *const fn (box3D.Vec3, box3D.WorldTransform, box3D.HexColor, ?*anyopaque) callconv(.c) void;
 const DrawStringFcn = *const fn (box3D.Pos, [*:0]const u8, box3D.HexColor, ?*anyopaque) callconv(.c) void;
 
-// b3_debug: box3D.DebugDraw,
-
 const Debug = @This();
 
 lines: std.ArrayListUnmanaged(DebugLine) = .empty,
+pipeline_description: GraphicsPipeline.Description = undefined,
 pipeline: GraphicsPipeline = undefined,
 
 pub fn deinit(
     self: *@This(),
-    a: std.mem.Allocator,
+    allocs: core.engine.Allocators,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    self.lines.deinit(a);
+    self.lines.deinit(allocs.std);
     self.pipeline.deinit(device, alloc_cbs);
 }
 
 pub fn initPipeline(
     self: *@This(),
-    pd: GraphicsPipeline.Description,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     self.pipeline =
-        GraphicsPipeline.init(pd, alloc_cbs);
+        GraphicsPipeline.init(self.pd, alloc_cbs);
 }
 
 const DebugLine = struct {
@@ -100,7 +98,9 @@ const GraphicsPipeline = struct {
         vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
     }
 
-    pub const Description = core.engine.graphics_pipelines.Description(enum { camera });
+    pub const Description = core.engine.graphics_pipelines.Description(.{
+        .Enum = enum { camera },
+    });
 
     pub fn init(
         pd: Description,
@@ -164,10 +164,12 @@ const GraphicsPipeline = struct {
             .minDepth = 0.0,
             .maxDepth = 1.0,
         };
+
         const scissor = vk.Rect2D{
             .offset = .{ .x = 0, .y = 0 },
             .extent = pd.window_extent,
         };
+
         const viewport_ci = vk.PipelineViewportStateCreateInfo{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
             .viewportCount = 1,

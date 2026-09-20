@@ -110,7 +110,7 @@ pub fn main(init: std.process.Init) void {
     );
     defer engine.deinit();
 
-    engine.physics = .init(.{}, engine.alloc_cbs);
+    engine.physics = .init();
 
     // BAD
     // dont like consumer calling this
@@ -128,10 +128,6 @@ pub fn main(init: std.process.Init) void {
                 .y = 0.0,
                 .z = 0.0,
             },
-        },
-        .pd = .{
-            .camera_descriptor_set_layout_name = core.engine.systems.Camera.CAMERA_SET_NAME,
-            .device = engine.logical_device.handle,
         },
         .mesh_options = core.lib.Maze.MeshOptions{
             .cell_size = 2.0,
@@ -152,10 +148,10 @@ pub fn main(init: std.process.Init) void {
     engine.initSystems(.{
         .Maze = core.engine.systems.Maze.init(a, &engine.world, &engine.resources, maze_system_ci) catch @panic("OOM"),
         .Debug = .{},
-        .Camera = core.engine.systems.Camera.init(a, &engine.resources, &engine.world, .{}, engine.swapchain.extent) catch @panic("OOM"),
+        .Camera = core.engine.systems.Camera.init(a, &engine.resources, &engine.world, engine.swapchain.extent) catch @panic("OOM"),
         .DrawBackground = core.engine.systems.DrawBackground.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM"),
         .RenderSystem = core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.init(a, &engine.world, &engine.resources) catch @panic("OOM"),
-        // .PhysicsDebug = core.engine.systems.PhysicsDebug{},
+        .PhysicsDebug = core.engine.systems.PhysicsDebug{},
     });
     engine.allocateResources();
     engine.initPipelines();

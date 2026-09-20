@@ -80,7 +80,7 @@ pub fn updateSets(
     );
 }
 
-pub fn drawImgui(self: *@This(), _: *core.engine.Engine) void {
+pub fn drawImgui(self: *@This(), _: core.engine.systems.manager.DrawImguiContext) void {
     var open = true;
     const shown = imgui.Begin("Draw Background System", &open, 0);
     defer imgui.End();
@@ -108,20 +108,14 @@ pub fn drawImgui(self: *@This(), _: *core.engine.Engine) void {
 
 pub fn recordComputeCommands(
     self: @This(),
-    // alloc_resources: core.resources.Manager.AllocatedData,
-    // swapchain: core.bindings.vulkan_init.Swapchain,
-    // framebuffer_index: usize,
-    // write_texture_set: vk.DescriptorSet,
-    // cmd: vk.CommandBuffer,
-
-    engine: core.engine.Engine,
+    allocated_resources: core.resources.Manager.AllocatedData,
+    swapchain: core.bindings.vulkan_init.Swapchain,
     cmd: vk.CommandBuffer,
     framebuffer_index: u32,
 ) void {
     self.pipeline.bind(cmd);
-    const draw_image = engine.allocated_resources.materials.textures.get(BACKGROUND_IMAGE_NAME).?;
-    const tex_set = engine.allocated_resources.materials.writable_textures_descriptor_sets.get(BACKGROUND_SET_NAME).?.set;
-
+    const draw_image = allocated_resources.materials.textures.get(BACKGROUND_IMAGE_NAME).?;
+    const tex_set = allocated_resources.materials.writable_textures_descriptor_sets.get(BACKGROUND_SET_NAME).?.set;
     core.bindings.vulkan_util.transitionImageLayout(
         cmd,
         draw_image.image,
@@ -177,7 +171,7 @@ pub fn recordComputeCommands(
 
     core.bindings.vulkan_util.transitionImageLayout(
         cmd,
-        engine.swapchain.images[framebuffer_index],
+        swapchain.images[framebuffer_index],
         vk.IMAGE_LAYOUT_UNDEFINED,
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         vk.ACCESS_TRANSFER_READ_BIT,
@@ -190,17 +184,17 @@ pub fn recordComputeCommands(
     core.bindings.vulkan_util.copyImageToImage(
         cmd,
         draw_image.image,
-        engine.swapchain.images[framebuffer_index],
+        swapchain.images[framebuffer_index],
         vk.Extent2D{
             .height = draw_image.extent.height,
             .width = draw_image.extent.width,
         },
-        engine.swapchain.extent,
+        swapchain.extent,
     );
 
     core.bindings.vulkan_util.transitionImageLayout(
         cmd,
-        engine.swapchain.images[framebuffer_index],
+        swapchain.images[framebuffer_index],
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         vk.ACCESS_MEMORY_WRITE_BIT,

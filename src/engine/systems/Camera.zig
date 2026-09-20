@@ -17,9 +17,11 @@ pub fn init(
     a: std.mem.Allocator,
     resources: *core.resources.Manager,
     world: *core.engine.world.GameWorld,
-    camera: Camera,
     swapchain_extent: vk.Extent2D,
 ) std.mem.Allocator.Error!@This() {
+    const camera = Camera{
+        .screen_extent = swapchain_extent,
+    };
     const gpu = Camera.GPUData.fromCamera(camera, swapchain_extent);
 
     try resources.mapped_buffers.creates.put(
@@ -82,14 +84,16 @@ pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.
 
 pub fn update(
     self: *@This(),
-    engine: *core.engine.Engine,
+    dt: f32,
+    input: core.engine.Input,
+    world: *core.engine.world.GameWorld,
 ) void {
-    var camera_ent = engine.world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
+    var camera_ent = world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
     var comp = camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?");
-    comp.camera.control(engine.io, &self.gpu_camera, engine.input, engine.swapchain.extent);
+    comp.camera.control(&self.gpu_camera, dt, input);
 }
 
-pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
+pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
     var open = true;
     const shown = imgui.Begin("Camera System", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
@@ -99,7 +103,7 @@ pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
     // const camera = comp.camera;
     if (!shown) return;
 
-    var camera_ent = engine.world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
+    var camera_ent = ctx.world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
     var comp = camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?");
 
     const current_mode_name = @tagName(comp.camera.mode);

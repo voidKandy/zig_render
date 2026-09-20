@@ -19,6 +19,7 @@ distance: f32 = DEFAULT_EYE.eucDist(DEFAULT_TARGET),
 
 mode: Mode = .user_input,
 player_controller: PlayerController = .{},
+screen_extent: vk.Extent2D,
 
 const DEFAULT_EYE: Vec3 = Vec3.make(4.0, 4.0, 4.0);
 const DEFAULT_TARGET: Vec3 = Vec3.make(0.0, 0.0, 1.0);
@@ -83,20 +84,14 @@ pub const Mode = enum {
 
 pub fn control(
     self: *@This(),
-    io: std.Io,
     gpu_data: *GPUData,
+    dt: f32,
     input: core.engine.Input,
-    screen_extent: vk.Extent2D,
 ) void {
     const State = struct {
-        var start: i128 = 0;
         var yaw: f32 = 0.0;
-        var last_time: i128 = 0;
+        var elapsed: f32 = 0.0;
     };
-    if (State.start == 0) {
-        State.start = std.Io.Timestamp.now(io, .real).toNanoseconds();
-        State.last_time = State.start;
-    }
 
     const zoom_speed = 0.1;
     const min_distance = 0.2;
@@ -108,27 +103,20 @@ pub fn control(
         self.eye = self.target.sub(dir.mul(self.distance));
     }
 
-    const now = std.Io.Timestamp.now(io, .real).toNanoseconds();
-    const dt: f32 = @as(f32, @floatFromInt(now - State.last_time)) / @as(f32, @floatFromInt(std.time.ns_per_s));
-    State.last_time = now;
-
-    const delta_ns = now - State.start;
-    const time: f32 = @as(f32, (@floatFromInt(delta_ns))) / @as(f32, (@floatFromInt(std.time.ns_per_s)));
-    State.yaw = time * 1.0;
+    State.elapsed += dt;
+    State.yaw = State.elapsed * 1.0;
 
     const aspect =
-        @as(f32, @floatFromInt(screen_extent.width)) /
-        @as(f32, @floatFromInt(screen_extent.height));
+        @as(f32, @floatFromInt(self.screen_extent.width)) /
+        @as(f32, @floatFromInt(self.screen_extent.height));
 
     const eye = Vec3.make(
         self.target.x + self.distance * @sin(State.yaw),
         self.target.y + self.distance * @cos(State.yaw),
         self.target.z,
     );
-    // player mode update
-    if (self.mode == .player) {
 
-        // mouse look
+    if (self.mode == .player) {
         self.player_controller.yaw += input.mouse_delta.x * self.player_controller.sensitivity;
         self.player_controller.pitch -= input.mouse_delta.y * self.player_controller.sensitivity;
         self.player_controller.pitch = std.math.clamp(
@@ -137,7 +125,6 @@ pub fn control(
             std.math.pi / 2.0 - 0.01,
         );
 
-        // movement
         const fwd = self.player_controller.forward();
         const rgt = self.player_controller.right();
         const spd = self.player_controller.speed * dt;

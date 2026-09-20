@@ -22,12 +22,13 @@ const INITIAL_WINDOW_EXTENT = vk.Extent2D{ .width = 1600, .height = 900 };
 
 const Self = @This();
 
-const SystemManager = core.engine.systems.Manager.NewSystem(&[_]type{
+const SystemManager = core.engine.systems.manager.SystemManager(&[_]type{
     core.engine.systems.Maze,
     core.engine.systems.Camera,
     core.engine.systems.DrawBackground,
     core.engine.systems.Debug,
     core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem,
+    core.engine.systems.PhysicsDebug,
 });
 
 allocs: core.engine.Allocators,
@@ -51,7 +52,6 @@ resources: core.resources.Manager = undefined,
 world: core.engine.world.GameWorld,
 
 mesh3D_pipeline: Mesh3DPipeline = undefined,
-// mesh3D_pipeline_render_system: Mesh3DPipeline.RenderSystem = undefined,
 mesh2D_pipeline: Mesh2DPipeline = undefined,
 
 system_manager: SystemManager = undefined,
@@ -134,6 +134,7 @@ pub fn deinit(self: *Self) void {
 pub fn run(self: *Self) void {
     // var quit = false;
     var event: c.sdl.Event = undefined;
+    var last_time = std.Io.Timestamp.now(self.io, .real).toNanoseconds();
 
     while (!self.input.quit) {
         self.input = .{};
@@ -148,7 +149,10 @@ pub fn run(self: *Self) void {
             _ = sdl.SetWindowRelativeMouseMode(self.window, !is_relative_mouse);
         }
 
-        self.system_manager.update(self);
+        const now = std.Io.Timestamp.now(self.io, .real).toNanoseconds();
+        const dt: f32 = @as(f32, @floatFromInt(now - last_time)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+        last_time = now;
+        self.system_manager.update(dt, self.input, &self.world);
 
         self.physics.update(&self.world);
 
@@ -362,7 +366,7 @@ pub fn initPipelines(
     );
 
     self.initMesh2DPipeline(
-        core.engine.graphics_pipelines.MeshPipelineDescription.Layouts.init(.{
+        core.engine.graphics_pipelines.Mesh2DPipeline.Description.Layouts.init(.{
             .camera = self.resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
             .samplers = self.resources.materials.samplers_descriptor_set_layout,
             .texture = self.resources.materials.all_textures_descriptor_set_layout,
@@ -419,7 +423,7 @@ fn initMesh3DPipeline(
 
 fn initMesh2DPipeline(
     self: *Self,
-    default_graphics_pipeline_description_layouts: core.engine.graphics_pipelines.MeshPipelineDescription.Layouts,
+    layouts: core.engine.graphics_pipelines.Mesh2DPipeline.Description.Layouts,
 ) void {
     const vert_shader = core.engine.shaders.createShaderModule(
         "mesh2D.vert",
@@ -443,7 +447,7 @@ fn initMesh2DPipeline(
     );
     self.mesh2D_pipeline = Mesh2DPipeline.init(
         .{
-            .layouts = default_graphics_pipeline_description_layouts,
+            .layouts = layouts,
             .device = self.logical_device.handle,
             .render_pass = self.main_render_pass,
             .window_extent = self.swapchain.extent,
@@ -534,7 +538,7 @@ fn drawImgui(self: *Self) void {
     c.imgui.impl_sdl3.NewFrame();
     c.imgui.NewFrame();
 
-    self.system_manager.drawImgui(self);
+    self.system_manager.drawImgui(.fromEngine(self));
     // self.mesh3D_pipeline_render_system.drawImgui(self.resources.meshes3D, self.resources.materials);
 
     c.imgui.Render();
@@ -635,7 +639,12 @@ fn recordCommandBuffer(
     checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
     defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
 
-    self.system_manager.recordComputeCommands(self.*, frame.main_command_buffer, image_idx);
+    self.system_manager.recordComputeCommands(
+        self.allocated_resources,
+        self.swapchain,
+        frame.main_command_buffer,
+        image_idx,
+    );
 
     var render_pass_info = vk.RenderPassBeginInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -694,7 +703,7 @@ fn recordCommandBuffer(
         self.swapchain.extent,
         self.allocated_resources,
 
-        core.engine.graphics_pipelines.MeshPipelineDescription.Sets.init(.{
+        core.engine.graphics_pipelines.Mesh2DPipeline.Description.Sets.init(.{
             .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
             .samplers = self.allocated_resources.materials.sampler_set,
             .meshes = self.allocated_resources.meshes2D.descriptor_set,
@@ -704,10 +713,10 @@ fn recordCommandBuffer(
         frame.main_command_buffer,
     );
 
-    if (self.physics.debug_pipeline) |dbg| {
-        dbg.bind(frame.main_command_buffer);
-        // dbg.recordCommands(vertex_buffer: (unknown type), vertex_count: u32, sets: EnumArray(enum {...},V), cmd: (unknown type))
-    }
+    // if (self..debug_pipeline) |dbg| {
+    // dbg.bind(frame.main_command_buffer);
+    // dbg.recordCommands(vertex_buffer: (unknown type), vertex_count: u32, sets: EnumArray(enum {...},V), cmd: (unknown type))
+    // }
 
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }

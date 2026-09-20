@@ -2,7 +2,6 @@ const std = @import("std");
 const core = @import("../../root.zig");
 const log = std.log.scoped(.SystemManager);
 const vk = core.clibs.vk;
-// pub const MeshManipulation = @import("./MeshManipulation.zig");
 pub const Maze = @import("./Maze.zig");
 pub const Debug = @import("./Debug.zig");
 pub const PhysicsDebug = @import("./PhysicsDebug.zig");
@@ -44,7 +43,21 @@ inline fn normalizeFn(fn_info: std.builtin.Type.Fn) std.builtin.Type.Fn {
     return info;
 }
 
-pub fn NewSystem(
+pub const DrawImguiContext = struct {
+    window: *core.clibs.sdl.Window,
+    world: *core.engine.world.GameWorld,
+    resources: core.resources.Manager,
+
+    pub fn fromEngine(engine: *core.engine.Engine) @This() {
+        return .{
+            .window = engine.window,
+            .world = &engine.world,
+            .resources = engine.resources,
+        };
+    }
+};
+
+pub fn SystemManager(
     Systems: []const type,
 ) type {
     const SystemHook = enum {
@@ -184,19 +197,24 @@ pub fn NewSystem(
             }
         }
 
-        pub fn update(self: *@This(), engine: *core.engine.Engine) void {
+        pub fn update(
+            self: *@This(),
+            dt: f32,
+            input: core.engine.Input,
+            world: *core.engine.world.GameWorld,
+        ) void {
             inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
                 const tag: SystemTag = @enumFromInt(i);
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-                    @field(self.plexe, @tagName(tag)).update(engine);
+                    @field(self.plexe, @tagName(tag)).update(dt, input, world);
             }
         }
 
-        pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
+        pub fn drawImgui(self: *@This(), ctx: DrawImguiContext) void {
             inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
                 const tag: SystemTag = @enumFromInt(i);
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-                    @field(self.plexe, @tagName(tag)).drawImgui(engine);
+                    @field(self.plexe, @tagName(tag)).drawImgui(ctx);
             }
         }
 
@@ -250,14 +268,20 @@ pub fn NewSystem(
 
         pub fn recordComputeCommands(
             self: @This(),
-            engine: core.engine.Engine,
+            allocated_resources: core.resources.Manager.AllocatedData,
+            swapchain: core.bindings.vulkan_init.Swapchain,
             cmd: vk.CommandBuffer,
             framebuffer_idx: u32,
         ) void {
             inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
                 const tag: SystemTag = @enumFromInt(i);
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-                    @field(self.plexe, @tagName(tag)).recordComputeCommands(engine, cmd, framebuffer_idx);
+                    @field(self.plexe, @tagName(tag)).recordComputeCommands(
+                        allocated_resources,
+                        swapchain,
+                        cmd,
+                        framebuffer_idx,
+                    );
             }
         }
     };
@@ -303,7 +327,7 @@ test "NewSystem dispatches only implemented hooks" {
             self.graphics_called = true;
         }
     };
-    const Manager = NewSystem(&.{ TestSystemA, TestSystemB });
+    const Manager = SystemManager(&.{ TestSystemA, TestSystemB });
 
     var manager = Manager.init(.{
         .TestSystemA = .{},
@@ -318,162 +342,4 @@ test "NewSystem dispatches only implemented hooks" {
     manager.deinit(undefined, undefined, null);
     try std.testing.expect(manager.plexe.TestSystemA.deinit_called);
     try std.testing.expect(manager.plexe.TestSystemB.deinit_called);
-}
-
-maze: Maze,
-camera: Camera,
-draw_background: DrawBackground,
-debug: Debug,
-physics_debug: PhysicsDebug,
-
-pub fn init(
-    a: std.mem.Allocator,
-    world: *core.engine.world.GameWorld,
-    resources: *core.resources.Manager,
-    swapchain_extent: vk.Extent2D,
-    maze_system_ci: core.engine.systems.Maze.CreateInfo,
-) std.mem.Allocator.Error!@This() {
-    return .{
-        // .mesh_manipulation = .{},
-        .maze = try Maze.init(a, world, resources, maze_system_ci),
-        .debug = .{},
-        .camera = try Camera.init(a, resources, world, .{}, swapchain_extent),
-        .draw_background = try DrawBackground.init(a, resources, swapchain_extent),
-        .physics_debug = PhysicsDebug{},
-    };
-}
-
-pub fn deinit(
-    self: *@This(),
-    allocs: core.engine.Allocators,
-    device: vk.Device,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    self.maze.deinit(allocs.std, device, alloc_cbs);
-    self.debug.deinit(allocs.std);
-    self.draw_background.deinit(device, alloc_cbs);
-    self.physics_debug.deinit(allocs.std, device, alloc_cbs);
-}
-
-pub fn registerSets(
-    _: @This(),
-    a: std.mem.Allocator,
-    device: vk.Device,
-    resources: *core.resources.Manager,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) std.mem.Allocator.Error!void {
-    try Maze.registerSets(a, device, resources, alloc_cbs);
-    try Camera.registerSets(a, device, resources, alloc_cbs);
-    try DrawBackground.registerSets(a, device, resources, alloc_cbs);
-}
-
-pub fn updateSets(
-    _: @This(),
-    device: vk.Device,
-    allocated_resources: *core.resources.Manager.AllocatedData,
-) void {
-    allocated_resources.mapped_buffers.updateBufferSet(
-        device,
-        Camera.CAMERA_SET_NAME,
-    );
-
-    allocated_resources.mapped_buffers.updateBufferSet(
-        device,
-        core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.INSTANCE_SET_NAME,
-    );
-
-    allocated_resources.mapped_buffers.updateBufferSet(
-        device,
-        Maze.COMPUTE_MAZE_SET_NAME,
-    );
-
-    allocated_resources.materials.updateWritableTextureSet(
-        device,
-        Maze.COMPUTE_MAZE_SET_NAME,
-    );
-
-    allocated_resources.materials.updateWritableTextureSet(
-        device,
-        DrawBackground.BACKGROUND_SET_NAME,
-    );
-}
-/// wasnt sure what to call this
-/// currently only Debug has a need for access to
-/// resources after they are created but im sure this
-/// will change
-pub fn bind(
-    self: *@This(),
-    a: std.mem.Allocator,
-    resources: core.resources.Manager,
-    alloc_resources: core.resources.Manager.AllocatedData,
-) void {
-    self.debug.bind(a, resources, alloc_resources) catch @panic("OOM");
-}
-
-pub fn update(self: *@This(), engine: *core.engine.Engine) void {
-    self.camera.update(engine);
-    self.maze.update();
-    // self.physics.update(&engine.world);
-}
-
-pub fn initPipelines(
-    self: *@This(),
-    device: vk.Device,
-    resources: core.resources.Manager,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    self.maze.initPipeline(resources, alloc_cbs);
-    self.draw_background.initPipeline(device, resources, alloc_cbs);
-    // self.physics_debug.initPipeline(device, resources, alloc_cbs);
-}
-
-pub fn trySyncResources(
-    self: *@This(),
-    _: core.resources.Manager,
-    allocated_resources: core.resources.Manager.AllocatedData,
-    _: *core.engine.world.GameWorld,
-) void {
-    self.maze.trySyncResources(allocated_resources);
-    // self.mesh_manipulation.trySyncResources(resources, allocated_resources, world);
-    self.camera.trySyncResources(allocated_resources);
-}
-
-pub fn drawImgui(self: *@This(), engine: *core.engine.Engine) void {
-    self.debug.drawImgui(engine.window);
-    self.camera.drawImgui(engine);
-    self.draw_background.drawImgui();
-    self.maze.drawImgui();
-    // self.mesh_manipulation.drawImgui(
-    //     engine.allocs.std,
-    //     &engine.mesh3D_pipeline,
-    //     &engine.world,
-    //     engine.resources,
-    //     engine.allocated_resources,
-    // );
-}
-
-pub fn recordComputeCommands(
-    self: @This(),
-    engine: core.engine.Engine,
-    cmd: vk.CommandBuffer,
-    framebuffer_idx: u32,
-) void {
-    self.maze.pipeline.bind(cmd);
-    self.maze.pipeline.recordCommands(
-        engine.allocated_resources,
-        engine.allocated_resources.mapped_buffers.buffer_sets.get(Camera.CAMERA_SET_NAME).?.set,
-        engine.allocated_resources.materials.writable_textures_descriptor_sets.get(Maze.COMPUTE_MAZE_SET_NAME).?.set,
-        engine.allocated_resources.mapped_buffers.buffer_sets.get(Maze.COMPUTE_MAZE_SET_NAME).?.set,
-        self.maze,
-        cmd,
-    );
-
-    self.draw_background.pipeline.bind(cmd);
-    self.draw_background.pipeline.recordCommands(
-        engine.allocated_resources,
-        engine.swapchain,
-        framebuffer_idx,
-        engine.allocated_resources.materials.writable_textures_descriptor_sets.get(DrawBackground.BACKGROUND_SET_NAME).?.set,
-        cmd,
-    );
 }

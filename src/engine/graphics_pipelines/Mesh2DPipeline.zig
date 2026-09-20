@@ -15,6 +15,19 @@ const PushConstants = struct {
 pipeline: vk.Pipeline = undefined,
 pipeline_layout: vk.PipelineLayout = undefined,
 
+pub const Description = core.engine.graphics_pipelines.Description(.{
+    .Enum = enum {
+        camera,
+        samplers,
+        texture,
+        meshes,
+    },
+    .push_constants = .{
+        PushConstants,
+        vk.SHADER_STAGE_VERTEX_BIT,
+    },
+});
+
 const Self = @This();
 
 pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
@@ -23,7 +36,7 @@ pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallback
 }
 
 pub fn init(
-    pd: core.engine.graphics_pipelines.MeshPipelineDescription,
+    pd: Description,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) @This() {
     var self = @This(){};
@@ -136,7 +149,7 @@ pub fn init(
         .pDynamicStates = &dynamic_states,
     };
 
-    self.pipeline_layout = pd.createPipelineLayout(PushConstants, alloc_cbs);
+    self.pipeline_layout = Description.createPipelineLayout(pd.layouts, pd.device, alloc_cbs);
 
     const pipeline_ci = vk.GraphicsPipelineCreateInfo{
         .sType = vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -172,7 +185,7 @@ pub fn recordCommands(
     world: *core.engine.world.GameWorld,
     window_extent: vk.Extent2D,
     alloc_resources: core.resources.Manager.AllocatedData,
-    sets: core.engine.graphics_pipelines.MeshPipelineDescription.Sets,
+    sets: Description.Sets,
     cmd: vk.CommandBuffer,
 ) void {
     vk.CmdBindDescriptorSets(
