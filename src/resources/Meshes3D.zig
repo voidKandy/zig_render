@@ -13,10 +13,6 @@ pub const MeshRanges = struct {
     index: core.lib.mesh.RangeDesc,
 };
 
-pub const MeshHandle = struct {
-    ranges: MeshRanges,
-};
-
 pub const Bindings = struct {
     vertex: u32,
     index: u32,
@@ -90,7 +86,7 @@ pub const AllocatedData = struct {
 
 vertices: std.ArrayList(core.lib.mesh.Vertex3D),
 indices: std.ArrayList(u32),
-meshes: std.ArrayList(MeshHandle),
+ranges: std.ArrayList(MeshRanges),
 
 mesh_indices: std.StringArrayHashMapUnmanaged(usize) = .empty,
 mesh_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8) = .empty,
@@ -101,7 +97,7 @@ pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
     return .{
         .vertices = try std.ArrayList(core.lib.mesh.Vertex3D).initCapacity(a, 64),
         .indices = try std.ArrayList(u32).initCapacity(a, 64),
-        .meshes = try std.ArrayList(MeshHandle).initCapacity(a, 16),
+        .ranges = try std.ArrayList(MeshRanges).initCapacity(a, 16),
     };
 }
 
@@ -109,6 +105,7 @@ pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
 pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.vertices.deinit(a);
     self.indices.deinit(a);
+    self.ranges.deinit(a);
     self.mesh_indices.deinit(a);
     self.mesh_names_reverse_lookup.deinit(a);
     vk.DestroyDescriptorSetLayout(device, self.descriptor_set_layout, alloc_cbs);
@@ -123,7 +120,7 @@ pub fn appendMesh(
     defer log.debug(
         \\ added mesh: '{s}'
     , .{name});
-    const idx = self.meshes.items.len;
+    const idx = self.ranges.items.len;
     try self.mesh_indices.put(a, name, idx);
 
     const zname = try a.dupeZ(u8, name);
@@ -142,10 +139,7 @@ pub fn appendMesh(
 
     try self.vertices.appendSlice(a, mesh.vertices);
     try self.indices.appendSlice(a, mesh.indices);
-
-    try self.meshes.append(a, .{
-        .ranges = mesh_range,
-    });
+    try self.ranges.append(a, mesh_range);
 }
 
 pub fn createDescriptorSetLayout(

@@ -16,7 +16,6 @@ update_mesh: bool = false,
 mesh3D_id: u32,
 mesh2D_id: u32,
 
-// pipeline_description: ComputePipeline.Description,
 pipeline: ComputePipeline = undefined,
 
 pub const COMPUTE_MAZE_SET_NAME = "compute_maze_set";
@@ -136,16 +135,10 @@ pub fn init(
     const maze_mesh3D = ci.mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
     defer maze_mesh3D.deinit(a);
     try resources.meshes3D.appendMesh(a, MAZE_RESOURCE_NAME, maze_mesh3D);
-    // resources.meshes3D.appendMeshWithMaterialIndex(
-    //     a,
-    //     maze_mesh3D,
-    //     .IDENTITY,
-    //     0,
-    // ) catch @panic("OOM");
 
     var mesh3d_entity = try world.entities.register(null);
     mesh3d_entity.addComponent(.mesh3D, core.engine.world.MaterialMesh3D{
-        .mesh_index = @intCast(resources.meshes3D.meshes.items.len - 1),
+        .mesh_index = @intCast(resources.meshes3D.ranges.items.len - 1),
         .material_index = @intCast(mt_idx),
     });
 
@@ -160,21 +153,25 @@ pub fn init(
 
     resources.meshes2D.appendMesh(
         a,
+        MAZE_RESOURCE_NAME,
         maze_quad,
-        coordinates,
-        @as(u32, @intCast(mt_idx)),
     ) catch @panic("OOM");
 
     var mesh2d_entity = try world.entities.register(null);
-    mesh2d_entity.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
-        .ranges = resources.meshes2D.ranges.getLast(),
-    });
+    mesh2d_entity.addComponent(.mesh2D, core.engine.world.MaterialMesh2D.fromNames(resources.*, .{
+        .material = MAZE_RESOURCE_NAME,
+        .mesh = MAZE_RESOURCE_NAME,
+    }));
+
+    mesh2d_entity.addComponent(
+        .screen_transform,
+        core.engine.world.ScreenTransform{ .coords = coordinates },
+    );
 
     return .{
         .maze = maze,
         .maze_gpu_cells = cells,
         .push_constants = ci.push_constants,
-        // .pipeline_description = ci.pd,
         .mesh3D_id = mesh3d_entity.identifier,
         .mesh2D_id = mesh2d_entity.identifier,
     };
@@ -201,7 +198,7 @@ pub fn deinit(self: *@This(), allocs: core.engine.Allocators, device: vk.Device,
     self.pipeline.deinit(device, alloc_cbs);
 }
 
-pub fn initPipelines(
+pub fn initComputePipelines(
     self: *@This(),
     device: vk.Device,
     resources: core.resources.Manager,
@@ -363,9 +360,9 @@ const ComputePipeline = struct {
     pipeline: vk.Pipeline = undefined,
     layout: vk.PipelineLayout = undefined,
 
-    const Description = core.engine.graphics_pipelines.Description(
+    const Description = core.engine.pipelines.Description(
         .{
-            .Enum = enum {
+            .DescriptorSets = enum {
                 camera,
                 maze_texture,
                 maze_buffer,

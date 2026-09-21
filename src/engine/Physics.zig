@@ -18,18 +18,17 @@ pub fn init() @This() {
     };
 }
 
-pub fn deinit(self: @This(), device: core.clibs.vk.Device, alloc_cbs: ?*core.clibs.vk.ALlocationCallbacks) void {
+pub fn deinit(self: @This()) void {
     box3D.DestroyWorld(self.world);
-    if (self.debug_pipeline) |p| p.deinit(device, alloc_cbs);
 }
 
 pub fn update(self: *@This(), world: *core.engine.world.GameWorld) void {
     box3D.World_Step(self.world, 1.0 / 60.0, 4);
 
-    var iter = world.queryEntities(.{ .is = .{ .rule = .at_least, .sig = .initMany(&.{ .rigid_body, .transform }) } });
+    var iter = world.queryEntities(.{ .is = .{ .rule = .at_least, .sig = .initMany(&.{ .rigid_body, .world_transform }) } });
     while (iter.next()) |ent| {
         const rigid_body = (ent.accessComponent(.rigid_body) catch @panic("No body?")).rigid_body;
-        var transform = (ent.accessComponentPtr(.transform) catch @panic("No transform?")).transform;
+        var transform = (ent.accessComponentPtr(.world_transform) catch @panic("No transform?")).world_transform;
 
         const position = box3D.Body_GetPosition(rigid_body.id);
         const rotation = box3D.Body_GetRotation(rigid_body.id);

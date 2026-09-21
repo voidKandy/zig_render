@@ -12,17 +12,7 @@ struct VertexData {
 };
 
 
-struct MetaData {
-    uint MaterialIndex;
-    uint VertexOffset;
-    uint _0;
-    uint _1;
-    mat4 ModelTransform;
-};
-
 struct Instance {
-    /// TODO remove??
-    /// mesh index only used on CPU
     uint p0;
     uint MaterialIndex;
     uint p1;
@@ -43,7 +33,6 @@ layout (set = 0, binding = 0) readonly uniform CameraData {
 
 layout (std430, set = 3, binding = 0) readonly buffer Vertices { VertexData v[]; } in_Vertices;
 layout (set = 3, binding = 1) readonly buffer Indices { int i[]; } in_Indices;
-// layout(std430, set = 3, binding = 2) readonly buffer MetaSSBO { MetaData metas[]; } MetaBuf;
 
 layout(std430, set = 4, binding = 0) readonly buffer InstanceSSBO { Instance instances[]; } InstanceBuf;
 
@@ -54,8 +43,6 @@ void main()
 {
 
     Instance instance = InstanceBuf.instances[uint(gl_InstanceIndex)];
-    // uint meshIdx = uint(gl_InstanceIndex);
-    // MetaData md = MetaBuf.metas[meshIdx];
     MaterialIndex = instance.MaterialIndex;
 
     int Index = in_Indices.i[gl_VertexIndex];

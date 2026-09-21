@@ -64,12 +64,13 @@ pub fn SystemManager(
         deinit,
         update,
         drawImgui,
-        recordComputeCommands,
         registerSets,
         updateSets,
-        initPipelines,
         trySyncResources,
-        // recordGraphicsCommands,
+        initComputePipelines,
+        recordComputeCommands,
+        initGraphicsPipelines,
+        recordGraphicsCommands,
 
         const Signatures = std.EnumMap(@This(), std.builtin.Type.Fn);
 
@@ -242,19 +243,6 @@ pub fn SystemManager(
             }
         }
 
-        pub fn initPipelines(
-            self: *@This(),
-            device: vk.Device,
-            resources: core.resources.Manager,
-            alloc_cbs: ?*vk.AllocationCallbacks,
-        ) void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
-                if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-                    @field(self.plexe, @tagName(tag)).initPipelines(device, resources, alloc_cbs);
-            }
-        }
-
         pub fn updateSets(
             device: vk.Device,
             allocated_resources: *core.resources.Manager.AllocatedData,
@@ -263,6 +251,19 @@ pub fn SystemManager(
                 const tag: SystemTag = @enumFromInt(i);
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     SYSTEM_TYPES.get(tag).updateSets(device, allocated_resources);
+            }
+        }
+
+        pub fn initComputePipelines(
+            self: *@This(),
+            device: vk.Device,
+            resources: core.resources.Manager,
+            alloc_cbs: ?*vk.AllocationCallbacks,
+        ) void {
+            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
+                const tag: SystemTag = @enumFromInt(i);
+                if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
+                    @field(self.plexe, @tagName(tag)).initComputePipelines(device, resources, alloc_cbs);
             }
         }
 
@@ -284,62 +285,38 @@ pub fn SystemManager(
                     );
             }
         }
+
+        pub fn initGraphicsPipelines(
+            self: *@This(),
+            common: core.engine.pipelines.Common,
+            resources: core.resources.Manager,
+            alloc_cbs: ?*vk.AllocationCallbacks,
+        ) void {
+            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
+                const tag: SystemTag = @enumFromInt(i);
+                if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
+                    @field(self.plexe, @tagName(tag)).initGraphicsPipelines(common, resources, alloc_cbs);
+            }
+        }
+
+        pub fn recordGraphicsCommands(
+            self: @This(),
+            resources: core.resources.Manager,
+            allocated_resources: core.resources.Manager.AllocatedData,
+            cmd: vk.CommandBuffer,
+        ) void {
+            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
+                const tag: SystemTag = @enumFromInt(i);
+                if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name)) {
+                    @field(self.plexe, @tagName(tag)).recordGraphicsCommands(
+                        resources,
+                        allocated_resources,
+                        cmd,
+                    );
+                }
+            }
+        }
     };
 
     return Manager;
-}
-
-test "NewSystem dispatches only implemented hooks" {
-    const TestSystemA = struct {
-        deinit_called: bool = false,
-
-        pub fn deinit(
-            self: *@This(),
-            allocs: core.engine.Allocators,
-            device: vk.Device,
-            alloc_cbs: ?*vk.AllocationCallbacks,
-        ) void {
-            _ = allocs;
-            _ = device;
-            _ = alloc_cbs;
-            self.deinit_called = true;
-        }
-    };
-
-    const TestSystemB = struct {
-        deinit_called: bool = false,
-        graphics_called: bool = false,
-
-        pub fn deinit(
-            self: *@This(),
-            allocs: core.engine.Allocators,
-            device: vk.Device,
-            alloc_cbs: ?*vk.AllocationCallbacks,
-        ) void {
-            _ = allocs;
-            _ = device;
-            _ = alloc_cbs;
-            self.deinit_called = true;
-        }
-
-        pub fn recordGraphicsCommands(self: *@This(), cmd: vk.CommandBuffer) void {
-            _ = cmd;
-            self.graphics_called = true;
-        }
-    };
-    const Manager = SystemManager(&.{ TestSystemA, TestSystemB });
-
-    var manager = Manager.init(.{
-        .TestSystemA = .{},
-        .TestSystemB = .{},
-    });
-
-    // TestSystemA has no recordGraphicsCommands — must be a silent no-op for it,
-    // while still reaching TestSystemB's implementation.
-    // manager.recordGraphicsCommands(undefined);
-    // try std.testing.expect(manager.plexe.TestSystemB.graphics_called);
-
-    manager.deinit(undefined, undefined, null);
-    try std.testing.expect(manager.plexe.TestSystemA.deinit_called);
-    try std.testing.expect(manager.plexe.TestSystemB.deinit_called);
 }

@@ -150,8 +150,9 @@ pub fn main(init: std.process.Init) void {
         .Debug = .{},
         .Camera = core.engine.systems.Camera.init(a, &engine.resources, &engine.world, engine.swapchain.extent) catch @panic("OOM"),
         .DrawBackground = core.engine.systems.DrawBackground.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM"),
-        .RenderSystem = core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.init(a, &engine.world, &engine.resources) catch @panic("OOM"),
-        .PhysicsDebug = core.engine.systems.PhysicsDebug{},
+        .Mesh3DRendering = core.engine.systems.Mesh3DRendering.init(a, &engine.world, &engine.resources) catch @panic("OOM"),
+        .Mesh2DRendering = core.engine.systems.Mesh2DRendering.init(a, &engine.world, &engine.resources, engine.swapchain.extent) catch @panic("OOM"),
+        .PhysicsDebug = core.engine.systems.PhysicsDebug.init(a, &engine.resources) catch @panic("OOM"),
     });
     engine.allocateResources();
     engine.initPipelines();
@@ -174,13 +175,13 @@ fn createEntities(
             },
         ));
 
-        var tx = core.engine.world.Transform{};
+        var tx = core.engine.world.WorldTransform{};
         tx.matrix = tx.matrix.translate(.{
             .x = 0.0,
             .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
             .z = 1.0,
         });
-        ent.addComponent(.transform, tx);
+        ent.addComponent(.world_transform, tx);
 
         var body_def = core.clibs.box3D.DefaultBodyDef();
         body_def.type = core.clibs.box3D.BODY_TYPE_DYNAMIC;
@@ -220,13 +221,13 @@ fn createEntities(
         },
     ));
 
-    var tx = core.engine.world.Transform{};
+    var tx = core.engine.world.WorldTransform{};
     tx.matrix = tx.matrix.translate(.{
         .x = 2.0,
         .y = 1.5,
         .z = 0.5,
     });
-    ent.addComponent(.transform, tx);
+    ent.addComponent(.world_transform, tx);
 
     var body_def = core.clibs.box3D.DefaultBodyDef();
     body_def.type = core.clibs.box3D.BODY_TYPE_STATIC;

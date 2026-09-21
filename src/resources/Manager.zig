@@ -25,8 +25,7 @@ pub const Mesh3DCreateInfo = struct {
 
 pub const Mesh2DCreateInfo = struct {
     mesh: core.lib.mesh.Mesh2D,
-    material_name: []const u8,
-    screen_coordinates: core.lib.math.Vec2,
+    name: []const u8,
 };
 
 pub const CreateInfo = struct {
@@ -49,7 +48,7 @@ pub fn deinit(
 ) void {
     self.materials.deinit(a, device, alloc_cbs);
     self.meshes3D.deinit(a, device, alloc_cbs);
-    self.meshes2D.deinit(a, device, alloc_cbs);
+    self.meshes2D.deinit(a);
     self.mapped_buffers.deinit(a, device, alloc_cbs);
 }
 
@@ -62,18 +61,7 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
         }
     }
 
-    // if (ci.texture_creates) |tx_crs| {
-    //     for (tx_crs) |tx_cr| {
-    //         try materials.textures.put(a, tx_cr.@"0", tx_cr.@"1");
-    //     }
-    // }
-
     const mapped_buffers: MappedBuffers = .{};
-    // if (ci.mapped_buffer_creates) |mp_crs| {
-    //     for (mp_crs) |mp_cr| {
-    //         try mapped_buffers.creates.put(a, mp_cr.@"0", mp_cr.@"1");
-    //     }
-    // }
 
     var meshes3D = try Meshes3D.init(a);
 
@@ -81,32 +69,12 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
         for (m3ds) |cm3d| {
             switch (cm3d.create_mesh) {
                 .obj => |obj| {
-                    // const this_mat_lib = materials.libraries.get(obj.material_library_name) orelse std.debug.panic(
-                    // \\ Failed to get material library "{s}"
-                    // , .{obj.material_library_name});
-
                     const mesh = core.lib.mesh.Mesh3D.fromObjFile(a, obj) catch @panic("failed to load mesh");
                     defer mesh.deinit(a);
                     try meshes3D.appendMesh(a, obj.name, mesh);
-                    // meshes3D.appendMeshWithMaterialLookup(
-                    //     a,
-                    //     mesh,
-                    //     cm3d.transform,
-                    //     0,
-                    //     // this_mat_lib.offset,
-                    //     this_mat_lib,
-                    //     obj.objects[0].material_ranges,
-                    // ) catch @panic("OOM");
                 },
                 .info => |info| {
                     try meshes3D.appendMesh(a, info.name, info.mesh);
-                    // const material_idx = materials.material_indices.get(info.material_name).?;
-                    // meshes3D.appendMeshWithMaterialIndex(
-                    //     a,
-                    //     info.mesh,
-                    //     cm3d.transform,
-                    //     @as(u32, @intCast(material_idx)),
-                    // ) catch @panic("OOM");
                 },
             }
         }
@@ -115,12 +83,10 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
     var meshes2D = try core.resources.Meshes2D.init(a);
     if (ci.meshes2D) |m2ds| {
         for (m2ds) |cm2d| {
-            const material_idx = materials.material_indices.get(cm2d.material_name).?;
             try meshes2D.appendMesh(
                 a,
+                cm2d.name,
                 cm2d.mesh,
-                cm2d.screen_coordinates,
-                @as(u32, @intCast(material_idx)),
             );
         }
     }
@@ -134,78 +100,6 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
 }
 
 /// erveryhting about this function is dogshit
-pub fn registerInWorld(
-    _: @This(),
-    world: *core.engine.world.GameWorld,
-    physics_world: core.clibs.box3D.WorldId,
-) void {
-    for (0..3) |i| {
-        var ent = world.entities.register(null) catch @panic("OOM");
-        ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D{
-            .mesh_index = 0,
-            .material_index = 12 + @as(u32, @intCast(i)),
-        });
-
-        var tx = core.engine.world.Transform{};
-        tx.matrix = tx.matrix.translate(.{
-            .x = 0.0,
-            .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
-            .z = 0.0,
-        });
-        ent.addComponent(.transform, tx);
-    }
-
-    var ent = world.entities.register(null) catch @panic("OOM");
-    ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D{
-        .mesh_index = 1,
-        .material_index = 0,
-    });
-
-    var tx = core.engine.world.Transform{};
-    tx.matrix = tx.matrix.translate(.{
-        .x = 2.0,
-        .y = 1.5,
-        .z = 0.5,
-    });
-    ent.addComponent(.transform, tx);
-
-    var body_def = core.clibs.box3D.DefaultBodyDef();
-    body_def.type = core.clibs.box3D.BODY_TYPE_DYNAMIC;
-    body_def.position = .{
-        .x = 2.0,
-        .y = 1.5,
-        .z = 0.5,
-    };
-
-    const body_id = core.clibs.box3D.CreateBody(physics_world, &body_def);
-
-    ent.addComponent(.rigid_body, core.engine.world.RigidBody{
-        .id = body_id,
-    });
-
-    var shape_def = core.clibs.box3D.DefaultShapeDef();
-    shape_def.density = 1.0;
-
-    const box = core.clibs.box3D.MakeBoxHull(
-        0.5,
-        0.5,
-        0.5,
-    );
-
-    _ = core.clibs.box3D.CreateHullShape(
-        body_id,
-        &shape_def,
-        &box.base,
-    );
-
-    // for (self.meshes2D.ranges.items) |ranges| {
-    //     var ent = world.entities.register(null) catch @panic("OOM");
-    //     ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
-    //         .ranges = ranges,
-    //     });
-    // }
-}
-
 pub fn createImmutableData(self: *@This(), device: vk.Device) void {
     self.materials.createSampler(device);
 }
@@ -306,7 +200,6 @@ pub fn upload(
     );
     const meshes2D = self.meshes2D.upload(
         allocs,
-        pool,
         upload_ctx,
         logical_device,
     );

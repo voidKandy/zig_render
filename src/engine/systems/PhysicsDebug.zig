@@ -18,9 +18,35 @@ const DrawStringFcn = *const fn (box3D.Pos, [*:0]const u8, box3D.HexColor, ?*any
 
 const Debug = @This();
 
-lines: std.ArrayListUnmanaged(DebugLine) = .empty,
-pipeline_description: GraphicsPipeline.Description = undefined,
+const SET_NAME = "box3D_debug_set";
+const BUFFER_NAME = "box3D_debug_vertices";
+
+const DebugLine = extern struct {
+    start: core.lib.math.Vec3,
+    end: core.lib.math.Vec3,
+    color: u32,
+};
+
+const MAX_DEBUG_LINES = 1024;
+lines: std.ArrayListUnmanaged(DebugLine),
 pipeline: GraphicsPipeline = undefined,
+
+pub fn init(a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!@This() {
+    try resources.mapped_buffers.creates.put(
+        a,
+        BUFFER_NAME,
+
+        .{
+            .alloc_size = @sizeOf(DebugLine) * MAX_DEBUG_LINES,
+            .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .flags = 0,
+        },
+    );
+    return .{
+        .lines = .empty,
+    };
+}
 
 pub fn deinit(
     self: *@This(),
@@ -32,25 +58,114 @@ pub fn deinit(
     self.pipeline.deinit(device, alloc_cbs);
 }
 
-pub fn initPipeline(
-    self: *@This(),
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    self.pipeline =
-        GraphicsPipeline.init(self.pd, alloc_cbs);
+pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
+    const aligned: [*]DebugLine = @ptrCast(
+        @alignCast(alloc_resources.mapped_buffers.buffers.get(BUFFER_NAME).?.mapped),
+    );
+    @memcpy(aligned, self.lines.items);
+    // for (self.lines.items, 0..) |line, i|
+    //     aligned[i] = line;
 }
 
-const DebugLine = struct {
-    start: core.lib.math.Vec3,
-    end: core.lib.math.Vec3,
-    color: u32,
-};
+pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
+    try resources.mapped_buffers.createAndRegisterBufferSetLayout(
+        a,
+        SET_NAME,
+        &[_]core.resources.MappedBuffers.CreateBufferInfo{
+            .{
+                .name = BUFFER_NAME,
+                .descriptor_type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .binding = 0,
+                .stage_flags = vk.SHADER_STAGE_VERTEX_BIT,
+            },
+        },
+        device,
+        alloc_cbs,
+    );
+}
 
-pub fn reset(self: *Debug) void {
+pub fn initGraphicsPipelines(
+    self: *@This(),
+    common: core.engine.pipelines.Common,
+    resources: core.resources.Manager,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    const vert_shader = core.engine.shaders.createShaderModule(
+        "box3D_debug.vert",
+        common.device,
+        alloc_cbs,
+    ) orelse @panic("failed to create vert shader module");
+    defer vk.DestroyShaderModule(
+        common.device,
+        vert_shader,
+        alloc_cbs,
+    );
+
+    const frag_shader = core.engine.shaders.createShaderModule(
+        "box3D_debug.frag",
+        common.device,
+        alloc_cbs,
+    ) orelse @panic("failed to create frag shader module");
+
+    defer vk.DestroyShaderModule(
+        common.device,
+        frag_shader,
+        alloc_cbs,
+    );
+
+    // need to load shaders here too
+    const layouts = GraphicsPipeline.Description.Layouts.init(.{
+        .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+        // .vertex_buffer = resources.mapped_buffers.buffer_set_layouts.get(SET_NAME).?.layout,
+    });
+
+    self.pipeline =
+        GraphicsPipeline.init(.{
+            .layouts = layouts,
+            .common = common,
+            .vertex_shader = vert_shader,
+            .fragment_shader = frag_shader,
+        }, alloc_cbs);
+}
+
+pub fn notrecordGraphicsCommands(
+    self: @This(),
+    _: core.resources.Manager,
+    allocated_resources: core.resources.Manager.AllocatedData,
+    cmd: vk.CommandBuffer,
+) void {
+    self.pipeline.bind(cmd);
+
+    const sets = GraphicsPipeline.Description.Sets.init(.{
+        .camera = allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        // .vertex_buffer = allocated_resources.mapped_buffers.buffer_sets.get(SET_NAME).?.set,
+    });
+
+    const vert_buffer = allocated_resources.mapped_buffers.buffers.get(BUFFER_NAME).?.allocation;
+
+    if (vert_buffer.size == 0) return;
+
+    vk.CmdBindDescriptorSets(
+        cmd,
+        vk.PIPELINE_BIND_POINT_GRAPHICS,
+        self.pipeline.layout,
+        0,
+        sets.values.len,
+        &sets.values,
+        0,
+        null,
+    );
+
+    const offsets = [_]vk.DeviceSize{0};
+    vk.CmdBindVertexBuffers(cmd, 0, 1, &vert_buffer.buffer, &offsets);
+    vk.CmdDraw(cmd, @intCast(vert_buffer.size), 1, 0, 0);
+}
+
+fn reset(self: *Debug) void {
     self.lines.clearRetainingCapacity();
 }
 
-pub fn addLine(self: *@This(), a: std.mem.allocator, p1: core.lib.math.Vec3, p2: core.lib.math.Vec3, color: u32) void {
+fn addLine(self: *@This(), a: std.mem.allocator, p1: core.lib.math.Vec3, p2: core.lib.math.Vec3, color: u32) void {
     self.lines.append(a, .{ .start = p1, .end = p2, .color = color }) catch {};
 }
 
@@ -89,17 +204,20 @@ const GraphicsPipeline = struct {
     };
 
     pipeline: vk.Pipeline = undefined,
-    pipeline_layout: vk.PipelineLayout = undefined,
+    layout: vk.PipelineLayout = undefined,
 
     const Self = @This();
 
     pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
         vk.DestroyPipeline(device, self.pipeline, alloc_cbs);
-        vk.DestroyPipelineLayout(device, self.pipeline_layout, alloc_cbs);
+        vk.DestroyPipelineLayout(device, self.layout, alloc_cbs);
     }
 
-    pub const Description = core.engine.graphics_pipelines.Description(.{
-        .Enum = enum { camera },
+    pub const Description = core.engine.pipelines.Description(.{
+        .DescriptorSets = enum {
+            camera,
+            // vertex_buffer,
+        },
     });
 
     pub fn init(
@@ -159,15 +277,15 @@ const GraphicsPipeline = struct {
         const viewport = vk.Viewport{
             .x = 0.0,
             .y = 0.0,
-            .width = @as(f32, @floatFromInt(pd.window_extent.width)),
-            .height = @as(f32, @floatFromInt(pd.window_extent.height)),
+            .width = @as(f32, @floatFromInt(pd.common.window_extent.width)),
+            .height = @as(f32, @floatFromInt(pd.common.window_extent.height)),
             .minDepth = 0.0,
             .maxDepth = 1.0,
         };
 
         const scissor = vk.Rect2D{
             .offset = .{ .x = 0, .y = 0 },
-            .extent = pd.window_extent,
+            .extent = pd.common.window_extent,
         };
 
         const viewport_ci = vk.PipelineViewportStateCreateInfo{
@@ -199,7 +317,7 @@ const GraphicsPipeline = struct {
             .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
             .depthTestEnable = vk.TRUE,
             .depthWriteEnable = vk.FALSE,
-            .depthCompareOp = pd.depth_compare_op orelse @panic("DebugLinePipeline was not passed a depth comparison operation?"),
+            .depthCompareOp = vk.COMPARE_OP_LESS,
             .depthBoundsTestEnable = vk.FALSE,
             .stencilTestEnable = vk.FALSE,
             .minDepthBounds = 0.0,
@@ -221,7 +339,7 @@ const GraphicsPipeline = struct {
             .pAttachments = &blend_attach_state,
         };
 
-        self.pipeline_layout = pd.createPipelineLayout(null, alloc_cbs); // no push constants needed
+        self.layout = Description.createPipelineLayout(pd.layouts, pd.common.device, alloc_cbs);
 
         const dynamic_states = [_]vk.DynamicState{ vk.DYNAMIC_STATE_VIEWPORT, vk.DYNAMIC_STATE_SCISSOR };
         const dynamic_state_ci = vk.PipelineDynamicStateCreateInfo{
@@ -243,44 +361,19 @@ const GraphicsPipeline = struct {
             .pMultisampleState = &multisample_ci,
             .pDepthStencilState = &depth_stencil_ci,
             .pColorBlendState = &blend_ci,
-            .layout = self.pipeline_layout,
-            .renderPass = pd.render_pass,
+            .layout = self.layout,
+            .renderPass = pd.common.render_pass,
             .subpass = 0,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };
-        checkVk(vk.CreateGraphicsPipelines(pd.device, null, 1, &pipeline_ci, alloc_cbs, &self.pipeline)) catch
+        checkVk(vk.CreateGraphicsPipelines(pd.common.device, null, 1, &pipeline_ci, alloc_cbs, &self.pipeline)) catch
             @panic("failed to create debug line pipeline");
 
         return self;
     }
 
-    pub fn bind(self: Self, cmd: vk.CommandBuffer) void {
+    fn bind(self: Self, cmd: vk.CommandBuffer) void {
         vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
-    }
-
-    pub fn recordCommands(
-        self: Self,
-        vertex_buffer: vk.Buffer,
-        vertex_count: u32,
-        sets: Description.Sets,
-        cmd: vk.CommandBuffer,
-    ) void {
-        if (vertex_count == 0) return;
-
-        vk.CmdBindDescriptorSets(
-            cmd,
-            vk.PIPELINE_BIND_POINT_GRAPHICS,
-            self.pipeline_layout,
-            0,
-            sets.values.len,
-            &sets.values,
-            0,
-            null,
-        );
-
-        const offsets = [_]vk.DeviceSize{0};
-        vk.CmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer, &offsets);
-        vk.CmdDraw(cmd, vertex_count, 1, 0, 0);
     }
 };

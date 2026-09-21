@@ -34,37 +34,42 @@ pub const engine = struct {
         pub const Camera = @import("engine/systems/Camera.zig");
         pub const DrawBackground = @import("engine/systems/DrawBackground.zig");
         pub const PhysicsDebug = @import("engine/systems/PhysicsDebug.zig");
+        pub const Mesh3DRendering = @import("engine/systems/Mesh3DRendering.zig");
+        pub const Mesh2DRendering = @import("engine/systems/Mesh2DRendering.zig");
         test {
             std.testing.refAllDecls(@This());
         }
     };
 
-    pub const graphics_pipelines = struct {
-        pub const Mesh3DPipeline = @import("engine/graphics_pipelines/Mesh3DPipeline.zig");
-        pub const Mesh2DPipeline = @import("engine/graphics_pipelines/Mesh2DPipeline.zig");
+    pub const pipelines = struct {
+        // pub const Mesh3DPipeline = @import("engine/graphics_pipelines/Mesh3DPipeline.zig");
+        // pub const Mesh2DPipeline = @import("engine/graphics_pipelines/Mesh2DPipeline.zig");
 
         const DescriptionOptions = struct {
-            Enum: type,
+            DescriptorSets: type,
             push_constants: ?struct {
                 type,
                 clibs.vk.ShaderStageFlags,
             } = null,
         };
 
+        pub const Common = struct {
+            device: clibs.vk.Device,
+            render_pass: clibs.vk.RenderPass,
+            window_extent: clibs.vk.Extent2D,
+        };
+
         pub fn Description(opts: DescriptionOptions) type {
-            _ = @typeInfo(opts.Enum).@"enum";
+            _ = @typeInfo(opts.DescriptorSets).@"enum";
 
             return struct {
-                pub const Layouts = std.EnumArray(opts.Enum, clibs.vk.DescriptorSetLayout);
-                pub const Sets = std.EnumArray(opts.Enum, clibs.vk.DescriptorSet);
+                pub const Layouts = std.EnumArray(opts.DescriptorSets, clibs.vk.DescriptorSetLayout);
+                pub const Sets = std.EnumArray(opts.DescriptorSets, clibs.vk.DescriptorSet);
 
                 layouts: Layouts,
-                device: clibs.vk.Device,
-                render_pass: clibs.vk.RenderPass,
-                window_extent: clibs.vk.Extent2D,
+                common: Common,
                 vertex_shader: clibs.vk.ShaderModule,
                 fragment_shader: clibs.vk.ShaderModule,
-                depth_compare_op: ?clibs.vk.CompareOp,
 
                 pub fn createPipelineLayout(
                     layouts: Layouts,

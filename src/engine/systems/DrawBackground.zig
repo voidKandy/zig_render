@@ -41,14 +41,18 @@ pub fn init(
     };
 }
 
-pub fn initPipelines(
+pub fn initComputePipelines(
     self: *@This(),
     device: vk.Device,
     resources: core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
+    const layouts = ComputePipeline.Description.Layouts.init(.{
+        .texture_buffer = resources.materials.writable_textures_descriptor_set_layouts.get(BACKGROUND_SET_NAME).?.layout,
+    });
+
     self.pipeline =
-        ComputePipeline.init(device, resources, alloc_cbs);
+        ComputePipeline.init(device, layouts, alloc_cbs);
 }
 
 pub fn deinit(self: *@This(), _: core.engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
@@ -206,6 +210,14 @@ pub fn recordComputeCommands(
 }
 
 pub const ComputePipeline = struct {
+    const Description = core.engine.pipelines.Description(.{
+        .DescriptorSets = enum {
+            texture_buffer,
+        },
+        .push_constants = .{
+            PushConstants, vk.SHADER_STAGE_COMPUTE_BIT,
+        },
+    });
     /// TODO
     /// give these fields better names
     const PushConstants = struct {
@@ -270,37 +282,17 @@ pub const ComputePipeline = struct {
 
     pub fn init(
         device: vk.Device,
-        // resources is only passed here so the function can grab the descriptor sets for this given system
-        // there is opportunity for abstraction here
-        resources: core.resources.Manager,
+        layouts: Description.Layouts,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) @This() {
         var self = @This(){};
 
-        const push_constant = vk.PushConstantRange{
-            .offset = 0,
-            .size = @sizeOf(PushConstants),
-            .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
-        };
-
-        const texture_write_layout = resources.materials.writable_textures_descriptor_set_layouts.get(BACKGROUND_SET_NAME).?.layout;
-
-        const set_layouts = [_]vk.DescriptorSetLayout{
-            texture_write_layout,
-        };
-
-        const layout_ci = vk.PipelineLayoutCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-            .setLayoutCount = set_layouts.len,
-            .pSetLayouts = &set_layouts,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &push_constant,
-        };
-        checkVk(vk.CreatePipelineLayout(device, &layout_ci, alloc_cbs, &self.layout)) catch
-            @panic("failed to create main compute pipeline layout");
-
+        self.layout = Description.createPipelineLayout(layouts, device, alloc_cbs);
         self.effects = std.EnumMap(Effect, EffectData).initFull(.{});
         inline for (Effect.ALL_VARIANTS) |eff| {
+            defer log.warn(
+                \\ added effect: '{s}'
+            , .{@tagName(eff)});
             const shader = Effect.shaderModule(eff, device, alloc_cbs);
             defer vk.DestroyShaderModule(device, shader, alloc_cbs);
 
