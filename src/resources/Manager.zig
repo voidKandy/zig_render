@@ -8,10 +8,6 @@ const Meshes2D = @import("Meshes2D.zig");
 const MappedBuffers = @import("MappedBuffers.zig");
 const Meshes3D = @import("Meshes3D.zig");
 
-// TODO
-// currently mesh create infos utilize direct material index
-//
-
 pub const Mesh3DCreateInfo = struct {
     create_mesh: union(enum) {
         obj: core.loaders.obj.ObjFile,

@@ -74,6 +74,7 @@ pub fn init(
             a,
             resources_ci,
         ) catch @panic("failed resources init"),
+        .physics = .init(),
     };
 
     self.initWindow();
@@ -149,7 +150,8 @@ pub fn run(self: *Self) void {
 
         self.system_manager.update(dt, self.input, &self.world);
 
-        self.physics.update(&self.world);
+        var dbg = self.system_manager.plexe.PhysicsDebug.makeDebugDraw();
+        self.physics.update(&self.world, &dbg);
 
         self.system_manager.trySyncResources(self.allocated_resources);
 
@@ -267,16 +269,8 @@ fn initVulkan(self: *Self) void {
     ) catch @panic("failed to create framebuffers");
 }
 
-// These bindings can be the same because they are not in the
-// same descriptor set
-// TODO
-// move these to where they are actually encapsulated
-const MESHES_2D_METADATA_SET_BINDING: u32 = 0;
 /// honestly this whole function should be in Manager
 /// Allocates resources, creates descriptor layouts/pool
-/// AND associates meshes with entities.
-/// The latter half of this needs to be moved to its own function
-/// when entity/component management is figured out
 pub fn allocateResources(self: *Self) void {
     self.resources.createImmutableData(self.logical_device.handle);
 

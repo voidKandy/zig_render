@@ -110,10 +110,6 @@ pub fn main(init: std.process.Init) void {
     );
     defer engine.deinit();
 
-    engine.physics = .init();
-
-    // BAD
-    // dont like consumer calling this
     createEntities(engine.resources, &engine.world, engine.physics.world);
     const maze_system_ci = core.engine.systems.Maze.CreateInfo{
         .push_constants = core.engine.systems.Maze.PushConstants{
@@ -163,7 +159,7 @@ pub fn main(init: std.process.Init) void {
 fn createEntities(
     resources: core.resources.Manager,
     world: *core.engine.world.GameWorld,
-    physics_world: core.clibs.box3D.WorldId,
+    physics_world: core.clibs.box3d.WorldId,
 ) void {
     for (0..3) |i| {
         var ent = world.entities.register(null) catch @panic("OOM");
@@ -183,30 +179,30 @@ fn createEntities(
         });
         ent.addComponent(.world_transform, tx);
 
-        var body_def = core.clibs.box3D.DefaultBodyDef();
-        body_def.type = core.clibs.box3D.BODY_TYPE_DYNAMIC;
+        var body_def = core.clibs.box3d.DefaultBodyDef();
+        body_def.type = core.clibs.box3d.BODY_TYPE_DYNAMIC;
         body_def.position = .{
             .x = 0.0,
             .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
             .z = 1.0,
         };
 
-        const body_id = core.clibs.box3D.CreateBody(physics_world, &body_def);
+        const body_id = core.clibs.box3d.CreateBody(physics_world, &body_def);
 
         ent.addComponent(.rigid_body, core.engine.world.RigidBody{
             .id = body_id,
         });
 
-        var shape_def = core.clibs.box3D.DefaultShapeDef();
+        var shape_def = core.clibs.box3d.DefaultShapeDef();
         shape_def.density = 1.0;
 
-        const box = core.clibs.box3D.MakeBoxHull(
+        const box = core.clibs.box3d.MakeBoxHull(
             0.5,
             0.5,
             0.5,
         );
 
-        _ = core.clibs.box3D.CreateHullShape(
+        _ = core.clibs.box3d.CreateHullShape(
             body_id,
             &shape_def,
             &box.base,
@@ -229,30 +225,30 @@ fn createEntities(
     });
     ent.addComponent(.world_transform, tx);
 
-    var body_def = core.clibs.box3D.DefaultBodyDef();
-    body_def.type = core.clibs.box3D.BODY_TYPE_STATIC;
+    var body_def = core.clibs.box3d.DefaultBodyDef();
+    body_def.type = core.clibs.box3d.BODY_TYPE_STATIC;
     body_def.position = .{
         .x = 2.0,
         .y = 1.5,
         .z = 0.5,
     };
 
-    const body_id = core.clibs.box3D.CreateBody(physics_world, &body_def);
+    const body_id = core.clibs.box3d.CreateBody(physics_world, &body_def);
 
     ent.addComponent(.rigid_body, core.engine.world.RigidBody{
         .id = body_id,
     });
 
-    var shape_def = core.clibs.box3D.DefaultShapeDef();
+    var shape_def = core.clibs.box3d.DefaultShapeDef();
     shape_def.density = 0.0;
 
-    const box = core.clibs.box3D.MakeBoxHull(
+    const box = core.clibs.box3d.MakeBoxHull(
         10.0,
         10.0,
         1.0,
     );
 
-    _ = core.clibs.box3D.CreateHullShape(
+    _ = core.clibs.box3d.CreateHullShape(
         body_id,
         &shape_def,
         &box.base,

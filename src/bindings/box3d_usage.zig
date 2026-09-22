@@ -1,29 +1,40 @@
 const std = @import("std");
 const core = @import("../root.zig");
-const box3D = core.clibs.box3D;
+const box3d = core.clibs.box3d;
 
-pub fn init() @This() {
-    var world_def = box3D.DefaultWorldDef();
-    const world = box3D.CreateWorld(&world_def);
-
+pub fn fromCoreVec3(v: core.lib.math.Vec3) box3d.Vec3 {
     return .{
-        .world = world,
+        .x = v.x,
+        .y = v.y,
+        .z = v.z,
     };
 }
 
-pub fn deinit(self: @This()) void {
-    box3D.DestroyWorld(self.world);
+pub fn toCoreVec3(b3dv3: box3d.Vec3) core.lib.math.Vec3 {
+    return .{
+        .x = b3dv3.x,
+        .y = b3dv3.y,
+        .z = b3dv3.z,
+    };
+}
+
+pub fn unpackHexColor(color: box3d.HexColor) core.lib.math.Vec4 {
+    const raw: u32 = @intCast(color);
+    const r: f32 = @floatFromInt((raw >> 16) & 0xFF);
+    const g: f32 = @floatFromInt((raw >> 8) & 0xFF);
+    const b: f32 = @floatFromInt(raw & 0xFF);
+    return core.lib.math.Vec4.make(r / 255.0, g / 255.0, b / 255.0, 1.0);
 }
 
 pub fn box3DMesh(
     mesh: core.lib.mesh.Mesh3D,
     allocator: std.mem.Allocator,
 ) !struct {
-    def: box3D.MeshDef,
-    vertices: []box3D.Vec3,
+    def: box3d.MeshDef,
+    vertices: []box3d.Vec3,
     indices: []i32,
 } {
-    const vertices = try allocator.alloc(box3D.Vec3, mesh.vertices.len);
+    const vertices = try allocator.alloc(box3d.Vec3, mesh.vertices.len);
     errdefer allocator.free(vertices);
 
     for (mesh.vertices, 0..) |vertex, i| {
@@ -58,54 +69,54 @@ pub fn box3DMesh(
 }
 
 test "physics: falling body settles on ground" {
-    var world_def = box3D.DefaultWorldDef();
+    var world_def = box3d.DefaultWorldDef();
     world_def.gravity = .{ .x = 0.0, .y = 0.0, .z = -9.8 };
 
-    const world = box3D.CreateWorld(&world_def);
-    defer box3D.DestroyWorld(world);
+    const world = box3d.CreateWorld(&world_def);
+    defer box3d.DestroyWorld(world);
 
     // Ground
     {
-        var body_def = box3D.DefaultBodyDef();
-        body_def.type = box3D.BODY_TYPE_STATIC;
+        var body_def = box3d.DefaultBodyDef();
+        body_def.type = box3d.BODY_TYPE_STATIC;
 
-        const body = box3D.CreateBody(world, &body_def);
+        const body = box3d.CreateBody(world, &body_def);
 
-        var shape_def = box3D.DefaultShapeDef();
-        const box = box3D.MakeBoxHull(20.0, 20.0, 0.5);
+        var shape_def = box3d.DefaultShapeDef();
+        const box = box3d.MakeBoxHull(20.0, 20.0, 0.5);
 
-        _ = box3D.CreateHullShape(body, &shape_def, &box.base);
+        _ = box3d.CreateHullShape(body, &shape_def, &box.base);
     }
 
     // Falling box
     const body = blk: {
-        var body_def = box3D.DefaultBodyDef();
-        body_def.type = box3D.BODY_TYPE_DYNAMIC;
+        var body_def = box3d.DefaultBodyDef();
+        body_def.type = box3d.BODY_TYPE_DYNAMIC;
         body_def.position = .{
             .x = 0.0,
             .y = 0.0,
             .z = 10.0,
         };
 
-        const body = box3D.CreateBody(world, &body_def);
+        const body = box3d.CreateBody(world, &body_def);
 
-        var shape_def = box3D.DefaultShapeDef();
+        var shape_def = box3d.DefaultShapeDef();
         shape_def.density = 1.0;
 
-        const box = box3D.MakeBoxHull(0.5, 0.5, 0.5);
-        _ = box3D.CreateHullShape(body, &shape_def, &box.base);
+        const box = box3d.MakeBoxHull(0.5, 0.5, 0.5);
+        _ = box3d.CreateHullShape(body, &shape_def, &box.base);
 
         break :blk body;
     };
 
-    const start_z = box3D.Body_GetPosition(body).z;
+    const start_z = box3d.Body_GetPosition(body).z;
 
     // 10 seconds at 60 Hz.
     for (0..600) |_| {
-        box3D.World_Step(world, 1.0 / 60.0, 4);
+        box3d.World_Step(world, 1.0 / 60.0, 4);
     }
 
-    const end_z = box3D.Body_GetPosition(body).z;
+    const end_z = box3d.Body_GetPosition(body).z;
 
     std.debug.print(
         "falling body: z {d:.3} -> {d:.3}\n",

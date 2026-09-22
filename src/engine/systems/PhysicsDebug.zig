@@ -3,48 +3,50 @@ const core = @import("../../root.zig");
 const log = std.log.scoped(.PhysicsDebugSystem);
 const imgui = core.clibs.imgui;
 const vk = core.clibs.vk;
-const box3D = core.clibs.box3D;
+const box3d = core.clibs.box3d;
+const box3d_usage = core.bindings.box3d_usage;
 const checkVk = core.bindings.vulkan_init.checkVk;
 
-const DrawShapeFcn = *const fn (?*anyopaque, box3D.WorldTransform, box3D.HexColor, ?*anyopaque) callconv(.c) bool;
-const DrawSegmentFcn = *const fn (box3D.Pos, box3D.Pos, box3D.HexColor, ?*anyopaque) callconv(.c) void;
-const DrawTransformFcn = *const fn (box3D.WorldTransform, ?*anyopaque) callconv(.c) void;
-const DrawPointFcn = *const fn (box3D.Pos, f32, box3D.HexColor, ?*anyopaque) callconv(.c) void;
-const DrawSphereFcn = *const fn (box3D.Pos, f32, box3D.HexColor, f32, ?*anyopaque) callconv(.c) void;
-const DrawCapsuleFcn = *const fn (box3D.Pos, box3D.Pos, f32, box3D.HexColor, f32, ?*anyopaque) callconv(.c) void;
-const DrawBoundsFcn = *const fn (box3D.AABB, box3D.HexColor, ?*anyopaque) callconv(.c) void;
-const DrawBoxFcn = *const fn (box3D.Vec3, box3D.WorldTransform, box3D.HexColor, ?*anyopaque) callconv(.c) void;
-const DrawStringFcn = *const fn (box3D.Pos, [*:0]const u8, box3D.HexColor, ?*anyopaque) callconv(.c) void;
+const DrawShapeFcn = *const fn (?*anyopaque, box3d.WorldTransform, box3d.HexColor, ?*anyopaque) callconv(.c) bool;
+const DrawSegmentFcn = *const fn (box3d.Pos, box3d.Pos, box3d.HexColor, ?*anyopaque) callconv(.c) void;
+const DrawTransformFcn = *const fn (box3d.WorldTransform, ?*anyopaque) callconv(.c) void;
+const DrawPointFcn = *const fn (box3d.Pos, f32, box3d.HexColor, ?*anyopaque) callconv(.c) void;
+const DrawSphereFcn = *const fn (box3d.Pos, f32, box3d.HexColor, f32, ?*anyopaque) callconv(.c) void;
+const DrawCapsuleFcn = *const fn (box3d.Pos, box3d.Pos, f32, box3d.HexColor, f32, ?*anyopaque) callconv(.c) void;
+const DrawBoundsFcn = *const fn (box3d.AABB, box3d.HexColor, ?*anyopaque) callconv(.c) void;
+const DrawBoxFcn = *const fn (box3d.Vec3, box3d.WorldTransform, box3d.HexColor, ?*anyopaque) callconv(.c) void;
+const DrawStringFcn = *const fn (box3d.Pos, [*:0]const u8, box3d.HexColor, ?*anyopaque) callconv(.c) void;
 
-const Debug = @This();
-
+const PhysicsDebug = @This();
 const SET_NAME = "box3D_debug_set";
-const BUFFER_NAME = "box3D_debug_vertices";
+const VERTEX_BUFFER_NAME = "box3D_debug_vertices";
 
-const DebugLine = extern struct {
-    start: core.lib.math.Vec3,
-    end: core.lib.math.Vec3,
-    color: u32,
+pub const DebugVertex = extern struct {
+    position: core.lib.math.Vec3,
+    _pad: f32 = 0,
+    color: core.lib.math.Vec4,
 };
 
-const MAX_DEBUG_LINES = 1024;
-lines: std.ArrayListUnmanaged(DebugLine),
+const MAX_DEBUG_LINES = 1024 * 32;
+vertices: std.ArrayListUnmanaged(DebugVertex),
 pipeline: GraphicsPipeline = undefined,
+allocator: std.mem.Allocator,
 
 pub fn init(a: std.mem.Allocator, resources: *core.resources.Manager) std.mem.Allocator.Error!@This() {
     try resources.mapped_buffers.creates.put(
         a,
-        BUFFER_NAME,
+        VERTEX_BUFFER_NAME,
 
         .{
-            .alloc_size = @sizeOf(DebugLine) * MAX_DEBUG_LINES,
+            .alloc_size = @sizeOf(DebugVertex) * MAX_DEBUG_LINES,
             .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
             .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
             .flags = 0,
         },
     );
     return .{
-        .lines = .empty,
+        .allocator = a,
+        .vertices = try .initCapacity(a, MAX_DEBUG_LINES),
     };
 }
 
@@ -54,17 +56,22 @@ pub fn deinit(
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    self.lines.deinit(allocs.std);
+    self.vertices.deinit(allocs.std);
     self.pipeline.deinit(device, alloc_cbs);
 }
 
 pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
-    const aligned: [*]DebugLine = @ptrCast(
-        @alignCast(alloc_resources.mapped_buffers.buffers.get(BUFFER_NAME).?.mapped),
+    const buffer =
+        alloc_resources.mapped_buffers.buffers.get(VERTEX_BUFFER_NAME).?;
+
+    std.debug.assert(
+        self.vertices.items.len * @sizeOf(DebugVertex) <= buffer.allocation.size,
     );
-    @memcpy(aligned, self.lines.items);
-    // for (self.lines.items, 0..) |line, i|
-    //     aligned[i] = line;
+    const aligned: [*]DebugVertex = @ptrCast(@alignCast(buffer.mapped));
+
+    for (self.vertices.items, 0..) |vertex, i| {
+        aligned[i] = vertex;
+    }
 }
 
 pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
@@ -73,7 +80,7 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
         SET_NAME,
         &[_]core.resources.MappedBuffers.CreateBufferInfo{
             .{
-                .name = BUFFER_NAME,
+                .name = VERTEX_BUFFER_NAME,
                 .descriptor_type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .binding = 0,
                 .stage_flags = vk.SHADER_STAGE_VERTEX_BIT,
@@ -81,6 +88,16 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
         },
         device,
         alloc_cbs,
+    );
+}
+
+pub fn updateSets(
+    device: vk.Device,
+    allocated_resources: *core.resources.Manager.AllocatedData,
+) void {
+    allocated_resources.mapped_buffers.updateBufferSet(
+        device,
+        SET_NAME,
     );
 }
 
@@ -113,10 +130,9 @@ pub fn initGraphicsPipelines(
         alloc_cbs,
     );
 
-    // need to load shaders here too
     const layouts = GraphicsPipeline.Description.Layouts.init(.{
         .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
-        // .vertex_buffer = resources.mapped_buffers.buffer_set_layouts.get(SET_NAME).?.layout,
+        .vertex_buffer = resources.mapped_buffers.buffer_set_layouts.get(SET_NAME).?.layout,
     });
 
     self.pipeline =
@@ -128,7 +144,7 @@ pub fn initGraphicsPipelines(
         }, alloc_cbs);
 }
 
-pub fn notrecordGraphicsCommands(
+pub fn recordGraphicsCommands(
     self: @This(),
     _: core.resources.Manager,
     allocated_resources: core.resources.Manager.AllocatedData,
@@ -138,12 +154,8 @@ pub fn notrecordGraphicsCommands(
 
     const sets = GraphicsPipeline.Description.Sets.init(.{
         .camera = allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-        // .vertex_buffer = allocated_resources.mapped_buffers.buffer_sets.get(SET_NAME).?.set,
+        .vertex_buffer = allocated_resources.mapped_buffers.buffer_sets.get(SET_NAME).?.set,
     });
-
-    const vert_buffer = allocated_resources.mapped_buffers.buffers.get(BUFFER_NAME).?.allocation;
-
-    if (vert_buffer.size == 0) return;
 
     vk.CmdBindDescriptorSets(
         cmd,
@@ -156,30 +168,41 @@ pub fn notrecordGraphicsCommands(
         null,
     );
 
-    const offsets = [_]vk.DeviceSize{0};
-    vk.CmdBindVertexBuffers(cmd, 0, 1, &vert_buffer.buffer, &offsets);
-    vk.CmdDraw(cmd, @intCast(vert_buffer.size), 1, 0, 0);
+    vk.CmdDraw(cmd, @intCast(self.vertices.items.len), 1, 0, 0);
 }
 
-fn reset(self: *Debug) void {
-    self.lines.clearRetainingCapacity();
+pub fn reset(self: *@This()) void {
+    self.vertices.clearRetainingCapacity();
 }
 
-fn addLine(self: *@This(), a: std.mem.allocator, p1: core.lib.math.Vec3, p2: core.lib.math.Vec3, color: u32) void {
-    self.lines.append(a, .{ .start = p1, .end = p2, .color = color }) catch {};
+pub fn addLine(
+    self: *@This(),
+    p1: box3d.Vec3,
+    p2: box3d.Vec3,
+    color: box3d.HexColor,
+) void {
+    self.vertices.appendAssumeCapacity(.{
+        .position = box3d_usage.toCoreVec3(p1),
+        .color = box3d_usage.unpackHexColor(color),
+    });
+
+    self.vertices.appendAssumeCapacity(.{
+        .position = box3d_usage.toCoreVec3(p2),
+        .color = box3d_usage.unpackHexColor(color),
+    });
 }
 
-fn drawSegment(p1: box3D.Pos, p2: box3D.Pos, color: box3D.HexColor, context: ?*anyopaque) callconv(.c) void {
-    const self: *Debug = @ptrCast(@alignCast(context.?));
+pub fn drawSegment(p1: box3d.Pos, p2: box3d.Pos, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+    const self: *@This() = @ptrCast(@alignCast(context.?));
     self.addLine(
         core.lib.math.Vec3.make(p1.x, p1.y, p1.z),
         core.lib.math.Vec3.make(p2.x, p2.y, p2.z),
-        color,
+        box3d_usage.unpackHexColor(color),
     );
 }
 
-fn drawBox(extents: box3D.Vec3, transform: box3D.WorldTransform, color: box3D.HexColor, context: ?*anyopaque) callconv(.c) void {
-    const self: *Debug = @ptrCast(@alignCast(context.?));
+pub fn drawBox(extents: box3d.Vec3, transform: box3d.WorldTransform, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+    const self: *@This() = @ptrCast(@alignCast(context.?));
     _ = self;
     _ = extents;
     _ = transform;
@@ -188,21 +211,169 @@ fn drawBox(extents: box3D.Vec3, transform: box3D.WorldTransform, color: box3D.He
 }
 
 // Build the actual b3DebugDraw struct to hand to box3d, pointing at `self`.
-pub fn makeDebugDraw(self: *@This()) box3D.DebugDraw {
-    var draw = box3D.DefaultDebugDraw();
-    draw.DrawSegmentFcn = drawSegment;
-    draw.DrawBoxFcn = drawBox;
+// pub fn makeDebugDraw(self: *@This()) box3d.DebugDraw {
+//     var draw = box3d.DefaultDebugDraw();
+//     draw.DrawSegmentFcn = drawSegment;
+//     draw.DrawBoxFcn = drawBox;
+//     draw.drawShapes = true;
+//     draw.context = @ptrCast(self);
+//     return draw;
+// }
+pub fn makeDebugDraw(self: *@This()) box3d.DebugDraw {
+    // should be called in an update function or something
+    self.reset();
+    var draw = box3d.DefaultDebugDraw();
+
+    draw.DrawShapeFcn = struct {
+        fn call(userShape: ?*anyopaque, transform: box3d.WorldTransform, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+            _ = userShape;
+            _ = transform;
+            _ = color;
+            _ = context;
+            log.warn("DrawShapeFcn called", .{});
+        }
+    }.call;
+
+    draw.DrawSegmentFcn = struct {
+        fn call(p1: box3d.Pos, p2: box3d.Pos, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+            _ = p1;
+            _ = p2;
+            _ = color;
+            _ = context;
+            log.warn("DrawSegmentFcn called", .{});
+        }
+    }.call;
+
+    draw.DrawTransformFcn = struct {
+        fn call(transform: box3d.WorldTransform, context: ?*anyopaque) callconv(.c) void {
+            _ = transform;
+            _ = context;
+            log.warn("DrawTransformFcn called", .{});
+        }
+    }.call;
+
+    draw.DrawPointFcn = struct {
+        fn call(p: box3d.Pos, size: f32, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+            _ = p;
+            _ = size;
+            _ = color;
+            _ = context;
+            log.warn("DrawPointFcn called", .{});
+        }
+    }.call;
+
+    draw.DrawSphereFcn = struct {
+        fn call(p: box3d.Pos, radius: f32, color: box3d.HexColor, alpha: f32, context: ?*anyopaque) callconv(.c) void {
+            _ = p;
+            _ = radius;
+            _ = color;
+            _ = alpha;
+            _ = context;
+            log.warn("DrawSphereFcn called", .{});
+        }
+    }.call;
+
+    draw.DrawCapsuleFcn = struct {
+        fn call(p1: box3d.Pos, p2: box3d.Pos, radius: f32, color: box3d.HexColor, alpha: f32, context: ?*anyopaque) callconv(.c) void {
+            _ = p1;
+            _ = p2;
+            _ = radius;
+            _ = color;
+            _ = alpha;
+            _ = context;
+            log.warn("DrawCapsuleFcn called", .{});
+        }
+    }.call;
+
+    draw.DrawBoundsFcn = struct {
+        fn call(aabb: box3d.AABB, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+            const debug: *PhysicsDebug = @ptrCast(@alignCast(context.?));
+
+            const min = aabb.lowerBound;
+            const max = aabb.upperBound;
+
+            const corners = [_]box3d.Pos{
+                .{ .x = min.x, .y = min.y, .z = min.z },
+                .{ .x = max.x, .y = min.y, .z = min.z },
+                .{ .x = max.x, .y = max.y, .z = min.z },
+                .{ .x = min.x, .y = max.y, .z = min.z },
+
+                .{ .x = min.x, .y = min.y, .z = max.z },
+                .{ .x = max.x, .y = min.y, .z = max.z },
+                .{ .x = max.x, .y = max.y, .z = max.z },
+                .{ .x = min.x, .y = max.y, .z = max.z },
+            };
+
+            const edges = [_][2]usize{
+                // Bottom
+                .{ 0, 1 },
+                .{ 1, 2 },
+                .{ 2, 3 },
+                .{ 3, 0 },
+
+                // Top
+                .{ 4, 5 },
+                .{ 5, 6 },
+                .{ 6, 7 },
+                .{ 7, 4 },
+
+                // Vertical
+                .{ 0, 4 },
+                .{ 1, 5 },
+                .{ 2, 6 },
+                .{ 3, 7 },
+            };
+
+            for (edges) |edge| {
+                debug.addLine(
+                    corners[edge[0]],
+                    corners[edge[1]],
+                    color,
+                );
+            }
+        }
+    }.call;
+
+    draw.DrawBoxFcn = struct {
+        fn call(extents: box3d.Vec3, transform: box3d.WorldTransform, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+            _ = extents;
+            _ = transform;
+            _ = color;
+            _ = context;
+            log.warn("DrawBoxFcn called", .{});
+        }
+    }.call;
+
+    draw.DrawStringFcn = struct {
+        fn call(p: box3d.Pos, s: [*c]const u8, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+            _ = p;
+            _ = s;
+            _ = color;
+            _ = context;
+            log.warn("DrawStringFcn called", .{});
+        }
+    }.call;
+
     draw.drawShapes = true;
+    draw.drawBounds = true;
+    draw.drawingBounds = .{
+        .lowerBound = .{
+            .x = -100.0,
+            .y = -100.0,
+            .z = -100.0,
+        },
+        .upperBound = .{
+            .x = 100.0,
+            .y = 100.0,
+            .z = 100.0,
+        },
+    };
+
     draw.context = @ptrCast(self);
     return draw;
 }
 
 const GraphicsPipeline = struct {
-    pub const DebugVertex = extern struct {
-        position: core.lib.math.Vec3,
-        color: core.lib.math.Vec4,
-    };
-
     pipeline: vk.Pipeline = undefined,
     layout: vk.PipelineLayout = undefined,
 
@@ -216,7 +387,7 @@ const GraphicsPipeline = struct {
     pub const Description = core.engine.pipelines.Description(.{
         .DescriptorSets = enum {
             camera,
-            // vertex_buffer,
+            vertex_buffer,
         },
     });
 
@@ -241,31 +412,12 @@ const GraphicsPipeline = struct {
             },
         };
 
-        const binding_desc = vk.VertexInputBindingDescription{
-            .binding = 0,
-            .stride = @sizeOf(DebugVertex),
-            .inputRate = vk.VERTEX_INPUT_RATE_VERTEX,
-        };
-        const attr_descs = [_]vk.VertexInputAttributeDescription{
-            .{
-                .location = 0,
-                .binding = 0,
-                .format = vk.FORMAT_R32G32B32_SFLOAT,
-                .offset = @offsetOf(DebugVertex, "position"),
-            },
-            .{
-                .location = 1,
-                .binding = 0,
-                .format = vk.FORMAT_R32G32B32A32_SFLOAT,
-                .offset = @offsetOf(DebugVertex, "color"),
-            },
-        };
         const vertex_input_ci = vk.PipelineVertexInputStateCreateInfo{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-            .vertexBindingDescriptionCount = 1,
-            .pVertexBindingDescriptions = &binding_desc,
-            .vertexAttributeDescriptionCount = attr_descs.len,
-            .pVertexAttributeDescriptions = &attr_descs,
+            .vertexBindingDescriptionCount = 0,
+            .pVertexBindingDescriptions = null,
+            .vertexAttributeDescriptionCount = 0,
+            .pVertexAttributeDescriptions = null,
         };
 
         const input_assembly_ci = vk.PipelineInputAssemblyStateCreateInfo{

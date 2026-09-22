@@ -46,7 +46,7 @@ pub const ScreenTransform = struct {
 };
 
 pub const RigidBody = struct {
-    id: core.clibs.box3D.BodyId,
+    id: core.clibs.box3d.BodyId,
 };
 
 pub const GameWorld =

@@ -443,7 +443,6 @@ const GraphicsPipeline = struct {
             .minSampleShading = 1.0,
         };
 
-        // no depth test — HUD always renders on top
         const depth_stencil_ci = vk.PipelineDepthStencilStateCreateInfo{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
             .depthTestEnable = vk.FALSE,
@@ -457,7 +456,6 @@ const GraphicsPipeline = struct {
             .back = .{},
         };
 
-        // alpha blending so the HUD can be transparent
         const blend_attach = vk.PipelineColorBlendAttachmentState{
             .blendEnable = vk.TRUE,
             .srcColorBlendFactor = vk.BLEND_FACTOR_SRC_ALPHA,

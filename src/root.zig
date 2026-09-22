@@ -6,6 +6,7 @@ pub const bindings = struct {
     pub const vma_usage = @import("bindings/vma_usage.zig");
     pub const sdl_usage = @import("bindings/sdl_usage.zig");
     pub const vulkan_init = @import("bindings/vulkan_init.zig");
+    pub const box3d_usage = @import("bindings/box3d_usage.zig");
     pub const vulkan_util = @import("bindings/vulkan_util.zig");
     test {
         std.testing.refAllDecls(@This());
@@ -122,9 +123,7 @@ pub const lib = struct {
     pub const Maze = @import("lib/Maze.zig");
     pub const mesh = @import("lib/mesh.zig");
     pub const terrain = @import("lib/terrain.zig");
-    // pub const alpha_wrapping = @import("lib/alpha_wrapping.zig");
     pub const delaunay = @import("lib/delaunay.zig");
-    pub const physics = @import("lib/physics.zig");
     test {
         std.testing.refAllDecls(@This());
     }

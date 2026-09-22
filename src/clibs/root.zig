@@ -1,6 +1,6 @@
 const c = @import("c");
 
-pub const box3D = struct {
+pub const box3d = struct {
     pub const WorldId = c.b3WorldId;
     pub const BodyId = c.b3BodyId;
 
