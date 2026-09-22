@@ -139,16 +139,25 @@ pub const Mesh3D = struct {
         }
 
         const indices = try a.alloc(u32, 36);
-        for (0..6) |f| {
+        for (faces, 0..) |_, f| {
             const base: u32 = @intCast(f * 4);
             const off = f * 6;
-            // CCW winding per face, consistent with FRONT_FACE_COUNTER_CLOCKWISE
-            indices[off + 0] = base + 0;
-            indices[off + 1] = base + 2;
-            indices[off + 2] = base + 1;
-            indices[off + 3] = base + 0;
-            indices[off + 4] = base + 3;
-            indices[off + 5] = base + 2;
+
+            if (f < 4) {
+                indices[off + 0] = base + 0;
+                indices[off + 1] = base + 2;
+                indices[off + 2] = base + 1;
+                indices[off + 3] = base + 0;
+                indices[off + 4] = base + 3;
+                indices[off + 5] = base + 2;
+            } else {
+                indices[off + 0] = base + 0;
+                indices[off + 1] = base + 1;
+                indices[off + 2] = base + 2;
+                indices[off + 3] = base + 0;
+                indices[off + 4] = base + 2;
+                indices[off + 5] = base + 3;
+            }
         }
 
         return .{
