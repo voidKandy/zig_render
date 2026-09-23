@@ -19,13 +19,14 @@ const Instance = extern struct {
     model_transform: core.lib.math.Mat4,
 };
 
+/// TODO
 /// HOLDS pointers to data owned by ECS
 /// REMOVAL OF ENTITIES WILL BREAK THIS SO THAT NEEDS TO BE FIGURED OUT
 const InstanceEntry = struct {
     entity_id: u32,
-    mesh_idx: *u32,
-    material_idx: *u32,
-    model_transform: *core.lib.math.Mat4,
+    mesh_idx: *const u32,
+    material_idx: *const u32,
+    model_transform: *const core.lib.math.Mat4,
 };
 
 const INSTANCE_SIGNATURE = core.engine.world.GameWorld.Signature.initMany(&.{

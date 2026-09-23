@@ -303,6 +303,11 @@ pub fn allocateResources(self: *Self) void {
         self.alloc_cbs,
     ) catch @panic("OOM");
 
+    self.allocated_resources.meshes3D.updateDescriptorSet(
+        self.logical_device.handle,
+        core.resources.Meshes3D.DEFAULT_BINDINGS,
+    ) catch @panic("OOM");
+
     self.allocated_resources.materials.updateStaticTextureSet(
         self.resources.materials,
         self.allocs.std,
@@ -337,16 +342,6 @@ pub fn initPipelines(
 
     self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
     self.system_manager.initGraphicsPipelines(graphics_common, self.resources, self.alloc_cbs);
-
-    self.allocated_resources.meshes3D.updateDescriptorSet(
-        self.logical_device.handle,
-        core.resources.Meshes3D.DEFAULT_BINDINGS,
-    ) catch @panic("OOM");
-
-    // self.allocated_resources.meshes2D.updateDescriptorSet(
-    //     self.logical_device.handle,
-    //     MESHES_2D_METADATA_SET_BINDING,
-    // ) catch @panic("OOM");
 }
 
 fn initMainRenderPass(self: *Self) void {
@@ -571,43 +566,6 @@ fn recordCommandBuffer(
         self.allocated_resources,
         frame.main_command_buffer,
     );
-
-    // self.mesh3D_pipeline.bind(frame.main_command_buffer);
-    // self.mesh3D_pipeline.recordCommands(
-    //     // BAD??
-    //     self.system_manager.plexe.RenderSystem,
-    //     self.resources,
-
-    //     core.engine.graphics_pipelines.Mesh3DPipeline.Description.Sets.init(.{
-    //         .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-    //         .samplers = self.allocated_resources.materials.sampler_set,
-    //         .meshes = self.allocated_resources.meshes3D.descriptor_set,
-    //         .texture = self.allocated_resources.materials.all_textures_descriptor_set,
-    //         .instances = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.graphics_pipelines.Mesh3DPipeline.RenderSystem.INSTANCE_SET_NAME).?.set,
-    //     }),
-    //     frame.main_command_buffer,
-    // );
-
-    // self.mesh2D_pipeline.bind(frame.main_command_buffer);
-    // self.mesh2D_pipeline.recordCommands(
-    //     &self.world,
-    //     self.swapchain.extent,
-    //     self.allocated_resources,
-
-    //     core.engine.graphics_pipelines.Mesh2DPipeline.Description.Sets.init(.{
-    //         .camera = self.allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-    //         .samplers = self.allocated_resources.materials.sampler_set,
-    //         .meshes = self.allocated_resources.meshes2D.descriptor_set,
-    //         .texture = self.allocated_resources.materials.all_textures_descriptor_set,
-    //     }),
-
-    //     frame.main_command_buffer,
-    // );
-
-    // if (self..debug_pipeline) |dbg| {
-    // dbg.bind(frame.main_command_buffer);
-    // dbg.recordCommands(vertex_buffer: (unknown type), vertex_count: u32, sets: EnumArray(enum {...},V), cmd: (unknown type))
-    // }
 
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }

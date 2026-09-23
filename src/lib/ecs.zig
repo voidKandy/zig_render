@@ -719,15 +719,15 @@ test "ECS Entity Management" {
         fn contains(qu: MyEcs.QueryIterator, id: u32) bool {
             var clone = qu;
             while (clone.next()) |handle| {
-                if (handle.identifier == id) {
+                if (handle.identifier.* == id) {
                     return true;
                 }
             }
             return false;
         }
     }.contains;
-    try std.testing.expect(containsEntityWithId(iter, entity_a.identifier));
-    try std.testing.expect(containsEntityWithId(iter, entity_b.identifier));
+    try std.testing.expect(containsEntityWithId(iter, entity_a.identifier.*));
+    try std.testing.expect(containsEntityWithId(iter, entity_b.identifier.*));
 
     // Component Removal
     // ---
@@ -741,16 +741,16 @@ test "ECS Entity Management" {
     // Entity Index Storage
     // ---
     {
-        try std.testing.expectEqual(0, ecs.entities.manager.index_map.get(entity_a.identifier));
-        try std.testing.expectEqual(1, ecs.entities.manager.index_map.get(entity_b.identifier));
-        try std.testing.expectEqual(2, ecs.entities.manager.index_map.get(entity_c.identifier));
+        try std.testing.expectEqual(0, ecs.entities.manager.index_map.get(entity_a.identifier.*));
+        try std.testing.expectEqual(1, ecs.entities.manager.index_map.get(entity_b.identifier.*));
+        try std.testing.expectEqual(2, ecs.entities.manager.index_map.get(entity_c.identifier.*));
 
         // adding component to `entity_c` to make sure the component data is moved as expected
         const val: u8 = 64;
         entity_c.addComponent(.othercomponent, val);
 
         try entity_a.destroy();
-        try std.testing.expectEqual(0, ecs.entities.manager.index_map.get(entity_c.identifier));
+        try std.testing.expectEqual(0, ecs.entities.manager.index_map.get(entity_c.identifier.*));
         try std.testing.expectEqual(0, entity_c.index().?);
 
         const got = ecs.components.get(.othercomponent, entity_c.index().?);
