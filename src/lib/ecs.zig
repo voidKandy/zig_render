@@ -24,14 +24,13 @@ pub fn IdentifierManager(
         index_map: std.AutoHashMap(u32, usize),
         identifier_map: std.AutoHashMap(usize, *IdentifierNode),
         count: usize,
-        /// Maintains a *tightly packed* array of Data
-        data: [MAX]?T = blk: {
-            var all: [MAX]?T = undefined;
-            @memset(&all, null);
-            break :blk all;
-        },
 
-        /// requires the same allocator be passed as with `init`
+        data: [MAX]?T = .{null} ** MAX,
+
+        /// when an entity is removed, it's index is added to this list
+        /// the next time an entity is registered it will be put in this spot
+        free_indices: std.ArrayList(usize),
+
         pub fn deinit(self: *@This(), allocator: Allocator) void {
             defer self.index_map.deinit();
             var keys = self.identifier_map.keyIterator();
@@ -39,6 +38,7 @@ pub fn IdentifierManager(
                 const kv = self.identifier_map.fetchRemove(k.*) orelse unreachable;
                 allocator.destroy(kv.value);
             }
+            self.free_indices.deinit(allocator);
             defer self.identifier_map.deinit();
             while (self.available_ids.pop()) |n|
                 allocator.destroy(@as(*IdentifierNode, @fieldParentPtr("node", n)));
@@ -66,6 +66,8 @@ pub fn IdentifierManager(
                 .index_map = idx_map,
                 .identifier_map = ent_map,
                 .count = 0,
+
+                .free_indices = try .initCapacity(allocator, MAX),
             };
         }
 
@@ -73,41 +75,44 @@ pub fn IdentifierManager(
         pub fn register(
             self: *Manager,
             data: T,
-        ) Allocator.Error!struct { u32, usize } {
-            const id_node: *IdentifierNode = @fieldParentPtr("node", self.available_ids.pop() orelse @panic("Identifier not available"));
-            try self.index_map.put(id_node.id, self.count);
-            try self.identifier_map.put(self.count, id_node);
+        ) Allocator.Error!struct { *const u32, usize } {
+            const idx = self.free_indices.pop() orelse self.count;
+
+            const id_node: *IdentifierNode = @fieldParentPtr(
+                "node",
+                self.available_ids.pop() orelse @panic("Identifier not available"),
+            );
+            try self.index_map.put(id_node.id, idx);
+            try self.identifier_map.put(idx, id_node);
+
+            const ret_id = self.identifier_map.get(idx).?;
 
             // log.debug(
             //     \\ registered entity: {d}
             // , .{id_node.id});
-            self.data[self.count] = data;
+            self.data[idx] = data;
+
             self.count += 1;
-            return .{ id_node.id, self.count - 1 };
+            return .{ &ret_id.id, idx };
         }
 
-        pub fn lastRegistered(self: Manager) ?struct { u32, usize } {
+        pub fn lastRegistered(self: Manager) ?struct { *const u32, usize } {
             const dif = MAX - self.available_ids.len();
             if (dif == 0) return null;
             const idx = dif - 1;
             const node = self.identifier_map.get(idx) orelse return null;
-            return .{ node.id, idx };
+            return .{ &node.id, idx };
         }
 
-        pub fn remove(self: *Manager, id: u32) (error{NotPresent} || Allocator.Error)!void {
+        /// This function doesn't require an allocator because free_indices are initialized to be the size of
+        /// the entities array.
+        /// this may need to change in the future if the amount of entities present needs to scale up
+        pub fn remove(self: *Manager, id: u32) error{NotPresent}!void {
             const index = (self.index_map.fetchRemove(id) orelse return error.NotPresent).value;
-            const node = (self.identifier_map.fetchRemove(index) orelse @panic("No node for index?")).value;
-            if (self.lastRegistered()) |last_reg| {
-                if (last_reg.@"0" != id) {
-                    const last_reg_kv = self.identifier_map.fetchRemove(last_reg.@"1") orelse @panic("No node for last registered?");
-                    const last_reg_node = last_reg_kv.value;
-                    const last_data = self.getData(last_reg.@"0") orelse @panic("No signature for last registered?");
-                    try self.index_map.put(last_reg.@"0", index);
-                    try self.identifier_map.put(index, last_reg_node);
-                    self.data[index] = last_data;
-                    self.data[last_reg.@"1"] = null;
-                }
-            }
+            const node = (self.identifier_map.fetchRemove(index).?).value;
+            self.free_indices.appendAssumeCapacity(index);
+
+            self.data[index] = null;
 
             self.available_ids.append(&node.node);
             self.count -= 1;
@@ -140,8 +145,8 @@ test "register assigns ids and stores data" {
     const b = try m.register(20);
 
     try std.testing.expectEqual(@as(usize, 2), m.count);
-    try std.testing.expectEqual(@as(u8, 10), m.getData(a.@"0").?);
-    try std.testing.expectEqual(@as(u8, 20), m.getData(b.@"0").?);
+    try std.testing.expectEqual(@as(u8, 10), m.getData(a.@"0".*).?);
+    try std.testing.expectEqual(@as(u8, 20), m.getData(b.@"0".*).?);
 }
 
 test "remove decreases count and moves data" {
@@ -152,11 +157,11 @@ test "remove decreases count and moves data" {
     const a = try m.register(1);
     const b = try m.register(2);
 
-    try m.remove(a.@"0");
+    try m.remove(a.@"0".*);
 
     try std.testing.expectEqual(@as(usize, 1), m.count);
-    try std.testing.expect(m.getData(a.@"0") == null);
-    try std.testing.expectEqual(@as(u8, 2), m.getData(b.@"0").?);
+    try std.testing.expect(m.getData(a.@"0".*) == null);
+    try std.testing.expectEqual(@as(u8, 2), m.getData(b.@"0".*).?);
 }
 
 test "remove middle swaps last into hole" {
@@ -168,11 +173,11 @@ test "remove middle swaps last into hole" {
     const b = try m.register(2);
     const c_ = try m.register(3);
 
-    try m.remove(b.@"0");
+    try m.remove(b.@"0".*);
 
     try std.testing.expectEqual(@as(usize, 2), m.count);
-    try std.testing.expectEqual(@as(u8, 1), m.getData(a.@"0").?);
-    try std.testing.expectEqual(@as(u8, 3), m.getData(c_.@"0").?);
+    try std.testing.expectEqual(@as(u8, 1), m.getData(a.@"0".*).?);
+    try std.testing.expectEqual(@as(u8, 3), m.getData(c_.@"0".*).?);
 }
 
 test "ids are reused after removal" {
@@ -181,12 +186,12 @@ test "ids are reused after removal" {
     defer m.deinit(std.testing.allocator);
 
     const a = try m.register(42);
-    try m.remove(a.@"0");
+    try m.remove(a.@"0".*);
 
     const b = try m.register(99);
 
-    try std.testing.expectEqual(a.@"0", b.@"0");
-    try std.testing.expectEqual(@as(u8, 99), m.getData(b.@"0").?);
+    try std.testing.expectEqual(a.@"0".*, b.@"0".*);
+    try std.testing.expectEqual(@as(u8, 99), m.getData(b.@"0".*).?);
 }
 
 test "lastRegistered returns last live element" {
@@ -198,7 +203,7 @@ test "lastRegistered returns last live element" {
     const b = try m.register(2);
 
     const last = m.lastRegistered() orelse @panic("No last registered?");
-    try std.testing.expectEqual(b.@"0", last.@"0");
+    try std.testing.expectEqual(b.@"0".*, last.@"0".*);
     try std.testing.expectEqual(@as(usize, 1), last.@"1");
 }
 
@@ -209,10 +214,10 @@ test "getDataPtr allows mutation" {
 
     const id = try m.register(10);
 
-    const ptr = m.getDataPtr(id.@"0") orelse unreachable;
+    const ptr = m.getDataPtr(id.@"0".*) orelse unreachable;
     ptr.* = 42;
 
-    try std.testing.expectEqual(@as(u8, 42), m.getData(id.@"0").?);
+    try std.testing.expectEqual(@as(u8, 42), m.getData(id.@"0".*).?);
 }
 
 test "getDataPtr mutation persists across operations" {
@@ -223,13 +228,13 @@ test "getDataPtr mutation persists across operations" {
     const a = try m.register(1);
     const b = try m.register(2);
 
-    const a_ptr = m.getDataPtr(a.@"0") orelse unreachable;
+    const a_ptr = m.getDataPtr(a.@"0".*) orelse unreachable;
     a_ptr.* = 99;
 
     // unrelated removal
-    try m.remove(b.@"0");
+    try m.remove(b.@"0".*);
 
-    try std.testing.expectEqual(@as(u8, 99), m.getData(a.@"0").?);
+    try std.testing.expectEqual(@as(u8, 99), m.getData(a.@"0".*).?);
 }
 pub const ComponentDecl = struct { [:0]const u8, type };
 
@@ -284,7 +289,12 @@ pub fn EntityStore(
 
             const id_node = self.entities.manager.identifier_map.get(i) orelse unreachable;
 
-            return EntityHandle{ .ecs = self, .identifier = &id_node.id, .signature = &sig };
+            return EntityHandle{
+                .ecs = self,
+                .identifier = &id_node.id,
+                .index = i,
+                .signature = &sig,
+            };
         }
 
         pub inline fn componentType(variant: Meta.ComponentTag) type {
@@ -353,7 +363,7 @@ pub fn EntityStore(
                     const idx = self.index;
                     self.index += 1;
 
-                    const sig = self.ecs.entities.manager.data[idx] orelse unreachable;
+                    const sig = self.ecs.entities.manager.data[idx] orelse continue;
 
                     if (self.query.is) |is| {
                         if (!is.rule.cmpFn()(sig, is.sig))
@@ -366,7 +376,6 @@ pub fn EntityStore(
                     }
 
                     const id = self.ecs.entities.manager.getId(idx) orelse unreachable;
-
                     return self.ecs.entityHandle(id) catch unreachable;
                 }
 
@@ -379,7 +388,6 @@ pub fn EntityStore(
             types: [N_COMPONENTS]type = undefined,
             /// fields for the ComponentArrays struct that stores arrays for each component type
             struct_field_types: [N_COMPONENTS]type = undefined,
-            struct_field_attrs: [N_COMPONENTS]Type.StructField.Attributes = undefined,
 
             enum_vals: [N_COMPONENTS]u32 = undefined,
 
@@ -394,7 +402,6 @@ pub fn EntityStore(
                     &meta.types,
                     &meta.enum_vals,
                     &meta.struct_field_types,
-                    &meta.struct_field_attrs,
                     &meta.un_field_attrs,
                     &meta.un_ptr_types,
                     0..,
@@ -404,7 +411,6 @@ pub fn EntityStore(
                     *ftyp,
                     *envl,
                     *strtyp,
-                    *stfld_att,
                     *unfld_att,
                     *unptr_typ,
                     i,
@@ -413,7 +419,6 @@ pub fn EntityStore(
                     ftyp.* = field.type;
                     envl.* = i;
                     strtyp.* = [Options.max_entities]?field.type;
-                    stfld_att.* = .{};
                     unfld_att.* = Type.UnionField.Attributes{
                         .@"align" = @alignOf(field.type),
                     };
@@ -428,7 +433,7 @@ pub fn EntityStore(
                     null,
                     &STATIC.names,
                     &STATIC.struct_field_types,
-                    &STATIC.struct_field_attrs,
+                    &@splat(.{}),
                 );
 
             pub const ComponentTag = @Enum(u32, .exhaustive, &STATIC.names, &STATIC.enum_vals);
@@ -511,21 +516,13 @@ pub fn EntityStore(
         pub const EntityHandle = struct {
             ecs: *ThisStore,
             identifier: *const u32,
+            index: usize,
             signature: *Signature,
             name: ?[]const u8 = null,
 
-            /// Is `null` if the entity has been removed
-            /// This is a little weird, I feel like the handle should be invalidated if index doesn't exist somehow
-            /// In other words, a state where this returns `null` should ideally be impossible
-            pub fn index(self: @This()) ?usize {
-                return self.ecs.entities.manager.index_map.get(self.identifier.*);
-            }
-
-            /// Maybe not the best name?
             /// Removes this entity from the ecs
-            /// moves component data to match up indices of the outer components array with the index of the entity
-            pub fn destroy(self: @This()) (error{NotPresent} || Allocator.Error)!void {
-                const idx = self.index() orelse @panic("EntityHandle has no index?");
+            pub fn destroy(self: @This()) error{NotPresent}!void {
+                const idx = self.index;
                 // Before removing the entity, we clear it's component data
                 {
                     const sig = self.ecs.entities.manager.getData(self.identifier.*) orelse @panic("No entity signature?");
@@ -535,34 +532,34 @@ pub fn EntityStore(
                             self.ecs.components.removeNoReturn(tag, idx);
                 }
 
-                const last_registered_opt = self.ecs.entities.manager.lastRegistered();
+                // const last_registered_opt = self.ecs.entities.manager.lastRegistered();
 
                 try self.ecs.entities.manager.remove(self.identifier.*);
 
                 // Removing the entity will move the last inserted entity
                 // We need to update the component data for this moved entity
-                {
-                    if (last_registered_opt) |last| {
-                        const prev_idx_of_moved_ent = last.@"1";
-                        // NOTE:
-                        // The index we pass here is the *same* index of the removed entity
-                        // because the `remove` method moves the last inserted entity into the index of the removed entity
-                        const ent = self.ecs.entities.manager.identifier_map.get(idx) orelse @panic("No identifier at that index?");
-                        if (last.@"0" != ent.id) {
-                            std.debug.panic(
-                                \\ Expected last entity inserted to match gotten entity
-                                \\ Expected: {}
-                                \\ Got: {}
-                            , .{ last.@"0", ent.id });
-                        }
-                        const sig = self.ecs.entities.manager.getData(ent.id) orelse @panic("No entity signature?");
-                        inline for (Meta.ALL_COMPONENT_TAGS) |tag| {
-                            if (sig.contains(tag)) {
-                                self.ecs.components.swap(tag, prev_idx_of_moved_ent, idx);
-                            }
-                        }
-                    }
-                }
+                // {
+                //     if (last_registered_opt) |last| {
+                //         const prev_idx_of_moved_ent = last.@"1";
+                //         // NOTE:
+                //         // The index we pass here is the *same* index of the removed entity
+                //         // because the `remove` method moves the last inserted entity into the index of the removed entity
+                //         const ent = self.ecs.entities.manager.identifier_map.get(idx) orelse @panic("No identifier at that index?");
+                //         if (last.@"0".* != ent.id) {
+                //             std.debug.panic(
+                //                 \\ Expected last entity inserted to match gotten entity
+                //                 \\ Expected: {}
+                //                 \\ Got: {}
+                //             , .{ last.@"0".*, ent.id });
+                //         }
+                //         const sig = self.ecs.entities.manager.getData(ent.id) orelse @panic("No entity signature?");
+                //         inline for (Meta.ALL_COMPONENT_TAGS) |tag| {
+                //             if (sig.contains(tag)) {
+                //                 self.ecs.components.swap(tag, prev_idx_of_moved_ent, idx);
+                //             }
+                //         }
+                //     }
+                // }
             }
 
             pub fn accessComponent(
@@ -571,7 +568,7 @@ pub fn EntityStore(
             ) error{AccessFailed}!Meta.ComponentUnion {
                 inline for (Meta.ALL_COMPONENT_TAGS) |t| {
                     if (t == which)
-                        if (self.ecs.components.get(t, self.index().?)) |c| return c;
+                        if (self.ecs.components.get(t, self.index)) |c| return c;
                 }
                 return error.AccessFailed;
             }
@@ -582,20 +579,20 @@ pub fn EntityStore(
             ) error{AccessFailed}!Meta.ComponentUnionPtr {
                 inline for (Meta.ALL_COMPONENT_TAGS) |t| {
                     if (t == which)
-                        if (self.ecs.components.getPtr(t, self.index().?)) |c| return c;
+                        if (self.ecs.components.getPtr(t, self.index)) |c| return c;
                 }
                 return error.AccessFailed;
             }
 
             pub fn removeComponent(self: *@This(), which: Meta.ComponentTag, component: anytype) void {
-                const idx = self.index() orelse @panic("NO INDEX?");
+                const idx = self.index;
                 var sig = &self.ecs.entities.manager.data[idx] orelse @panic("NO SIG??");
                 sig.remove(which);
                 self.ecs.components.removeNoReturn(@TypeOf(component), which, idx);
             }
 
             pub fn addComponent(self: *@This(), comptime which: Meta.ComponentTag, component: anytype) void {
-                const idx = self.index() orelse @panic("NO INDEX?");
+                const idx = self.index;
                 var sig = self.ecs.entities.manager.data[idx] orelse @panic("NO DATA?");
                 sig.insert(which);
                 self.ecs.entities.manager.data[idx] = sig;
@@ -612,17 +609,20 @@ pub fn EntityStore(
 
             /// Creates an empty with an empty `Signature`
             pub fn register(self: *@This(), name: ?[]const u8) Allocator.Error!EntityHandle {
-                _, const i = try self.manager.register(Signature.initEmpty());
+                const id, const i = try self.manager.register(Signature.initEmpty());
 
-                const id_node = self.manager.identifier_map.get(i).?;
-                // _ = i;
+                log.warn(
+                    \\ registering {d} at {d}
+                , .{ id.*, i });
+
                 var parent_ptr =
                     @as(*ThisStore, @fieldParentPtr("entities", self));
                 _ = &parent_ptr;
 
                 return EntityHandle{
                     .ecs = parent_ptr,
-                    .identifier = &id_node.id,
+                    .identifier = id,
+                    .index = i,
                     .signature = &self.manager.data[i].?,
                     .name = name,
                 };
@@ -680,23 +680,23 @@ test "ECS Entity Management" {
     // Entity Component Validation
     // ---
     {
-        const got = ecs.components.get(.someothercomponent, entity_a.index().?) orelse @panic("Nothing at that index");
+        const got = ecs.components.get(.someothercomponent, entity_a.index) orelse std.debug.panic("Nothing at index: {d}", .{entity_a.index});
         try std.testing.expectEqual(got, MyEcs.Meta.ComponentUnion{ .someothercomponent = 5 });
     }
     {
-        const got = ecs.components.get(.somecomponent, entity_a.index().?) orelse @panic("Nothing at that index");
+        const got = ecs.components.get(.somecomponent, entity_a.index) orelse @panic("Nothing at that index");
         try std.testing.expectEqual(got, MyEcs.Meta.ComponentUnion{ .somecomponent = false });
     }
     {
-        const got = ecs.components.get(.someothercomponent, entity_b.index().?) orelse @panic("Nothing at that index");
+        const got = ecs.components.get(.someothercomponent, entity_b.index) orelse @panic("Nothing at that index");
         try std.testing.expectEqual(got, MyEcs.Meta.ComponentUnion{ .someothercomponent = 7 });
     }
     {
-        const got = ecs.components.get(.somecomponent, entity_b.index().?) orelse @panic("Nothing at that index");
+        const got = ecs.components.get(.somecomponent, entity_b.index) orelse @panic("Nothing at that index");
         try std.testing.expectEqual(got, MyEcs.Meta.ComponentUnion{ .somecomponent = true });
     }
     {
-        const got = ecs.components.get(.somecomponent, entity_c.index().?);
+        const got = ecs.components.get(.somecomponent, entity_c.index);
         try std.testing.expect(got == null);
     }
 
@@ -733,9 +733,9 @@ test "ECS Entity Management" {
     // ---
 
     {
-        const removed = ecs.components.removeWithReturn(MyEcs.Meta.ComponentTag.somecomponent, entity_a.index().?) orelse @panic("nothing at that index");
+        const removed = ecs.components.removeWithReturn(MyEcs.Meta.ComponentTag.somecomponent, entity_a.index) orelse @panic("nothing at that index");
         try std.testing.expectEqual(removed.somecomponent, false);
-        try std.testing.expectEqual(null, ecs.components.get(MyEcs.Meta.ComponentTag.somecomponent, entity_a.index().?));
+        try std.testing.expectEqual(null, ecs.components.get(MyEcs.Meta.ComponentTag.somecomponent, entity_a.index));
     }
 
     // Entity Index Storage
@@ -750,11 +750,20 @@ test "ECS Entity Management" {
         entity_c.addComponent(.othercomponent, val);
 
         try entity_a.destroy();
-        try std.testing.expectEqual(0, ecs.entities.manager.index_map.get(entity_c.identifier.*));
-        try std.testing.expectEqual(0, entity_c.index().?);
 
-        const got = ecs.components.get(.othercomponent, entity_c.index().?);
+        try std.testing.expectEqual(2, ecs.entities.manager.index_map.get(entity_c.identifier.*));
+        try std.testing.expectEqual(2, entity_c.index);
+
+        const got = ecs.components.get(.othercomponent, entity_c.index);
         try std.testing.expectEqual(val, got.?.othercomponent);
+
+        const entity_d: MyEcs.EntityHandle = a: {
+            const handle = try ecs.entities.register(null);
+            break :a handle;
+        };
+
+        try std.testing.expectEqual(0, ecs.entities.manager.index_map.get(entity_d.identifier.*));
+        try std.testing.expectEqual(0, entity_d.index);
     }
 
     // Systems
@@ -779,7 +788,7 @@ test "ECS Entity Management" {
                 self.call_count += 1;
                 while (query_iter.next()) |e| {
                     warn("MUTATING ENTITY: {}", .{e});
-                    const idx = e.index() orelse @panic("ENTITY SHOULD HAVE AN INDEX?");
+                    const idx = e.index;
                     const v = myecs.components.get(.someothercomponent, idx) orelse @panic("SHOULD HAVE THIS COMPONENT?");
                     warn("VAL: {}", .{v.someothercomponent});
                     const new: u32 = 1111;
@@ -792,7 +801,7 @@ test "ECS Entity Management" {
 
     try some_system_st.run(&ecs);
     {
-        const got = ecs.components.get(.someothercomponent, entity_b.index().?) orelse @panic("Nothing at that index");
+        const got = ecs.components.get(.someothercomponent, entity_b.index) orelse @panic("Nothing at that index");
         try std.testing.expectEqual(
             1111,
             got.someothercomponent,
