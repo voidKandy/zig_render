@@ -172,8 +172,8 @@ pub fn init(
         .maze = maze,
         .maze_gpu_cells = cells,
         .push_constants = ci.push_constants,
-        .mesh3D_id = mesh3d_entity.identifier,
-        .mesh2D_id = mesh2d_entity.identifier,
+        .mesh3D_id = mesh3d_entity.identifier.*,
+        .mesh2D_id = mesh2d_entity.identifier.*,
     };
 }
 

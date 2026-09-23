@@ -175,7 +175,7 @@ fn createEntities(
         tx.matrix = tx.matrix.translate(.{
             .x = 0.0,
             .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
-            .z = 1.0,
+            .z = 60.0,
         });
         ent.addComponent(.world_transform, tx);
 
@@ -184,8 +184,9 @@ fn createEntities(
         body_def.position = .{
             .x = 0.0,
             .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
-            .z = 1.0,
+            .z = 60.0,
         };
+        body_def.userData = @ptrCast(@constCast(ent.identifier));
 
         const body_id = core.clibs.box3d.CreateBody(physics_world, &body_def);
 
@@ -225,6 +226,10 @@ fn createEntities(
     });
     ent.addComponent(.world_transform, tx);
 
+    // const mesh = core.bindings.box3d_usage.meshes3DMesh(
+    //     resources.meshes3D,
+    //     resources.meshes3D.mesh_indices.get("large_flat_box").?,
+    // );
     var body_def = core.clibs.box3d.DefaultBodyDef();
     body_def.type = core.clibs.box3d.BODY_TYPE_STATIC;
     body_def.position = .{
@@ -232,6 +237,7 @@ fn createEntities(
         .y = 1.5,
         .z = 0.5,
     };
+    body_def.userData = @ptrCast(@constCast(ent.identifier));
 
     const body_id = core.clibs.box3d.CreateBody(physics_world, &body_def);
 
@@ -243,15 +249,18 @@ fn createEntities(
     shape_def.density = 0.0;
 
     const box = core.clibs.box3d.MakeBoxHull(
-        10.0,
-        10.0,
-        1.0,
+        5.0,
+        5.0,
+        0.5,
     );
-
     _ = core.clibs.box3d.CreateHullShape(
         body_id,
         &shape_def,
         &box.base,
+    );
+    _ = core.bindings.box3d_usage.meshes3DMeshDef(
+        resources.meshes3D,
+        resources.meshes3D.mesh_indices.get("large_flat_box").?,
     );
 
     // for (self.meshes2D.ranges.items) |ranges| {

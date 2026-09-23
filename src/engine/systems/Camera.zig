@@ -38,7 +38,7 @@ pub fn init(
     var ent = try world.entities.register("main_camera");
     ent.addComponent(.camera, camera);
     return .{
-        .main_camera_entity = ent.identifier,
+        .main_camera_entity = ent.identifier.*,
         .gpu_camera = gpu,
     };
 }

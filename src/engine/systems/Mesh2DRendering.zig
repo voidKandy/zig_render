@@ -256,7 +256,7 @@ fn getInstances(a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.m
             \\creating instance: entity={} mesh={} material={} position=({d:.3}, {d:.3})
         ,
             .{
-                entity.identifier,
+                entity.identifier.*,
                 mesh.mesh_index,
                 mesh.material_index,
                 transform.coords.x,
@@ -265,7 +265,7 @@ fn getInstances(a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.m
         );
 
         try result.value_ptr.append(a, .{
-            .entity_id = entity.identifier,
+            .entity_id = entity.identifier.*,
             .screen_coordinates = &transform.coords,
             .mesh_idx = &mesh.mesh_index,
             .material_idx = &mesh.material_index,

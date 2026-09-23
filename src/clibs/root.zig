@@ -12,9 +12,15 @@ pub const box3d = struct {
     pub const DebugDraw = c.b3DebugDraw;
     pub const World_Draw = c.b3World_Draw;
 
+    pub const BodyEvents = c.b3BodyEvents;
+    pub const BodyMoveEvent = c.b3BodyMoveEvent;
+    pub const World_GetBodyEvents = c.b3World_GetBodyEvents;
+
     pub const BodyDef = c.b3BodyDef;
     pub const BodyType = c.b3BodyType;
     pub const MotionLocks = c.b3MotionLocks;
+    pub const MeshData = c.b3MeshData;
+    pub const MeshTriangle = c.b3MeshTriangle;
 
     pub const Vec3 = c.b3Vec3;
     pub const Rot = c.b3Rot;
@@ -31,6 +37,11 @@ pub const box3d = struct {
     pub const DefaultShapeDef = c.b3DefaultShapeDef;
     pub const CreateShape = c.b3CreateShape;
     pub const DestroyShape = c.b3DestroyShape;
+
+    pub const MeshDef = c.b3MeshDef;
+    pub const CreateMesh = c.b3CreateMesh;
+    pub const CreateMeshShape = c.b3CreateMesh;
+    pub const DestroyMesh = c.b3DestroyMesh;
 
     pub const Body_GetType = c.b3Body_GetType;
     pub const Body_SetType = c.b3Body_SetType;

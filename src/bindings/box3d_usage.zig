@@ -2,6 +2,23 @@ const std = @import("std");
 const core = @import("../root.zig");
 const box3d = core.clibs.box3d;
 
+pub fn meshes3DMeshDef(meshes3D: core.resources.Meshes3D, mesh_idx: usize) box3d.MeshDef {
+    var def: box3d.MeshDef = undefined;
+    const range = meshes3D.ranges.items[mesh_idx];
+
+    def.triangleCount = @divTrunc(@as(c_int, @intCast(range.vertex.range)), 3);
+    def.vertexCount = @intCast(range.vertex.range);
+    def.vertices = @as([*]box3d.Vec3, @ptrCast(meshes3D.vertices.items[range.vertex.offset .. range.vertex.offset + range.vertex.range]));
+    def.indices = @as([*]i32, @ptrCast(meshes3D.indices.items[range.index.offset .. range.index.offset + range.index.range]));
+
+    def.materialIndices = 0;
+    def.useMedianSplit = false;
+    def.weldTolerance = 0;
+    def.weldVertices = false;
+
+    return def;
+}
+
 pub fn fromCoreVec3(v: core.lib.math.Vec3) box3d.Vec3 {
     return .{
         .x = v.x,

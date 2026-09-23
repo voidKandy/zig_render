@@ -2,6 +2,7 @@ const rl = @import("raylib");
 const std = @import("std");
 const zbt = @import("zbullet");
 const core = @import("../root.zig");
+const log = std.log.scoped(.ecs);
 const warn = std.log.warn;
 const Type = std.builtin.Type;
 const Shape = zbt.Shape;
@@ -76,6 +77,10 @@ pub fn IdentifierManager(
             const id_node: *IdentifierNode = @fieldParentPtr("node", self.available_ids.pop() orelse @panic("Identifier not available"));
             try self.index_map.put(id_node.id, self.count);
             try self.identifier_map.put(self.count, id_node);
+
+            // log.debug(
+            //     \\ registered entity: {d}
+            // , .{id_node.id});
             self.data[self.count] = data;
             self.count += 1;
             return .{ id_node.id, self.count - 1 };
@@ -274,7 +279,12 @@ pub fn EntityStore(
         pub fn entityHandle(self: *ThisStore, entity_id: u32) error{NoData}!EntityHandle {
             var sig =
                 self.entities.manager.getData(entity_id) orelse return error.NoData;
-            return EntityHandle{ .ecs = self, .identifier = entity_id, .signature = &sig };
+
+            const i = self.entities.manager.index_map.get(entity_id) orelse unreachable;
+
+            const id_node = self.entities.manager.identifier_map.get(i) orelse unreachable;
+
+            return EntityHandle{ .ecs = self, .identifier = &id_node.id, .signature = &sig };
         }
 
         pub inline fn componentType(variant: Meta.ComponentTag) type {
@@ -500,7 +510,7 @@ pub fn EntityStore(
         /// Helper struct for easily managing any components associated with an entity
         pub const EntityHandle = struct {
             ecs: *ThisStore,
-            identifier: u32,
+            identifier: *const u32,
             signature: *Signature,
             name: ?[]const u8 = null,
 
@@ -508,7 +518,7 @@ pub fn EntityStore(
             /// This is a little weird, I feel like the handle should be invalidated if index doesn't exist somehow
             /// In other words, a state where this returns `null` should ideally be impossible
             pub fn index(self: @This()) ?usize {
-                return self.ecs.entities.manager.index_map.get(self.identifier);
+                return self.ecs.entities.manager.index_map.get(self.identifier.*);
             }
 
             /// Maybe not the best name?
@@ -518,7 +528,7 @@ pub fn EntityStore(
                 const idx = self.index() orelse @panic("EntityHandle has no index?");
                 // Before removing the entity, we clear it's component data
                 {
-                    const sig = self.ecs.entities.manager.getData(self.identifier) orelse @panic("No entity signature?");
+                    const sig = self.ecs.entities.manager.getData(self.identifier.*) orelse @panic("No entity signature?");
                     // unfortunately we need to do this because of the comptime requirements of removeNoReturn
                     inline for (Meta.ALL_COMPONENT_TAGS) |tag|
                         if (sig.contains(tag))
@@ -527,7 +537,7 @@ pub fn EntityStore(
 
                 const last_registered_opt = self.ecs.entities.manager.lastRegistered();
 
-                try self.ecs.entities.manager.remove(self.identifier);
+                try self.ecs.entities.manager.remove(self.identifier.*);
 
                 // Removing the entity will move the last inserted entity
                 // We need to update the component data for this moved entity
@@ -602,7 +612,9 @@ pub fn EntityStore(
 
             /// Creates an empty with an empty `Signature`
             pub fn register(self: *@This(), name: ?[]const u8) Allocator.Error!EntityHandle {
-                const id, const i = try self.manager.register(Signature.initEmpty());
+                _, const i = try self.manager.register(Signature.initEmpty());
+
+                const id_node = self.manager.identifier_map.get(i).?;
                 // _ = i;
                 var parent_ptr =
                     @as(*ThisStore, @fieldParentPtr("entities", self));
@@ -610,7 +622,7 @@ pub fn EntityStore(
 
                 return EntityHandle{
                     .ecs = parent_ptr,
-                    .identifier = id,
+                    .identifier = &id_node.id,
                     .signature = &self.manager.data[i].?,
                     .name = name,
                 };
