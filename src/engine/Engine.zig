@@ -25,9 +25,7 @@ const SystemManager = core.engine.systems.manager.SystemManager(&[_]type{
     core.engine.systems.Camera,
     core.engine.systems.DrawBackground,
     core.engine.systems.Debug,
-    core.engine.systems.Mesh3DRendering,
-    core.engine.systems.Mesh2DRendering,
-    core.engine.systems.PhysicsDebug,
+    // core.engine.systems.PhysicsDebug,
 });
 
 allocs: core.engine.Allocators,
@@ -50,9 +48,10 @@ resources: core.resources.Manager = undefined,
 
 world: core.engine.world.GameWorld,
 
-system_manager: SystemManager = undefined,
+system_manager: SystemManager = .{},
 physics: core.engine.Physics = undefined,
 
+renderer: core.engine.Renderer = undefined,
 main_render_pass: vk.RenderPass = undefined,
 
 swapchain: vki.Swapchain = undefined,
@@ -83,6 +82,18 @@ pub fn init(
     return self;
 }
 
+pub fn initRenderer(self: *@This(), opts: struct {
+    meshes2D: bool = true,
+    meshes3D: bool = true,
+    physics_debug: bool = true,
+}) void {
+    self.renderer = core.engine.Renderer.init(.{
+        .meshes2D = if (opts.meshes2D) self.swapchain.extent else null,
+        .meshes3D = opts.meshes3D,
+        .physics_debug = if (opts.physics_debug) self.allocs.std else null,
+    }) catch @panic("OOM");
+}
+
 pub fn deinit(self: *Self) void {
     checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
 
@@ -97,8 +108,8 @@ pub fn deinit(self: *Self) void {
     self.resources.deinit(self.allocs.std, self.logical_device.handle, self.alloc_cbs);
     self.allocated_resources.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
-    self.physics.deinit();
-
+    self.physics.deinit(self.allocs.std);
+    self.renderer.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
     self.system_manager.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -127,9 +138,14 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn run(self: *Self) void {
-    // var quit = false;
     var event: c.sdl.Event = undefined;
     var last_time = std.Io.Timestamp.now(self.io, .real).toNanoseconds();
+    _ = sdl.SetWindowRelativeMouseMode(self.window, false);
+
+    // BAD
+    // this needs to be in loop somehow
+    self.renderer.getInstances(self.allocs.std, &self.world) catch
+        @panic("OOM");
 
     while (!self.input.quit) {
         self.input = .{};
@@ -138,7 +154,6 @@ pub fn run(self: *Self) void {
             self.input.update(event);
         }
 
-        // should be abstracted to a function later
         if (self.input.isDown(.Escape)) {
             const is_relative_mouse = sdl.GetWindowRelativeMouseMode(self.window) == true;
             _ = sdl.SetWindowRelativeMouseMode(self.window, !is_relative_mouse);
@@ -150,10 +165,15 @@ pub fn run(self: *Self) void {
 
         self.system_manager.update(dt, self.input, &self.world);
 
-        var dbg = self.system_manager.plexe.PhysicsDebug.makeDebugDraw();
-        self.physics.update(&self.world, &dbg);
+        if (self.renderer.physics_debug) |*db| {
+            self.physics.update(&self.world, @constCast(&db.b3d_context.makeDebugDraw()));
+        } else self.physics.update(&self.world, null);
 
-        self.system_manager.trySyncResources(self.allocated_resources);
+        self.renderer.syncResources(&self.allocated_resources);
+
+        self.system_manager.syncResources(self.allocated_resources);
+        self.system_manager.syncWorld(self.allocs.std, &self.world) catch
+            @panic("OOM");
 
         self.drawImgui();
         self.drawFrame();
@@ -272,21 +292,17 @@ fn initVulkan(self: *Self) void {
 /// honestly this whole function should be in Manager
 /// Allocates resources, creates descriptor layouts/pool
 pub fn allocateResources(self: *Self) void {
-    self.resources.createImmutableData(self.logical_device.handle);
+    self.initImgui();
 
-    self.resources.materials.createDescriptorSetLayout(
-        core.resources.Materials.DEFAULT_BINDINGS,
+    self.renderer.registerSetsAndBuffers(
+        self.allocs.std,
         self.logical_device.handle,
+        &self.resources,
         self.alloc_cbs,
-    );
+    ) catch @panic("OOM");
+    self.resources.createSamplersAndDescriptorSetLayouts(self.logical_device.handle, self.alloc_cbs);
 
-    self.resources.meshes3D.createDescriptorSetLayout(
-        core.resources.Meshes3D.DEFAULT_BINDINGS,
-        self.logical_device.handle,
-        self.alloc_cbs,
-    );
-
-    SystemManager.registerSets(
+    self.system_manager.registerSets(
         self.allocs.std,
         self.logical_device.handle,
         &self.resources,
@@ -315,20 +331,14 @@ pub fn allocateResources(self: *Self) void {
         core.resources.Materials.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
+    self.renderer.updateSets(self.logical_device.handle, &self.allocated_resources);
     // BAD??
-    self.system_manager.plexe.Debug.bind(self.allocs.std, self.resources, self.allocated_resources) catch
+    self.system_manager.plexe.Debug.?.bind(self.allocs.std, self.resources, self.allocated_resources) catch
         @panic("OOM");
-    SystemManager.updateSets(self.logical_device.handle, &self.allocated_resources);
-}
+    self.system_manager.updateSets(self.logical_device.handle, &self.allocated_resources);
 
-pub fn initSystems(
-    self: *Self,
-    systems: SystemManager.SystemPlexe,
-) void {
-    self.initImgui();
-    self.system_manager = SystemManager.init(
-        systems,
-    );
+    self.system_manager.initEntities(&self.world, &self.resources) catch
+        @panic("OOM");
 }
 
 pub fn initPipelines(
@@ -340,8 +350,8 @@ pub fn initPipelines(
         .window_extent = self.swapchain.extent,
     };
 
+    self.renderer.initPipelines(graphics_common, &self.resources, self.alloc_cbs);
     self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
-    self.system_manager.initGraphicsPipelines(graphics_common, self.resources, self.alloc_cbs);
 }
 
 fn initMainRenderPass(self: *Self) void {
@@ -417,8 +427,9 @@ fn drawImgui(self: *Self) void {
     c.imgui.impl_vulkan.NewFrame();
     c.imgui.impl_sdl3.NewFrame();
     c.imgui.NewFrame();
-
-    self.system_manager.drawImgui(.fromEngine(self));
+    const ctx = core.engine.systems.manager.DrawImguiContext.fromEngine(self);
+    self.renderer.drawImgui(ctx);
+    self.system_manager.drawImgui(ctx);
     // self.mesh3D_pipeline_render_system.drawImgui(self.resources.meshes3D, self.resources.materials);
 
     c.imgui.Render();
@@ -561,12 +572,7 @@ fn recordCommandBuffer(
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
-    self.system_manager.recordGraphicsCommands(
-        self.resources,
-        self.allocated_resources,
-        frame.main_command_buffer,
-    );
-
+    self.renderer.recordCommands(&self.resources, &self.allocated_resources, frame.main_command_buffer);
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }
 

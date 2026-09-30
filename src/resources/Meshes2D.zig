@@ -13,6 +13,38 @@ pub const MeshRanges = struct {
     index: core.lib.mesh.RangeDesc,
 };
 
+pub const Aabb2D = struct {
+    min: [2]f32,
+    max: [2]f32,
+
+    pub fn empty() Aabb2D {
+        return .{
+            .min = .{ std.math.inf(f32), std.math.inf(f32) },
+            .max = .{ -std.math.inf(f32), -std.math.inf(f32) },
+        };
+    }
+
+    pub fn expand(self: *Aabb2D, p: [2]f32) void {
+        self.min[0] = @min(self.min[0], p[0]);
+        self.min[1] = @min(self.min[1], p[1]);
+        self.max[0] = @max(self.max[0], p[0]);
+        self.max[1] = @max(self.max[1], p[1]);
+    }
+
+    pub fn merge(a: Aabb2D, b: Aabb2D) Aabb2D {
+        return .{
+            .min = .{ @min(a.min[0], b.min[0]), @min(a.min[1], b.min[1]) },
+            .max = .{ @max(a.max[0], b.max[0]), @max(a.max[1], b.max[1]) },
+        };
+    }
+
+    pub fn fromVertices(verts: []const core.lib.mesh.Vertex2D) Aabb2D {
+        var box = Aabb2D.empty();
+        for (verts) |v| box.expand([2]f32{ v.position.x, v.position.y });
+        return box;
+    }
+};
+
 pub const AllocatedData = struct {
     vertex_buffer: vma_usage.AllocatedBuffer,
     index_buffer: vma_usage.AllocatedBuffer,
@@ -26,6 +58,7 @@ pub const AllocatedData = struct {
 vertices: std.ArrayList(core.lib.mesh.Vertex2D),
 indices: std.ArrayList(u32),
 ranges: std.ArrayList(MeshRanges),
+bounds: std.ArrayList(Aabb2D),
 
 mesh_indices: std.StringArrayHashMapUnmanaged(usize) = .empty,
 mesh_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8) = .empty,
@@ -35,6 +68,7 @@ pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
         .vertices = try std.ArrayList(core.lib.mesh.Vertex2D).initCapacity(a, 64),
         .indices = try std.ArrayList(u32).initCapacity(a, 64),
         .ranges = try std.ArrayList(MeshRanges).initCapacity(a, 16),
+        .bounds = try std.ArrayList(Aabb2D).initCapacity(a, 16),
     };
 }
 
@@ -42,6 +76,7 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
     self.vertices.deinit(a);
     self.indices.deinit(a);
     self.ranges.deinit(a);
+    self.bounds.deinit(a);
     self.mesh_indices.deinit(a);
     self.mesh_names_reverse_lookup.deinit(a);
 }
@@ -97,6 +132,7 @@ pub fn appendMesh(
     try self.indices.appendSlice(a, mesh.indices);
 
     try self.ranges.append(a, mesh_range);
+    try self.bounds.append(a, Aabb2D.fromVertices(mesh.vertices));
 }
 
 pub fn upload(

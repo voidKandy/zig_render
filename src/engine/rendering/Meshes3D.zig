@@ -29,46 +29,17 @@ const InstanceEntry = struct {
     model_transform: *const core.lib.math.Mat4,
 };
 
+pub const INSTANCES_BUFFER_NAME = "instances3D";
+pub const INSTANCE_SET_NAME = "instance3D_set";
 const INSTANCE_SIGNATURE = core.engine.world.GameWorld.Signature.initMany(&.{
     .world_transform,
     .mesh3D,
 });
+pub const MAX_INSTANCES = 64;
 
-ranges: std.AutoHashMap(u32, core.lib.mesh.RangeDesc),
-instances: []InstanceEntry,
+ranges: std.AutoHashMapUnmanaged(u32, core.lib.mesh.RangeDesc) = .empty,
+instances: std.ArrayList(InstanceEntry) = .empty,
 pipeline: GraphicsPipeline = undefined,
-
-pub fn init(
-    a: std.mem.Allocator,
-    world: *core.engine.world.GameWorld,
-    resources: *core.resources.Manager,
-) std.mem.Allocator.Error!@This() {
-    const self = try getInstances(a, world);
-    std.debug.assert(self.instances.len > 0);
-
-    try resources.mapped_buffers.creates.put(
-        a,
-        INSTANCES_BUFFER_NAME,
-        .{
-            .alloc_size = @sizeOf(Instance) * self.instances.len,
-            .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
-            .flags = 0,
-        },
-    );
-    return self;
-}
-
-pub fn deinit(
-    self: *@This(),
-    allocs: core.engine.Allocators,
-    device: vk.Device,
-    alloc_cbs: ?*vk.AllocationCallbacks,
-) void {
-    self.ranges.deinit();
-    allocs.std.free(self.instances);
-    self.pipeline.deinit(device, alloc_cbs);
-}
 
 pub fn updateSets(
     device: vk.Device,
@@ -80,27 +51,22 @@ pub fn updateSets(
     );
 }
 
-pub const INSTANCES_BUFFER_NAME = "instances3D";
-pub const INSTANCE_SET_NAME = "instance3D_set";
-
-pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
-    const aligned: [*]Instance = @ptrCast(
-        @alignCast(alloc_resources.mapped_buffers.buffers.get(INSTANCES_BUFFER_NAME).?.mapped),
-    );
-    for (self.instances, 0..) |entry, i|
-        aligned[i] = Instance{
-            .mesh_idx = entry.mesh_idx.*,
-            .material_idx = entry.material_idx.*,
-            .model_transform = entry.model_transform.*,
-        };
-}
-
-pub fn registerSets(
+pub fn registerSetsAndBuffers(
     a: std.mem.Allocator,
     device: vk.Device,
     resources: *core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!void {
+    try resources.mapped_buffers.creates.put(
+        a,
+        INSTANCES_BUFFER_NAME,
+        .{
+            .alloc_size = @sizeOf(Instance) * MAX_INSTANCES,
+            .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .flags = 0,
+        },
+    );
     try resources.mapped_buffers.createAndRegisterBufferSetLayout(
         a,
         INSTANCE_SET_NAME,
@@ -117,10 +83,33 @@ pub fn registerSets(
     );
 }
 
-pub fn initGraphicsPipelines(
+pub fn deinit(
+    self: *@This(),
+    allocs: core.engine.Allocators,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    self.ranges.deinit(allocs.std);
+    self.instances.deinit(allocs.std);
+    self.pipeline.deinit(device, alloc_cbs);
+}
+
+pub fn syncResources(self: *const @This(), alloc_resources: *const core.resources.Manager.AllocatedData) void {
+    const aligned: [*]Instance = @ptrCast(
+        @alignCast(alloc_resources.mapped_buffers.buffers.get(INSTANCES_BUFFER_NAME).?.mapped),
+    );
+    for (self.instances.items, 0..) |entry, i|
+        aligned[i] = Instance{
+            .mesh_idx = entry.mesh_idx.*,
+            .material_idx = entry.material_idx.*,
+            .model_transform = entry.model_transform.*,
+        };
+}
+
+pub fn initPipeline(
     self: *@This(),
     common: core.engine.pipelines.Common,
-    resources: core.resources.Manager,
+    resources: *const core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     const vert_shader = core.engine.shaders.createShaderModule(
@@ -163,21 +152,10 @@ pub fn initGraphicsPipelines(
         }, alloc_cbs);
 }
 
-// fn updateInstances(self: *@This(), world: core.engine.world.GameWorld) void {
-//     for (self.instances) |entry| {
-//         const ent = world.entityHandle(entry.entity_id) catch {
-//             std.debug.panic(
-//                 \\ entity {d} no longer exists
-//             , .{entry.entity_id});
-//         };
-//         std.debug.assert(ent.signature.supersetOf(INSTANCE_SIGNATURE));
-//     }
-// }
-
-pub fn recordGraphicsCommands(
+pub fn recordCommands(
     self: @This(),
-    resources: core.resources.Manager,
-    allocated_resources: core.resources.Manager.AllocatedData,
+    resources: *const core.resources.Manager,
+    allocated_resources: *const core.resources.Manager.AllocatedData,
     cmd: vk.CommandBuffer,
 ) void {
     const sets =
@@ -201,7 +179,18 @@ pub fn recordGraphicsCommands(
         null,
     );
     var i: u32 = 0;
+
     for (resources.meshes3D.ranges.items) |m3d_rg| {
+
+        // const instances_range = self.ranges.get(i) orelse continue;
+
+        // vk.CmdDraw(
+        //     cmd,
+        //     @as(u32, @intCast(m3d_rg.index.range)),
+        //     instances_range.range, // num instances
+        //     @as(u32, @intCast(m3d_rg.index.offset)),
+        //     instances_range.offset, // first instance
+        // );
         defer i += 1;
         vk.CmdPushConstants(
             cmd,
@@ -227,7 +216,7 @@ pub fn recordGraphicsCommands(
     }
 }
 
-fn getInstances(a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.mem.Allocator.Error!@This() {
+pub fn getInstances(self: *@This(), a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.mem.Allocator.Error!void {
     var buckets = std.AutoHashMap(usize, std.ArrayList(InstanceEntry)).init(a);
     defer {
         var it = buckets.valueIterator();
@@ -276,8 +265,8 @@ fn getInstances(a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.m
         });
     }
 
-    var instances = try std.ArrayList(InstanceEntry).initCapacity(a, 128);
-    var ranges = std.AutoHashMap(u32, core.lib.mesh.RangeDesc).init(a);
+    var instances = try std.ArrayListUnmanaged(InstanceEntry).initCapacity(a, 128);
+    var ranges = std.AutoHashMapUnmanaged(u32, core.lib.mesh.RangeDesc).empty;
 
     var bucket_iter = buckets.iterator();
 
@@ -292,16 +281,14 @@ fn getInstances(a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.m
 
         try instances.appendSlice(a, bucket.items);
 
-        try ranges.put(@intCast(mesh_idx), .{
+        try ranges.put(a, @intCast(mesh_idx), .{
             .offset = @intCast(offset),
             .range = @intCast(bucket.items.len),
         });
     }
 
-    return .{
-        .ranges = ranges,
-        .instances = try instances.toOwnedSlice(a),
-    };
+    self.ranges = ranges;
+    self.instances = instances;
 }
 
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
@@ -322,7 +309,7 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
         const start = entry.value_ptr.*.offset;
         const end = start + entry.value_ptr.range;
 
-        for (self.instances[start..end]) |inst| {
+        for (self.instances.items[start..end]) |inst| {
             var buf: [64]u8 = undefined;
             const zbuf = std.fmt.bufPrintZ(&buf, "instance: {d}", .{inst.entity_id}) catch @panic("Buffer couldnt print??");
             if (imgui.TreeNode(zbuf.ptr)) {

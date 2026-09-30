@@ -96,8 +96,20 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
 }
 
 /// erveryhting about this function is dogshit
-pub fn createImmutableData(self: *@This(), device: vk.Device) void {
+pub fn createSamplersAndDescriptorSetLayouts(self: *@This(), device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.materials.createSampler(device);
+
+    self.materials.createDescriptorSetLayout(
+        Materials.DEFAULT_BINDINGS,
+        device,
+        alloc_cbs,
+    );
+
+    self.meshes3D.createDescriptorSetLayout(
+        Meshes3D.DEFAULT_BINDINGS,
+        device,
+        alloc_cbs,
+    );
 }
 
 pub const AllocatedData = struct {

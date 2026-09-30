@@ -6,7 +6,7 @@ pub const MaterialMesh3D = struct {
     material_index: u32,
 
     pub fn fromNames(
-        resources: core.resources.Manager,
+        resources: *const core.resources.Manager,
         names: struct {
             mesh: []const u8,
             material: []const u8,
@@ -24,7 +24,7 @@ pub const MaterialMesh2D = struct {
     material_index: u32,
 
     pub fn fromNames(
-        resources: core.resources.Manager,
+        resources: *const core.resources.Manager,
         names: struct {
             mesh: []const u8,
             material: []const u8,

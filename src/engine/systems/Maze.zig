@@ -13,9 +13,8 @@ needs_gpu_sync: bool = true,
 /// not currently working because meshes3D is not dynamic
 update_mesh: bool = false,
 
-mesh3D_id: u32,
-mesh2D_id: u32,
-
+mesh3D_id: ?u32 = null,
+mesh2D_id: ?u32 = null,
 pipeline: ComputePipeline = undefined,
 
 pub const COMPUTE_MAZE_SET_NAME = "compute_maze_set";
@@ -69,7 +68,6 @@ pub const CreateInfo = struct {
 
 pub fn init(
     a: std.mem.Allocator,
-    world: *core.engine.world.GameWorld,
     resources: *core.resources.Manager,
     ci: CreateInfo,
 ) std.mem.Allocator.Error!@This() {
@@ -130,26 +128,19 @@ pub fn init(
         },
     );
 
-    const mt_idx = resources.materials.material_indices.get(MAZE_RESOURCE_NAME).?;
-
     const maze_mesh3D = ci.mesh_options.createMesh(a, maze) catch @panic("failed to create 3D maze mesh");
     defer maze_mesh3D.deinit(a);
     try resources.meshes3D.appendMesh(a, MAZE_RESOURCE_NAME, maze_mesh3D);
 
-    var mesh3d_entity = try world.entities.register(null);
-    mesh3d_entity.addComponent(.mesh3D, core.engine.world.MaterialMesh3D{
-        .mesh_index = @intCast(resources.meshes3D.ranges.items.len - 1),
-        .material_index = @intCast(mt_idx),
-    });
+    // var mesh3d_entity = try world.entities.register(null);
+    // mesh3d_entity.addComponent(.mesh3D, core.engine.world.MaterialMesh3D{
+    // .mesh_index = @intCast(resources.meshes3D.ranges.items.len - 1),
+    // .material_index = @intCast(mt_idx),
+    // });
 
-    const margin: f32 = 0.05;
     const quad_size = 0.2;
     const maze_quad = core.lib.mesh.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create maze quad");
     defer maze_quad.deinit(a);
-    const coordinates = core.lib.math.Vec2.make(
-        1.0 - (quad_size / 2.0) - margin,
-        1.0 - margin - quad_size,
-    );
 
     resources.meshes2D.appendMesh(
         a,
@@ -157,24 +148,61 @@ pub fn init(
         maze_quad,
     ) catch @panic("OOM");
 
+    // var mesh2d_entity = try world.entities.register(null);
+    // mesh2d_entity.addComponent(.mesh2D, core.engine.world.MaterialMesh2D.fromNames(resources, .{
+    //     .material = MAZE_RESOURCE_NAME,
+    //     .mesh = MAZE_RESOURCE_NAME,
+    // }));
+
+    // mesh2d_entity.addComponent(
+    //     .screen_transform,
+    //     core.engine.world.ScreenTransform{ .coords = coordinates },
+    // );
+
+    return .{
+        .maze = maze,
+        .maze_gpu_cells = cells,
+        .push_constants = ci.push_constants,
+        // .mesh3D_id = mesh3d_entity.identifier.*,
+        // .mesh2D_id = mesh2d_entity.identifier.*,
+    };
+}
+
+pub fn initEntities(
+    self: *@This(),
+    world: *core.engine.world.GameWorld,
+    resources: *const core.resources.Manager,
+) std.mem.Allocator.Error!void {
+    var mesh3d_entity = try world.entities.register(null);
+    mesh3d_entity.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(resources, .{
+        .mesh = MAZE_RESOURCE_NAME,
+        .material = MAZE_RESOURCE_NAME,
+    }));
+
     var mesh2d_entity = try world.entities.register(null);
-    mesh2d_entity.addComponent(.mesh2D, core.engine.world.MaterialMesh2D.fromNames(resources.*, .{
+    mesh2d_entity.addComponent(.mesh2D, core.engine.world.MaterialMesh2D.fromNames(resources, .{
         .material = MAZE_RESOURCE_NAME,
         .mesh = MAZE_RESOURCE_NAME,
     }));
+
+    const mesh2d_idx = resources.meshes2D.mesh_indices.get(MAZE_RESOURCE_NAME).?;
+    const mesh_bounds = resources.meshes2D.bounds.items[mesh2d_idx];
+    const mesh_width = mesh_bounds.max[0] - mesh_bounds.min[0];
+    const mesh_height = mesh_bounds.max[1] - mesh_bounds.min[1];
+
+    const margin: f32 = 0.05;
+    const coordinates = core.lib.math.Vec2.make(
+        1.0 - (mesh_width / 2.0) - margin,
+        1.0 - margin - mesh_height,
+    );
 
     mesh2d_entity.addComponent(
         .screen_transform,
         core.engine.world.ScreenTransform{ .coords = coordinates },
     );
 
-    return .{
-        .maze = maze,
-        .maze_gpu_cells = cells,
-        .push_constants = ci.push_constants,
-        .mesh3D_id = mesh3d_entity.identifier.*,
-        .mesh2D_id = mesh2d_entity.identifier.*,
-    };
+    self.mesh2D_id = mesh2d_entity.identifier.*;
+    self.mesh3D_id = mesh3d_entity.identifier.*;
 }
 
 pub fn updateSets(
@@ -238,7 +266,7 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
     );
 }
 
-pub fn trySyncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
+pub fn syncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
     if (self.needs_gpu_sync) {
         const aligned_maze: [*]GPUMazeCell = @ptrCast(
             @alignCast(alloc_resources.mapped_buffers.buffers.get(MAZE_RESOURCE_NAME).?.mapped),

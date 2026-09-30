@@ -2,8 +2,10 @@ const std = @import("std");
 const core = @import("../root.zig");
 const log = std.log.scoped(.Physics);
 const box3d = core.clibs.box3d;
+const box3d_usage = core.bindings.box3d_usage;
 
 world: box3d.WorldId,
+meshes: std.StringHashMapUnmanaged(*box3d.MeshData) = .empty,
 
 pub fn init() @This() {
     var world_def = box3d.DefaultWorldDef();
@@ -18,8 +20,53 @@ pub fn init() @This() {
     };
 }
 
-pub fn deinit(self: @This()) void {
+pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
     box3d.DestroyWorld(self.world);
+
+    var iter = self.meshes.valueIterator();
+    while (iter.next()) |mesh|
+        box3d.DestroyMesh(mesh.*);
+
+    self.meshes.deinit(a);
+}
+
+pub fn createMeshes(
+    self: *@This(),
+    a: std.mem.Allocator,
+    _: *core.engine.world.GameWorld,
+    meshes: *const core.resources.Meshes3D,
+) std.mem.Allocator.Error!void {
+    var iter = meshes.mesh_indices.iterator();
+    while (iter.next()) |entry| {
+        const idx = entry.value_ptr.*;
+        const name = entry.key_ptr.*;
+
+        const result = try self.meshes.getOrPut(a, name);
+        if (result.found_existing) continue;
+        const b3d_mesh: *box3d.MeshData = &(try box3d_usage.createMesh(a, meshes, idx))[0];
+        result.value_ptr.* = b3d_mesh;
+    }
+
+    // var query = world.queryEntities(.{ .is = .{
+    //     .rule = .at_least,
+    //     .sig = .initMany(&.{ .rigid_body, .mesh3D, .world_transform }),
+    // } });
+
+    // var meshes_need_colliders = std.AutoHashMapUnmanaged(usize, void).empty;
+    // while (query.next()) |ent| {
+    //     const mesh: *core.engine.world.MaterialMesh3D = (ent.accessComponentPtr(.mesh3D) catch @panic("No transform?"))
+    //         .mesh3D;
+    //     try meshes_need_colliders.put(a, mesh.mesh_index, {});
+    // }
+
+    // var mesh_idx_iter = meshes_need_colliders.keyIterator();
+    // while (mesh_idx_iter.next()) |idx| {
+    //     const name = meshes.mesh_names_reverse_lookup.get(idx.*).?;
+    //     const result = try self.meshes.getOrPut(a, name);
+    //     if (result.found_existing) continue;
+    //     const b3d_mesh: *box3d.MeshData = &(try box3d_usage.createMesh(a, meshes, idx.*))[0];
+    //     result.value_ptr.* = b3d_mesh;
+    // }
 }
 
 pub fn update(self: *@This(), world: *core.engine.world.GameWorld, debug: ?*box3d.DebugDraw) void {

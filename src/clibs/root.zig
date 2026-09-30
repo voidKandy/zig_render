@@ -3,6 +3,7 @@ const c = @import("c");
 pub const box3d = struct {
     pub const WorldId = c.b3WorldId;
     pub const BodyId = c.b3BodyId;
+    pub const ShapeId = c.b3ShapeId;
 
     pub const Pos = c.b3Pos;
     pub const HexColor = c.b3HexColor;
@@ -20,6 +21,7 @@ pub const box3d = struct {
     pub const BodyType = c.b3BodyType;
     pub const MotionLocks = c.b3MotionLocks;
     pub const MeshData = c.b3MeshData;
+    pub const Mesh = c.b3Mesh;
     pub const MeshTriangle = c.b3MeshTriangle;
 
     pub const Vec3 = c.b3Vec3;
@@ -40,7 +42,7 @@ pub const box3d = struct {
 
     pub const MeshDef = c.b3MeshDef;
     pub const CreateMesh = c.b3CreateMesh;
-    pub const CreateMeshShape = c.b3CreateMesh;
+    pub const CreateMeshShape = c.b3CreateMeshShape;
     pub const DestroyMesh = c.b3DestroyMesh;
 
     pub const Body_GetType = c.b3Body_GetType;

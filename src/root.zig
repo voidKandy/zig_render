@@ -27,6 +27,7 @@ pub const engine = struct {
     pub const shaders = @import("engine/shaders.zig");
 
     pub const Physics = @import("engine/Physics.zig");
+    pub const Renderer = @import("engine/rendering/Manager.zig");
 
     pub const systems = struct {
         pub const manager = @import("engine/systems/manager.zig");
@@ -34,18 +35,12 @@ pub const engine = struct {
         pub const Debug = @import("engine/systems/Debug.zig");
         pub const Camera = @import("engine/systems/Camera.zig");
         pub const DrawBackground = @import("engine/systems/DrawBackground.zig");
-        pub const PhysicsDebug = @import("engine/systems/PhysicsDebug.zig");
-        pub const Mesh3DRendering = @import("engine/systems/Mesh3DRendering.zig");
-        pub const Mesh2DRendering = @import("engine/systems/Mesh2DRendering.zig");
         test {
             std.testing.refAllDecls(@This());
         }
     };
 
     pub const pipelines = struct {
-        // pub const Mesh3DPipeline = @import("engine/graphics_pipelines/Mesh3DPipeline.zig");
-        // pub const Mesh2DPipeline = @import("engine/graphics_pipelines/Mesh2DPipeline.zig");
-
         const DescriptionOptions = struct {
             DescriptorSets: type,
             push_constants: ?struct {

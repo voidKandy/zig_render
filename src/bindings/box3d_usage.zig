@@ -2,13 +2,30 @@ const std = @import("std");
 const core = @import("../root.zig");
 const box3d = core.clibs.box3d;
 
-pub fn meshes3DMeshDef(meshes3D: core.resources.Meshes3D, mesh_idx: usize) box3d.MeshDef {
-    var def: box3d.MeshDef = undefined;
+pub fn createMesh(
+    a: std.mem.Allocator,
+    meshes3D: *const core.resources.Meshes3D,
+    mesh_idx: usize,
+) std.mem.Allocator.Error![*]box3d.MeshData {
     const range = meshes3D.ranges.items[mesh_idx];
 
+    var vec3s = try std.ArrayListUnmanaged(box3d.Vec3).initCapacity(a, 1024);
+
+    for (meshes3D.vertices.items[range.vertex.offset..][0..range.vertex.range]) |vtx| {
+        try vec3s.append(a, fromCoreVec3(core.lib.math.Vec3{
+            .x = vtx.position.x,
+            .y = vtx.position.y,
+            .z = vtx.position.z,
+        }));
+    }
+
+    const vertices = try vec3s.toOwnedSlice(a);
+
+    var def = box3d.MeshDef{};
     def.triangleCount = @divTrunc(@as(c_int, @intCast(range.vertex.range)), 3);
     def.vertexCount = @intCast(range.vertex.range);
-    def.vertices = @as([*]box3d.Vec3, @ptrCast(meshes3D.vertices.items[range.vertex.offset .. range.vertex.offset + range.vertex.range]));
+    // def.vertices = @as([*]box3d.Vec3, @ptrCast(meshes3D.vertices.items[range.vertex.offset .. range.vertex.offset + range.vertex.range]));
+    def.vertices = vertices[0..range.vertex.range].ptr;
     def.indices = @as([*]i32, @ptrCast(meshes3D.indices.items[range.index.offset .. range.index.offset + range.index.range]));
 
     def.materialIndices = 0;
@@ -16,7 +33,7 @@ pub fn meshes3DMeshDef(meshes3D: core.resources.Meshes3D, mesh_idx: usize) box3d
     def.weldTolerance = 0;
     def.weldVertices = false;
 
-    return def;
+    return box3d.CreateMesh(&def, null, 0);
 }
 
 pub fn fromCoreVec3(v: core.lib.math.Vec3) box3d.Vec3 {

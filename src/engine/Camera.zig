@@ -30,10 +30,10 @@ pub const GPUData = struct {
     view: Mat4,
     proj: Mat4,
 
-    pub fn fromCamera(camera: Camera, extent: vk.Extent2D) @This() {
+    pub fn fromCamera(camera: Camera) @This() {
         const aspect =
-            @as(f32, @floatFromInt(extent.width)) /
-            @as(f32, @floatFromInt(extent.height));
+            @as(f32, @floatFromInt(camera.screen_extent.width)) /
+            @as(f32, @floatFromInt(camera.screen_extent.height));
         var proj = Mat4.perspective(
             camera.fov,
             aspect,
