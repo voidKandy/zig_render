@@ -147,13 +147,11 @@ pub fn main(init: std.process.Init) void {
     const debug = core.engine.systems.Debug{};
     const camera = core.engine.systems.Camera.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM");
     const draw_background = core.engine.systems.DrawBackground.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM");
-    // const physics_debug = core.engine.systems.PhysicsDebug.init(a, &engine.resources) catch @panic("OOM");
 
     engine.system_manager.addSystem(.Maze, maze);
     engine.system_manager.addSystem(.Debug, debug);
     engine.system_manager.addSystem(.Camera, camera);
     engine.system_manager.addSystem(.DrawBackground, draw_background);
-    // engine.system_manager.addSystem(.PhysicsDebug, physics_debug);
 
     // BAD
     // consumer shouldnt facilitate this
@@ -208,15 +206,15 @@ fn createEntities(
             .id = body_id,
         });
 
-        var shape_def = core.clibs.box3d.DefaultShapeDef();
-        shape_def.density = 1.0;
-
+        const idx = resources.meshes3D.mesh_indices.get("viking_room.obj").?;
+        const bounds = resources.meshes3D.bounds.items[idx];
+        const extents = bounds.extents();
         const box = core.clibs.box3d.MakeBoxHull(
-            0.5,
-            0.5,
-            0.5,
+            extents[0],
+            extents[1],
+            extents[2],
         );
-
+        var shape_def = core.clibs.box3d.DefaultShapeDef();
         _ = core.clibs.box3d.CreateHullShape(
             body_id,
             &shape_def,
@@ -240,10 +238,6 @@ fn createEntities(
     });
     ent.addComponent(.world_transform, tx);
 
-    // const mesh = core.bindings.box3d_usage.meshes3DMesh(
-    //     resources.meshes3D,
-    //     resources.meshes3D.mesh_indices.get("large_flat_box").?,
-    // );
     var body_def = core.clibs.box3d.DefaultBodyDef();
     body_def.type = core.clibs.box3d.BODY_TYPE_STATIC;
     body_def.position = .{
@@ -259,12 +253,15 @@ fn createEntities(
         .id = body_id,
     });
 
-    var shape_def = core.clibs.box3d.DefaultShapeDef();
+    const idx = resources.meshes3D.mesh_indices.get("large_flat_box").?;
+    const bounds = resources.meshes3D.bounds.items[idx];
+    const extents = bounds.extents();
     const box = core.clibs.box3d.MakeBoxHull(
-        5.0,
-        5.0,
-        0.5,
+        extents[0],
+        extents[1],
+        extents[2],
     );
+    var shape_def = core.clibs.box3d.DefaultShapeDef();
     _ = core.clibs.box3d.CreateHullShape(
         body_id,
         &shape_def,

@@ -316,116 +316,19 @@ const GraphicsPipeline = struct {
 const box3d = core.clibs.box3d;
 const box3d_usage = core.bindings.box3d_usage;
 const B3DContext = struct {
-    const DrawShapeFcn = *const fn (?*anyopaque, box3d.WorldTransform, box3d.HexColor, ?*anyopaque) callconv(.c) bool;
-    const DrawSegmentFcn = *const fn (box3d.Pos, box3d.Pos, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    const DrawTransformFcn = *const fn (box3d.WorldTransform, ?*anyopaque) callconv(.c) void;
-    const DrawPointFcn = *const fn (box3d.Pos, f32, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    const DrawSphereFcn = *const fn (box3d.Pos, f32, box3d.HexColor, f32, ?*anyopaque) callconv(.c) void;
-    const DrawCapsuleFcn = *const fn (box3d.Pos, box3d.Pos, f32, box3d.HexColor, f32, ?*anyopaque) callconv(.c) void;
-    const DrawBoundsFcn = *const fn (box3d.AABB, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    const DrawBoxFcn = *const fn (box3d.Vec3, box3d.WorldTransform, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    const DrawStringFcn = *const fn (box3d.Pos, [*:0]const u8, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-
-    vertices: std.ArrayListUnmanaged(DebugVertex),
-
-    pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
-        return .{
-            .vertices = try .initCapacity(a, MAX_DEBUG_LINES),
-        };
-    }
-
-    pub fn reset(self: *@This()) void {
-        self.vertices.clearRetainingCapacity();
-    }
-
-    pub fn addLine(
-        self: *@This(),
-        p1: box3d.Vec3,
-        p2: box3d.Vec3,
-        color: box3d.HexColor,
-    ) void {
-        self.vertices.appendAssumeCapacity(.{
-            .position = box3d_usage.toCoreVec3(p1),
-            .color = box3d_usage.unpackHexColor(color),
-        });
-
-        self.vertices.appendAssumeCapacity(.{
-            .position = box3d_usage.toCoreVec3(p2),
-            .color = box3d_usage.unpackHexColor(color),
-        });
-    }
-
-    pub fn makeDebugDraw(self: *@This()) box3d.DebugDraw {
-        // log.warn(
-        //     \\ making debug draw
-        //     \\ {d} verts
-        // , .{self.vertices.items.len});
-        // should be called in an update function or something
-        self.reset();
-        var draw = box3d.DefaultDebugDraw();
-
-        draw.DrawShapeFcn = struct {
-            fn call(userShape: ?*anyopaque, transform: box3d.WorldTransform, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
-                _ = userShape;
+    const FUNCTIONS: box3d_usage.DebugDrawFunctions = .{
+        .draw_shape = struct {
+            fn call(shape: ?*anyopaque, transform: box3d.WorldTransform, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
+                const debug: *B3DContext = @ptrCast(@alignCast(context.?));
+                _ = shape;
                 _ = transform;
                 _ = color;
-                _ = context;
-                log.warn("DrawShapeFcn called", .{});
+                _ = debug;
+                log.warn("draw shape!!!!!", .{});
             }
-        }.call;
+        }.call,
 
-        draw.DrawSegmentFcn = struct {
-            fn call(p1: box3d.Pos, p2: box3d.Pos, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
-                _ = p1;
-                _ = p2;
-                _ = color;
-                _ = context;
-                log.warn("DrawSegmentFcn called", .{});
-            }
-        }.call;
-
-        draw.DrawTransformFcn = struct {
-            fn call(transform: box3d.WorldTransform, context: ?*anyopaque) callconv(.c) void {
-                _ = transform;
-                _ = context;
-                log.warn("DrawTransformFcn called", .{});
-            }
-        }.call;
-
-        draw.DrawPointFcn = struct {
-            fn call(p: box3d.Pos, size: f32, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
-                _ = p;
-                _ = size;
-                _ = color;
-                _ = context;
-                log.warn("DrawPointFcn called", .{});
-            }
-        }.call;
-
-        draw.DrawSphereFcn = struct {
-            fn call(p: box3d.Pos, radius: f32, color: box3d.HexColor, alpha: f32, context: ?*anyopaque) callconv(.c) void {
-                _ = p;
-                _ = radius;
-                _ = color;
-                _ = alpha;
-                _ = context;
-                log.warn("DrawSphereFcn called", .{});
-            }
-        }.call;
-
-        draw.DrawCapsuleFcn = struct {
-            fn call(p1: box3d.Pos, p2: box3d.Pos, radius: f32, color: box3d.HexColor, alpha: f32, context: ?*anyopaque) callconv(.c) void {
-                _ = p1;
-                _ = p2;
-                _ = radius;
-                _ = color;
-                _ = alpha;
-                _ = context;
-                log.warn("DrawCapsuleFcn called", .{});
-            }
-        }.call;
-
-        draw.DrawBoundsFcn = struct {
+        .draw_bounds = struct {
             fn call(aabb: box3d.AABB, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
                 const debug: *B3DContext = @ptrCast(@alignCast(context.?));
 
@@ -472,27 +375,51 @@ const B3DContext = struct {
                     );
                 }
             }
-        }.call;
+        }.call,
+    };
 
-        draw.DrawBoxFcn = struct {
-            fn call(extents: box3d.Vec3, transform: box3d.WorldTransform, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
-                _ = extents;
-                _ = transform;
-                _ = color;
-                _ = context;
-                log.warn("DrawBoxFcn called", .{});
-            }
-        }.call;
+    vertices: std.ArrayListUnmanaged(DebugVertex),
 
-        draw.DrawStringFcn = struct {
-            fn call(p: box3d.Pos, s: [*c]const u8, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
-                _ = p;
-                _ = s;
-                _ = color;
-                _ = context;
-                log.warn("DrawStringFcn called", .{});
-            }
-        }.call;
+    pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
+        return .{
+            .vertices = try .initCapacity(a, MAX_DEBUG_LINES),
+        };
+    }
+
+    pub fn reset(self: *@This()) void {
+        self.vertices.clearRetainingCapacity();
+    }
+
+    pub fn addLine(
+        self: *@This(),
+        p1: box3d.Vec3,
+        p2: box3d.Vec3,
+        color: box3d.HexColor,
+    ) void {
+        self.vertices.appendAssumeCapacity(.{
+            .position = box3d_usage.toCoreVec3(p1),
+            .color = box3d_usage.unpackHexColor(color),
+        });
+
+        self.vertices.appendAssumeCapacity(.{
+            .position = box3d_usage.toCoreVec3(p2),
+            .color = box3d_usage.unpackHexColor(color),
+        });
+    }
+
+    pub fn makeDebugDraw(self: *@This()) box3d.DebugDraw {
+        self.reset();
+        var draw = box3d.DefaultDebugDraw();
+
+        draw.DrawShapeFcn = FUNCTIONS.draw_shape;
+        draw.DrawSegmentFcn = FUNCTIONS.draw_segment;
+        draw.DrawTransformFcn = FUNCTIONS.draw_transform;
+        draw.DrawPointFcn = FUNCTIONS.draw_point;
+        draw.DrawSphereFcn = FUNCTIONS.draw_sphere;
+        draw.DrawCapsuleFcn = FUNCTIONS.draw_capsule;
+        draw.DrawBoundsFcn = FUNCTIONS.draw_bounds;
+        draw.DrawBoxFcn = FUNCTIONS.draw_box;
+        draw.DrawStringFcn = FUNCTIONS.draw_string;
 
         draw.drawShapes = true;
         draw.drawBounds = true;

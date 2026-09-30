@@ -19,9 +19,6 @@ const Instance = extern struct {
     model_transform: core.lib.math.Mat4,
 };
 
-/// TODO
-/// HOLDS pointers to data owned by ECS
-/// REMOVAL OF ENTITIES WILL BREAK THIS SO THAT NEEDS TO BE FIGURED OUT
 const InstanceEntry = struct {
     entity_id: u32,
     mesh_idx: *const u32,

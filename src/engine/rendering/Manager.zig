@@ -99,9 +99,9 @@ pub fn recordCommands(
     allocated_resources: *const core.resources.Manager.AllocatedData,
     cmd: vk.CommandBuffer,
 ) void {
-    if (self.meshes2D) |m| m.recordCommands(resources, allocated_resources, cmd);
     if (self.meshes3D) |m| m.recordCommands(resources, allocated_resources, cmd);
     if (self.physics_debug) |p| p.recordCommands(allocated_resources, cmd);
+    if (self.meshes2D) |m| m.recordCommands(resources, allocated_resources, cmd);
 }
 
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {

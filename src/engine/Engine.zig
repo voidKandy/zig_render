@@ -25,7 +25,6 @@ const SystemManager = core.engine.systems.manager.SystemManager(&[_]type{
     core.engine.systems.Camera,
     core.engine.systems.DrawBackground,
     core.engine.systems.Debug,
-    // core.engine.systems.PhysicsDebug,
 });
 
 allocs: core.engine.Allocators,
