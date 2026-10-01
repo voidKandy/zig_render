@@ -21,9 +21,9 @@ const Instance = extern struct {
 
 const InstanceEntry = struct {
     entity_id: u32,
-    mesh_idx: *const u32,
-    material_idx: *const u32,
-    model_transform: *const core.lib.math.Mat4,
+    mesh_idx: *u32,
+    material_idx: *u32,
+    model_transform: *core.lib.math.Mat4,
 };
 
 pub const INSTANCES_BUFFER_NAME = "instances3D";
@@ -314,39 +314,54 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
                 const mtl_name = ctx.resources.materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");
                 imgui.Text("Material: %s, index: %d", mtl_name.ptr, inst.material_idx.*);
 
-                const m = inst.model_transform.*;
+                const m = &inst.model_transform;
+                const fields = &.{ "i", "j", "k", "t" };
+                inline for (fields) |fieldname| {
+                    const field =
+                        @field(m.*, fieldname);
+                    var arr: [4]f32 = .{
+                        field.x,
+                        field.y,
+                        field.z,
+                        field.w,
+                    };
+                    if (imgui.SliderFloat4(fieldname, &arr, 0.0, 1.0)) {
+                        @field(m.*, fieldname) = core.lib.math.Vec4.fromSizedArray(arr);
+                    }
+                }
 
-                imgui.Text(
-                    "i: %.3f, %.3f, %.3f, %.3f",
-                    m.i.x,
-                    m.i.y,
-                    m.i.z,
-                    m.i.w,
-                );
+                // if (imgui.SliderFloat4(""))
+                // imgui.Text(
+                //     "i: %.3f, %.3f, %.3f, %.3f",
+                //     m.i.x,
+                //     m.i.y,
+                //     m.i.z,
+                //     m.i.w,
+                // );
 
-                imgui.Text(
-                    "j: %.3f, %.3f, %.3f, %.3f",
-                    m.j.x,
-                    m.j.y,
-                    m.j.z,
-                    m.j.w,
-                );
+                // imgui.Text(
+                //     "j: %.3f, %.3f, %.3f, %.3f",
+                //     m.j.x,
+                //     m.j.y,
+                //     m.j.z,
+                //     m.j.w,
+                // );
 
-                imgui.Text(
-                    "k: %.3f, %.3f, %.3f, %.3f",
-                    m.k.x,
-                    m.k.y,
-                    m.k.z,
-                    m.k.w,
-                );
+                // imgui.Text(
+                //     "k: %.3f, %.3f, %.3f, %.3f",
+                //     m.k.x,
+                //     m.k.y,
+                //     m.k.z,
+                //     m.k.w,
+                // );
 
-                imgui.Text(
-                    "t: %.3f, %.3f, %.3f, %.3f",
-                    m.t.x,
-                    m.t.y,
-                    m.t.z,
-                    m.t.w,
-                );
+                // imgui.Text(
+                //     "t: %.3f, %.3f, %.3f, %.3f",
+                //     m.t.x,
+                //     m.t.y,
+                //     m.t.z,
+                //     m.t.w,
+                // );
             }
         }
     }

@@ -24,6 +24,13 @@ pub const DebugDrawFunctions = struct {
     draw_string: ?DrawStringFcn = null,
 };
 
+pub const DebugShapeFunctions = struct {
+    pub const CreateDebugShape = *const fn (?*const box3d.DebugShape, ?*anyopaque) callconv(.c) ?*anyopaque;
+    pub const DestroyDebugShape = *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void;
+    create_debug_shape: CreateDebugShape,
+    destroy_debug_shape: DestroyDebugShape,
+};
+
 pub fn createMesh(
     a: std.mem.Allocator,
     meshes3D: *const core.resources.Meshes3D,
@@ -44,9 +51,9 @@ pub fn createMesh(
     const vertices = try vec3s.toOwnedSlice(a);
 
     var def = box3d.MeshDef{};
-    def.triangleCount = @divTrunc(@as(c_int, @intCast(range.vertex.range)), 3);
+    def.triangleCount = @divTrunc(@as(c_int, @intCast(range.index.range)), 3);
     def.vertexCount = @intCast(range.vertex.range);
-    // def.vertices = @as([*]box3d.Vec3, @ptrCast(meshes3D.vertices.items[range.vertex.offset .. range.vertex.offset + range.vertex.range]));
+
     def.vertices = vertices[0..range.vertex.range].ptr;
     def.indices = @as([*]i32, @ptrCast(meshes3D.indices.items[range.index.offset .. range.index.offset + range.index.range]));
 

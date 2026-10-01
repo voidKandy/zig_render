@@ -72,7 +72,9 @@ pub fn init(
             a,
             resources_ci,
         ) catch @panic("failed resources init"),
-        .physics = .init(),
+        .physics = core.engine.Physics.init(.{
+            .allocator = a,
+        }) catch @panic("OOM"),
     };
 
     self.initWindow();
@@ -89,7 +91,7 @@ pub fn initRenderer(self: *@This(), opts: struct {
     self.renderer = core.engine.Renderer.init(.{
         .meshes2D = if (opts.meshes2D) self.swapchain.extent else null,
         .meshes3D = opts.meshes3D,
-        .physics_debug = if (opts.physics_debug) self.allocs.std else null,
+        .physics_debug = if (opts.physics_debug) self.physics.debug_ctx.? else null,
     }) catch @panic("OOM");
 }
 
@@ -164,9 +166,7 @@ pub fn run(self: *Self) void {
 
         self.system_manager.update(dt, self.input, &self.world);
 
-        if (self.renderer.physics_debug) |*db| {
-            self.physics.update(&self.world, @constCast(&db.b3d_context.makeDebugDraw()));
-        } else self.physics.update(&self.world, null);
+        self.physics.update(&self.world);
 
         self.renderer.syncResources(&self.allocated_resources);
 

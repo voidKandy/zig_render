@@ -253,26 +253,11 @@ fn createEntities(
         .id = body_id,
     });
 
-    const idx = resources.meshes3D.mesh_indices.get("large_flat_box").?;
-    const bounds = resources.meshes3D.bounds.items[idx];
-    const extents = bounds.extents();
-    const box = core.clibs.box3d.MakeBoxHull(
-        extents[0],
-        extents[1],
-        extents[2],
-    );
+    const mesh = physics.meshes.get("large_flat_box").?;
+    const scale = core.bindings.box3d_usage.fromCoreVec3(core.lib.math.Vec3.ONE);
     var shape_def = core.clibs.box3d.DefaultShapeDef();
-    _ = core.clibs.box3d.CreateHullShape(
-        body_id,
-        &shape_def,
-        &box.base,
-    );
-
-    // const mesh = physics.meshes.get("large_flat_box").?;
-    // const scale = core.bindings.box3d_usage.fromCoreVec3(core.lib.math.Vec3.ONE);
-    // var shape_def = core.clibs.box3d.DefaultShapeDef();
-    // shape_def.density = 0.0;
-    // _ = core.clibs.box3d.CreateMeshShape(body_id, &shape_def, mesh, scale);
+    shape_def.density = 0.0;
+    _ = core.clibs.box3d.CreateMeshShape(body_id, &shape_def, mesh, scale);
 
     // for (self.meshes2D.ranges.items) |ranges| {
     //     var ent = world.entities.register(null) catch @panic("OOM");

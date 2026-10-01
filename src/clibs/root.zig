@@ -107,6 +107,20 @@ pub const box3d = struct {
     pub const ShapeDef = c.b3ShapeDef;
     pub const Box = c.b3Box;
 
+    pub const DebugShape = c.b3DebugShape;
+    pub const capsule_shape = c.b3_capsuleShape;
+    pub const compound_shape = c.b3_compoundShape;
+    pub const height_shape = c.b3_heightShape;
+    pub const hull_shape = c.b3_hullShape;
+    pub const mesh_shape = c.b3_meshShape;
+    pub const sphere_shape = c.b3_sphereShape;
+    pub const shape_type_count = c.b3_shapeTypeCount;
+
+    pub const GetMeshVertices = c.b3GetMeshVertices;
+    pub const GetMeshTriangles = c.b3GetMeshTriangles;
+
+    pub const TransformWorldPoint = c.b3TransformWorldPoint;
+
     pub const MakeBox = c.b3MakeBox;
     pub const CreateBoxShape = c.b3CreateBoxShape;
 };

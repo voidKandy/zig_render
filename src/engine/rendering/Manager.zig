@@ -11,7 +11,7 @@ meshes2D: ?Meshes2D = null,
 physics_debug: ?PhysicsDebug = null,
 
 pub const CreateInfo = struct {
-    physics_debug: ?std.mem.Allocator,
+    physics_debug: ?*const core.engine.Physics.DebugContext,
     meshes3D: bool,
     meshes2D: ?vk.Extent2D,
 };
@@ -26,7 +26,7 @@ pub fn init(
             .window_extent = extent,
         } else null;
     const physics_debug =
-        if (ci.physics_debug) |a| PhysicsDebug{ .b3d_context = try .init(a) } else null;
+        if (ci.physics_debug) |db| PhysicsDebug{ .debug_ctx_ptr = db } else null;
 
     if (meshes2D == null and meshes3D == null)
         @panic("attempted to create empty renderer??");

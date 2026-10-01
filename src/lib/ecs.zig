@@ -275,9 +275,7 @@ pub fn EntityStore(
 
         /// Archetypes can easily be expressed through signatures:
         /// ```zig
-        /// var archetype = Signature.initEmpty();
-        /// archetype.insert(@intFromEnum(ComponentTag.mycomponent));
-        /// archetype.insert(@intFromEnum(ComponentTag.othercomponent));
+        /// var archetype = Signature.initMany(&.{ .mycomponent, .othercomponent });
         /// ```
         pub const Signature = std.EnumSet(Meta.ComponentTag);
 

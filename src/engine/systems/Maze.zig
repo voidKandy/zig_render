@@ -375,6 +375,12 @@ pub fn drawImgui(self: *@This(), _: core.engine.systems.manager.DrawImguiContext
         self.maze_update = true;
     }
 
+    var threshold: c_int = @intCast(self.maze.threshold.?);
+    if (imgui.InputInt("threshold", &threshold)) {
+        self.maze.threshold = @as(u64, @intCast(threshold));
+        self.maze_update = true;
+    }
+
     if (imgui.Button(
         "Recreate mesh?",
     )) self.update_mesh = true;

@@ -13,11 +13,10 @@ pub const DebugVertex = extern struct {
 
 const SET_NAME = "box3D_debug_set";
 const VERTEX_BUFFER_NAME = "box3D_debug_vertices";
-const MAX_DEBUG_LINES = 1024 * 32;
+pub const MAX_DEBUG_LINES = 1024 * 32;
 
 pipeline: GraphicsPipeline = undefined,
-
-b3d_context: B3DContext,
+debug_ctx_ptr: *const core.engine.Physics.DebugContext,
 
 pub fn updateSets(
     device: vk.Device,
@@ -65,11 +64,10 @@ pub fn registerSetsAndBuffers(
 
 pub fn deinit(
     self: *@This(),
-    allocs: core.engine.Allocators,
+    _: core.engine.Allocators,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    self.b3d_context.vertices.deinit(allocs.std);
     self.pipeline.deinit(device, alloc_cbs);
 }
 
@@ -78,11 +76,11 @@ pub fn syncResources(self: *const @This(), alloc_resources: *const core.resource
         alloc_resources.mapped_buffers.buffers.get(VERTEX_BUFFER_NAME).?;
 
     std.debug.assert(
-        self.b3d_context.vertices.items.len * @sizeOf(DebugVertex) <= buffer.allocation.size,
+        self.debug_ctx_ptr.vertices.items.len * @sizeOf(DebugVertex) <= buffer.allocation.size,
     );
     const aligned: [*]DebugVertex = @ptrCast(@alignCast(buffer.mapped));
 
-    for (self.b3d_context.vertices.items, 0..) |vertex, i| {
+    for (self.debug_ctx_ptr.vertices.items, 0..) |vertex, i| {
         aligned[i] = vertex;
     }
 }
@@ -153,7 +151,7 @@ pub fn recordCommands(
         null,
     );
 
-    vk.CmdDraw(cmd, @intCast(self.b3d_context.vertices.items.len), 1, 0, 0);
+    vk.CmdDraw(cmd, @intCast(self.debug_ctx_ptr.vertices.items.len), 1, 0, 0);
 }
 
 const GraphicsPipeline = struct {
@@ -310,133 +308,5 @@ const GraphicsPipeline = struct {
 
     fn bind(self: Self, cmd: vk.CommandBuffer) void {
         vk.CmdBindPipeline(cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
-    }
-};
-
-const box3d = core.clibs.box3d;
-const box3d_usage = core.bindings.box3d_usage;
-const B3DContext = struct {
-    const FUNCTIONS: box3d_usage.DebugDrawFunctions = .{
-        .draw_shape = struct {
-            fn call(shape: ?*anyopaque, transform: box3d.WorldTransform, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
-                const debug: *B3DContext = @ptrCast(@alignCast(context.?));
-                _ = shape;
-                _ = transform;
-                _ = color;
-                _ = debug;
-                log.warn("draw shape!!!!!", .{});
-            }
-        }.call,
-
-        .draw_bounds = struct {
-            fn call(aabb: box3d.AABB, color: box3d.HexColor, context: ?*anyopaque) callconv(.c) void {
-                const debug: *B3DContext = @ptrCast(@alignCast(context.?));
-
-                const min = aabb.lowerBound;
-                const max = aabb.upperBound;
-
-                const corners = [_]box3d.Pos{
-                    .{ .x = min.x, .y = min.y, .z = min.z },
-                    .{ .x = max.x, .y = min.y, .z = min.z },
-                    .{ .x = max.x, .y = max.y, .z = min.z },
-                    .{ .x = min.x, .y = max.y, .z = min.z },
-
-                    .{ .x = min.x, .y = min.y, .z = max.z },
-                    .{ .x = max.x, .y = min.y, .z = max.z },
-                    .{ .x = max.x, .y = max.y, .z = max.z },
-                    .{ .x = min.x, .y = max.y, .z = max.z },
-                };
-
-                const edges = [_][2]usize{
-                    // Bottom
-                    .{ 0, 1 },
-                    .{ 1, 2 },
-                    .{ 2, 3 },
-                    .{ 3, 0 },
-
-                    // Top
-                    .{ 4, 5 },
-                    .{ 5, 6 },
-                    .{ 6, 7 },
-                    .{ 7, 4 },
-
-                    // Vertical
-                    .{ 0, 4 },
-                    .{ 1, 5 },
-                    .{ 2, 6 },
-                    .{ 3, 7 },
-                };
-
-                for (edges) |edge| {
-                    debug.addLine(
-                        corners[edge[0]],
-                        corners[edge[1]],
-                        color,
-                    );
-                }
-            }
-        }.call,
-    };
-
-    vertices: std.ArrayListUnmanaged(DebugVertex),
-
-    pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
-        return .{
-            .vertices = try .initCapacity(a, MAX_DEBUG_LINES),
-        };
-    }
-
-    pub fn reset(self: *@This()) void {
-        self.vertices.clearRetainingCapacity();
-    }
-
-    pub fn addLine(
-        self: *@This(),
-        p1: box3d.Vec3,
-        p2: box3d.Vec3,
-        color: box3d.HexColor,
-    ) void {
-        self.vertices.appendAssumeCapacity(.{
-            .position = box3d_usage.toCoreVec3(p1),
-            .color = box3d_usage.unpackHexColor(color),
-        });
-
-        self.vertices.appendAssumeCapacity(.{
-            .position = box3d_usage.toCoreVec3(p2),
-            .color = box3d_usage.unpackHexColor(color),
-        });
-    }
-
-    pub fn makeDebugDraw(self: *@This()) box3d.DebugDraw {
-        self.reset();
-        var draw = box3d.DefaultDebugDraw();
-
-        draw.DrawShapeFcn = FUNCTIONS.draw_shape;
-        draw.DrawSegmentFcn = FUNCTIONS.draw_segment;
-        draw.DrawTransformFcn = FUNCTIONS.draw_transform;
-        draw.DrawPointFcn = FUNCTIONS.draw_point;
-        draw.DrawSphereFcn = FUNCTIONS.draw_sphere;
-        draw.DrawCapsuleFcn = FUNCTIONS.draw_capsule;
-        draw.DrawBoundsFcn = FUNCTIONS.draw_bounds;
-        draw.DrawBoxFcn = FUNCTIONS.draw_box;
-        draw.DrawStringFcn = FUNCTIONS.draw_string;
-
-        draw.drawShapes = true;
-        draw.drawBounds = true;
-        draw.drawingBounds = .{
-            .lowerBound = .{
-                .x = -100.0,
-                .y = -100.0,
-                .z = -100.0,
-            },
-            .upperBound = .{
-                .x = 100.0,
-                .y = 100.0,
-                .z = 100.0,
-            },
-        };
-
-        draw.context = @ptrCast(self);
-        return draw;
     }
 };
