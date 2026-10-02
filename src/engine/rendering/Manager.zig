@@ -107,5 +107,5 @@ pub fn recordCommands(
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
     if (self.meshes2D) |*m| m.drawImgui(ctx);
     if (self.meshes3D) |*m| m.drawImgui(ctx);
-    // if (self.physics_debug) |*p| p.drawImgui(ctx);
+    if (self.physics_debug) |*p| p.drawImgui(ctx);
 }

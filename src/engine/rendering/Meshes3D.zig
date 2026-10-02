@@ -13,17 +13,18 @@ const Mesh = mesh_mod.Mesh3D;
 const Meshes3D = core.resources.Meshes3D;
 
 const Instance = extern struct {
-    mesh_idx: u32,
+    position: core.lib.math.Vec3, // 12 bytes
+    mesh_idx: u32, // 4 bytes — fills the vec3's alignment gap exactly
+    rotation: core.lib.math.Vec4, // 16 bytes, quat as vec4 — naturally aligned, no gap before it
+    scale: core.lib.math.Vec3, // 12 bytes
     material_idx: u32,
-    _: u64 = 0,
-    model_transform: core.lib.math.Mat4,
 };
 
 const InstanceEntry = struct {
     entity_id: u32,
     mesh_idx: *u32,
     material_idx: *u32,
-    model_transform: *core.lib.math.Mat4,
+    world_transform: *core.engine.world.WorldTransform,
 };
 
 pub const INSTANCES_BUFFER_NAME = "instances3D";
@@ -99,7 +100,9 @@ pub fn syncResources(self: *const @This(), alloc_resources: *const core.resource
         aligned[i] = Instance{
             .mesh_idx = entry.mesh_idx.*,
             .material_idx = entry.material_idx.*,
-            .model_transform = entry.model_transform.*,
+            .position = entry.world_transform.position,
+            .rotation = entry.world_transform.rotation,
+            .scale = entry.world_transform.scale,
         };
 }
 
@@ -249,14 +252,14 @@ pub fn getInstances(self: *@This(), a: std.mem.Allocator, world: *core.engine.wo
                 entity.identifier.*,
                 mesh.mesh_index,
                 mesh.material_index,
-                transform.matrix.t.x,
-                transform.matrix.t.y,
-                transform.matrix.t.z,
+                transform.position.x,
+                transform.position.y,
+                transform.position.z,
             },
         );
         try result.value_ptr.append(a, .{
             .entity_id = entity.identifier.*,
-            .model_transform = &transform.matrix,
+            .world_transform = transform,
             .mesh_idx = &mesh.mesh_index,
             .material_idx = &mesh.material_index,
         });
@@ -314,21 +317,39 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
                 const mtl_name = ctx.resources.materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");
                 imgui.Text("Material: %s, index: %d", mtl_name.ptr, inst.material_idx.*);
 
-                const m = &inst.model_transform;
-                const fields = &.{ "i", "j", "k", "t" };
-                inline for (fields) |fieldname| {
-                    const field =
-                        @field(m.*, fieldname);
-                    var arr: [4]f32 = .{
-                        field.x,
-                        field.y,
-                        field.z,
-                        field.w,
-                    };
-                    if (imgui.SliderFloat4(fieldname, &arr, 0.0, 1.0)) {
-                        @field(m.*, fieldname) = core.lib.math.Vec4.fromSizedArray(arr);
-                    }
-                }
+                // var arr: [3]f32 = .{
+                //     inst.world_transform.position.x,
+                //     inst.world_transform.position.y,
+                //     inst.world_transform.position.z,
+                // };
+                // if (imgui.SliderFloat3("Position", &arr, 0.0, 1.0)) {
+                //     inst.world_transform.position.x = arr[0];
+                //     inst.world_transform.position.y = arr[1];
+                //     inst.world_transform.position.z = arr[2];
+
+                // mesh_metadatas[0].model_transform = transform;
+
+                // self.markMesh3DEdited(
+                //     a,
+                //     handle.identifier,
+                // );
+                // }
+
+                // const m = &inst.world_transform;
+                // const fields = &.{ "i", "j", "k", "t" };
+                // inline for (fields) |fieldname| {
+                //     const field =
+                //         @field(m.*, fieldname);
+                //     var arr: [4]f32 = .{
+                //         field.x,
+                //         field.y,
+                //         field.z,
+                //         field.w,
+                //     };
+                //     if (imgui.SliderFloat4(fieldname, &arr, 0.0, 1.0)) {
+                //         @field(m.*, fieldname) = core.lib.math.Vec4.fromSizedArray(arr);
+                //     }
+                // }
 
                 // if (imgui.SliderFloat4(""))
                 // imgui.Text(

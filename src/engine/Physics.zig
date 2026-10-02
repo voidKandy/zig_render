@@ -81,32 +81,11 @@ pub fn update(self: *@This(), world: *core.engine.world.GameWorld) void {
 
         const ent = world.entityHandle(ent_id.*) catch @panic("NO ENTITY??");
         _ = ent.accessComponent(.rigid_body) catch @panic("No body?");
-        var transform = (ent.accessComponentPtr(.world_transform) catch @panic("No transform?"))
+        var transform: *core.engine.world.WorldTransform = (ent.accessComponentPtr(.world_transform) catch @panic("No transform?"))
             .world_transform;
 
-        const pos = physics_transform.p;
-        const rot = physics_transform.q;
-
-        const angle = 2.0 * std.math.acos(rot.s);
-        const sin_half_angle = @sqrt(1.0 - rot.s * rot.s);
-
-        const axis = if (sin_half_angle < 0.0001)
-            core.lib.math.Vec3.RIGHT
-        else
-            core.lib.math.Vec3{
-                .x = rot.v.x / sin_half_angle,
-                .y = rot.v.y / sin_half_angle,
-                .z = rot.v.z / sin_half_angle,
-            };
-
-        transform.matrix =
-            core.lib.math.Mat4.IDENTITY
-                .translate(.{
-                    .x = pos.x,
-                    .y = pos.y,
-                    .z = pos.z,
-                })
-                .rotate(axis, angle);
+        transform.position = box3d_usage.toCoreVec3(physics_transform.p);
+        transform.rotation = box3d_usage.toCoreVec4(physics_transform.q);
     }
 
     if (debug) |*dbg| {
@@ -200,9 +179,6 @@ pub const DebugContext = struct {
                 const tris = box3d.GetMeshTriangles(mesh_data);
                 const tri_count = mesh_data[0].triangleCount;
 
-                // Build and own a flat line-list (two endpoints per triangle edge) once,
-                // in LOCAL space — DrawShapeFcn gets the current world transform separately
-                // every frame, so don't bake a transform in here.
                 var lines = std.ArrayListUnmanaged(box3d.Vec3).initCapacity(ctx.allocator, @intCast(tri_count * 6)) catch return null;
 
                 for (0..@intCast(tri_count)) |i| {

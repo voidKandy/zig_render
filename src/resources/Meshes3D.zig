@@ -213,6 +213,10 @@ pub fn appendMesh(
     defer log.debug(
         \\ added mesh: '{s}'
     , .{name});
+
+    const verts = mesh.vertices;
+    const bounds = Aabb3D.fromVertices(verts);
+
     const idx = self.ranges.items.len;
     try self.mesh_indices.put(a, name, idx);
 
@@ -222,7 +226,7 @@ pub fn appendMesh(
     const mesh_range = MeshRanges{
         .vertex = .{
             .offset = @as(u32, @intCast(self.vertices.items.len)),
-            .range = @as(u32, @intCast(mesh.vertices.len)),
+            .range = @as(u32, @intCast(verts.len)),
         },
         .index = .{
             .offset = @as(u32, @intCast(self.indices.items.len)),
@@ -230,10 +234,10 @@ pub fn appendMesh(
         },
     };
 
-    try self.vertices.appendSlice(a, mesh.vertices);
+    try self.vertices.appendSlice(a, verts);
     try self.indices.appendSlice(a, mesh.indices);
     try self.ranges.append(a, mesh_range);
-    try self.bounds.append(a, Aabb3D.fromVertices(mesh.vertices));
+    try self.bounds.append(a, bounds);
 }
 
 pub fn createDescriptorSetLayout(

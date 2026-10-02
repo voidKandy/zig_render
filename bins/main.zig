@@ -184,11 +184,11 @@ fn createEntities(
         ));
 
         var tx = core.engine.world.WorldTransform{};
-        tx.matrix = tx.matrix.translate(.{
+        tx.position = .{
             .x = 0.0,
             .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
             .z = 0.0,
-        });
+        };
         ent.addComponent(.world_transform, tx);
 
         var body_def = core.clibs.box3d.DefaultBodyDef();
@@ -209,33 +209,38 @@ fn createEntities(
         const idx = resources.meshes3D.mesh_indices.get("viking_room.obj").?;
         const bounds = resources.meshes3D.bounds.items[idx];
         const extents = bounds.extents();
-        const box = core.clibs.box3d.MakeBoxHull(
+        const center = bounds.center(); // {0, 0, extents.z} after bottom-center recenter, in general
+
+        const local_transform = core.clibs.box3d.Transform{
+            .p = .{ .x = center[0], .y = center[1], .z = center[2] },
+            .q = core.bindings.box3d_usage.fromCoreVec4(.IDENTITY), // check exact identity-quat name in your bindings
+        };
+
+        const box = core.clibs.box3d.MakeTransformedBoxHull(
             extents[0],
             extents[1],
             extents[2],
+            local_transform,
         );
+
         var shape_def = core.clibs.box3d.DefaultShapeDef();
-        _ = core.clibs.box3d.CreateHullShape(
-            body_id,
-            &shape_def,
-            &box.base,
-        );
+        _ = core.clibs.box3d.CreateHullShape(body_id, &shape_def, &box.base);
     }
     var ent = world.entities.register(null) catch @panic("OOM");
-    ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
-        resources,
-        .{
-            .mesh = "large_flat_box",
-            .material = "debug.gray",
-        },
-    ));
+    // ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
+    //     resources,
+    //     .{
+    //         .mesh = "large_flat_box",
+    //         .material = "debug.gray",
+    //     },
+    // ));
 
     var tx = core.engine.world.WorldTransform{};
-    tx.matrix = tx.matrix.translate(.{
+    tx.position = .{
         .x = 2.0,
         .y = 1.5,
         .z = 0.5,
-    });
+    };
     ent.addComponent(.world_transform, tx);
 
     var body_def = core.clibs.box3d.DefaultBodyDef();

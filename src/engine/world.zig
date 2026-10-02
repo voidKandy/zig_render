@@ -38,7 +38,9 @@ pub const MaterialMesh2D = struct {
 };
 
 pub const WorldTransform = struct {
-    matrix: core.lib.math.Mat4 = .IDENTITY,
+    position: core.lib.math.Vec3 = .ZERO,
+    rotation: core.lib.math.Vec4 = .IDENTITY,
+    scale: core.lib.math.Vec3 = .ONE,
 };
 
 pub const ScreenTransform = struct {

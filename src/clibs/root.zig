@@ -26,6 +26,7 @@ pub const box3d = struct {
 
     pub const Vec3 = c.b3Vec3;
     pub const Rot = c.b3Rot;
+    pub const Quat = c.b3Quat;
     pub const Transform = c.b3Transform;
 
     pub const DefaultWorldDef = c.b3DefaultWorldDef;
@@ -99,6 +100,7 @@ pub const box3d = struct {
     pub const BoxHull = c.b3BoxHull;
 
     pub const MakeBoxHull = c.b3MakeBoxHull;
+    pub const MakeTransformedBoxHull = c.b3MakeTransformedBoxHull;
     pub const CreateHullShape = c.b3CreateHullShape;
 
     pub const World_Step = c.b3World_Step;
@@ -958,6 +960,7 @@ pub const imgui = struct {
     pub const InputFloat4 = c.ImGui_InputFloat4;
     pub const SliderFloat4 = c.ImGui_SliderFloat4;
     pub const SliderFloat2 = c.ImGui_SliderFloat2;
+    pub const SliderFloat3 = c.ImGui_SliderFloat3;
     pub const SliderFloat = c.ImGui_SliderFloat;
     pub const DragFloat3 = c.ImGui_DragFloat3;
     pub const DragFloat2 = c.ImGui_DragFloat2;

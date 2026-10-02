@@ -3,6 +3,8 @@ const core = @import("../../root.zig");
 const log = std.log.scoped(.PhysicsDebugRendering);
 const imgui = core.clibs.imgui;
 const vk = core.clibs.vk;
+const box3d = core.clibs.box3d;
+const box3d_usage = core.bindings.box3d_usage;
 const checkVk = core.bindings.vulkan_init.checkVk;
 
 pub const DebugVertex = extern struct {
@@ -152,6 +154,47 @@ pub fn recordCommands(
     );
 
     vk.CmdDraw(cmd, @intCast(self.debug_ctx_ptr.vertices.items.len), 1, 0, 0);
+}
+
+pub fn drawImgui(_: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
+    var open = true;
+    const shown = imgui.Begin("Physics", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    if (!shown) return;
+    defer imgui.End();
+    var query = ctx.world.queryEntities(.{ .is = .{ .rule = .at_least, .sig = .initOne(.rigid_body) } });
+    while (query.next()) |*ent| {
+        const transform: ?*core.engine.world.WorldTransform = if (ent.accessComponentPtr(.world_transform) catch null) |trans| trans.world_transform else null;
+        const body: *core.engine.world.RigidBody = (ent.accessComponentPtr(.rigid_body) catch unreachable).rigid_body;
+
+        imgui.Text("Entity: '%d'\nBody: '%d'", ent.identifier, body.id);
+
+        if (transform) |trans| {
+            var arr: [3]f32 = .{
+                trans.position.x,
+                trans.position.y,
+                trans.position.z,
+            };
+
+            var label_buf: [64]u8 = undefined;
+            const label = std.fmt.bufPrintZ(&label_buf, "Position##{d}", .{ent.identifier.*}) catch "Position";
+
+            if (imgui.SliderFloat3(label.ptr, &arr, 0.0, 20.0)) {
+                trans.position.x = arr[0];
+                trans.position.y = arr[1];
+                trans.position.z = arr[2];
+                box3d.Body_SetTransform(
+                    body.id,
+                    box3d_usage.fromCoreVec3(trans.position),
+                    box3d_usage.fromCoreVec4(trans.rotation),
+                );
+
+                box3d.Body_SetAwake(
+                    body.id,
+                    true,
+                );
+            }
+        }
+    }
 }
 
 const GraphicsPipeline = struct {

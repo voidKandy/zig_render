@@ -144,6 +144,8 @@ pub const Vec4 = extern struct {
     pub const FORWARD = make(0.0, 1.0, 0.0, 0.0);
     pub const RIGHT = make(1.0, 0.0, 0.0, 0.0);
 
+    pub const IDENTITY = make(0.0, 0.0, 0.0, 1.0);
+
     const Self = @This();
 
     pub inline fn make(x: f32, y: f32, z: f32, w: f32) Self {
@@ -154,10 +156,6 @@ pub const Vec4 = extern struct {
         return .{ .x = array[0], .y = array[1], .z = array[2], .w = array[3] };
     }
 
-    pub fn ptr(self: *Vec4) [*c]f32 {
-        return @as([*]f32, @ptrCast(self));
-    }
-
     pub fn add(self: Self, other: Self) Self {
         // The result is going to be a point if either of the operands is a point.
         return make(
@@ -166,6 +164,68 @@ pub const Vec4 = extern struct {
             self.z + other.z,
             if (self.w > 0 or other.w > 0) 1.0 else 0.0,
         );
+    }
+
+    // """
+    // Converts an axis-angle rotation to a unit quaternion.
+    // :param axis: A tuple or list of 3 floats (x, y, z) representing the rotation axis.
+    // :param angle_rad: The rotation angle in radians.
+    // :return: A tuple (w, x, y, z) representing the unit quaternion.
+    // """
+    // # 1. Calculate the magnitude of the axis
+    // x, y, z = axis
+    // magnitude = math.sqrt(x**2 + y**2 + z**2)
+
+    // # Handle zero-vector edge case
+    // if magnitude == 0:
+    //     return (1.0, 0.0, 0.0, 0.0)
+
+    // # 2. Normalize the axis components
+    // ux = x / magnitude
+    // uy = y / magnitude
+    // uz = z / magnitude
+
+    // # 3. Apply half-angle formulas
+    // half_angle = angle_rad / 2.0
+    // sin_half = math.sin(half_angle)
+    // cos_half = math.cos(half_angle)
+
+    // # 4. Construct the quaternion (w, x, y, z)
+    // w = cos_half
+    // qx = ux * sin_half
+    // qy = uy * sin_half
+    // qz = uz * sin_half
+
+    // return (w, qx, qy, qz)
+
+    /// Creates unit quaternion
+    /// angle is in radians
+    pub fn axisAngleQuaternion(axis: Vec3, angle: f32) Self {
+        const magnitude = @sqrt(axis.dot(axis));
+
+        if (magnitude == 0.0)
+            return .make(1.0, 0.0, 0.0, 0.0);
+
+        const ux, const uy, const uz = .{
+            axis.x / magnitude,
+            axis.y / magnitude,
+            axis.z / magnitude,
+        };
+
+        const half_angle = angle / 2.0;
+
+        const qx, const qy, const qz = .{
+            ux * @sin(half_angle),
+            uy * @sin(half_angle),
+            uz * @sin(half_angle),
+        };
+
+        return .{
+            .w = @cos(half_angle),
+            .x = qx,
+            .y = qy,
+            .z = qz,
+        };
     }
 
     pub inline fn mul(self: Self, val: f32) Self {

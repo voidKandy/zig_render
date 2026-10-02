@@ -81,6 +81,25 @@ pub fn toCoreVec3(b3dv3: box3d.Vec3) core.lib.math.Vec3 {
     };
 }
 
+pub fn fromCoreVec4(v: core.lib.math.Vec4) box3d.Quat {
+    return .{
+        .s = v.w,
+        .v = .{
+            .x = v.x,
+            .y = v.y,
+            .z = v.z,
+        },
+    };
+}
+
+pub fn toCoreVec4(b3dv4: box3d.Quat) core.lib.math.Vec4 {
+    return .{
+        .w = b3dv4.s,
+        .x = b3dv4.v.x,
+        .y = b3dv4.v.y,
+        .z = b3dv4.v.z,
+    };
+}
 pub fn unpackHexColor(color: box3d.HexColor) core.lib.math.Vec4 {
     const raw: u32 = @intCast(color);
     const r: f32 = @floatFromInt((raw >> 16) & 0xFF);
