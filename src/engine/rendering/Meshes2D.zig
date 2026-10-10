@@ -38,7 +38,6 @@ pub const MAX_INSTANCES = 64;
 
 ranges: std.AutoHashMapUnmanaged(u32, core.lib.mesh.RangeDesc) = .empty,
 instances: std.ArrayList(InstanceEntry) = .empty,
-window_extent: vk.Extent2D,
 pipeline: GraphicsPipeline = undefined,
 
 pub fn updateSets(
@@ -152,6 +151,7 @@ pub fn initPipeline(
 
 pub fn recordCommands(
     self: @This(),
+    swapchain: *const core.bindings.vulkan_init.Swapchain,
     resources: *const core.resources.Manager,
     alloc_resources: *const core.resources.Manager.AllocatedData,
     cmd: vk.CommandBuffer,
@@ -182,10 +182,10 @@ pub fn recordCommands(
         defer i += 1;
 
         const pc = GraphicsPipeline.PushConstants{
-            .inverse_window_resolution = core.lib.math.Vec2.make(
-                1.0 / @as(f32, @floatFromInt(self.window_extent.width)),
-                1.0 / @as(f32, @floatFromInt(self.window_extent.height)),
-            ),
+            .window_resolution = core.lib.math.Vec2{
+                .x = @as(f32, @floatFromInt(swapchain.extent.width)),
+                .y = @as(f32, @floatFromInt(swapchain.extent.height)),
+            },
             .vertex_offset = m2d_rg.vertex.offset,
             .index_offset = m2d_rg.index.offset,
         };
@@ -325,8 +325,8 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
 }
 
 const GraphicsPipeline = struct {
-    const PushConstants = struct {
-        inverse_window_resolution: core.lib.math.Vec2,
+    const PushConstants = extern struct {
+        window_resolution: core.lib.math.Vec2,
         vertex_offset: u32,
         index_offset: u32,
     };

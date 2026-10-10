@@ -196,7 +196,7 @@ fn createEntities(
         body_def.position = .{
             .x = 0.0,
             .y = @as(f32, @floatFromInt(i)) + @as(f32, @floatFromInt(i)) * 1.5,
-            .z = 60.0,
+            .z = 0.0,
         };
         body_def.userData = @ptrCast(@constCast(ent.identifier));
 
@@ -239,7 +239,7 @@ fn createEntities(
     tx.position = .{
         .x = 2.0,
         .y = 1.5,
-        .z = 0.5,
+        .z = -1.5,
     };
     ent.addComponent(.world_transform, tx);
 
@@ -248,7 +248,7 @@ fn createEntities(
     body_def.position = .{
         .x = 2.0,
         .y = 1.5,
-        .z = 0.5,
+        .z = -1.5,
     };
     body_def.userData = @ptrCast(@constCast(ent.identifier));
 

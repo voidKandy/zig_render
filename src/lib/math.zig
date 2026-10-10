@@ -1,4 +1,5 @@
 const std = @import("std");
+/// BAD CLEAN THE METHODS ON ALL THESE STRUCTS
 
 // FIXME: This is a temporary hack to deal with fabs being renamed abs in 0.12.0.
 // Once 0.12 is officially released, we need to remove this
@@ -68,14 +69,6 @@ pub const Vec3 = extern struct {
         return .{ .x = x, .y = y, .z = z };
     }
 
-    pub inline fn toPoint4(self: Self) Vec4 {
-        return Vec4.make(self.x, self.y, self.z, 1.0);
-    }
-
-    pub inline fn toVector4(self: Self) Vec4 {
-        return Vec4.make(self.x, self.y, self.z, 0.0);
-    }
-
     pub inline fn toVec4(self: Self, w: f32) Vec4 {
         return Vec4.make(self.x, self.y, self.z, w);
     }
@@ -90,6 +83,10 @@ pub const Vec3 = extern struct {
 
     pub inline fn add(self: Self, other: Self) Self {
         return make(self.x + other.x, self.y + other.y, self.z + other.z);
+    }
+
+    pub fn negate(self: Vec3) Vec3 {
+        return .{ .x = -self.x, .y = -self.y, .z = -self.z };
     }
 
     pub inline fn eucDist(self: Self, other: Self) f32 {
@@ -152,6 +149,39 @@ pub const Vec4 = extern struct {
         return .{ .x = x, .y = y, .z = z, .w = w };
     }
 
+    // Whatever "forward" means at identity rotation
+    // Z-up, forward along +Y: .{ .x = 0, .y = 1, .z = 0 }
+    pub fn forwardVec3(rotation: Self) Vec3 {
+        const base_forward = Vec3{ .x = 0.0, .y = 1.0, .z = 0.0 };
+        return rotation.rotateVec3(base_forward);
+    }
+
+    pub fn upVec3(rotation: Self) Vec3 {
+        const base_up = Vec3{ .x = 0.0, .y = 0.0, .z = 1.0 }; // Z-up
+        return rotation.rotateVec3(base_up);
+    }
+
+    pub fn rotateVec3(self: Vec4, v: Vec3) Vec3 {
+        const qv = Vec3{ .x = self.x, .y = self.y, .z = self.z };
+        const uv = qv.cross(v);
+        const uuv = qv.cross(uv);
+
+        return .{
+            .x = v.x + 2.0 * (self.w * uv.x + uuv.x),
+            .y = v.y + 2.0 * (self.w * uv.y + uuv.y),
+            .z = v.z + 2.0 * (self.w * uv.z + uuv.z),
+        };
+    }
+
+    pub fn conjugate(self: Vec4) Vec4 {
+        return .{
+            .x = -self.x,
+            .y = -self.y,
+            .z = -self.z,
+            .w = self.w,
+        };
+    }
+
     pub inline fn fromSizedArray(array: [4]f32) Self {
         return .{ .x = array[0], .y = array[1], .z = array[2], .w = array[3] };
     }
@@ -166,37 +196,26 @@ pub const Vec4 = extern struct {
         );
     }
 
-    // """
-    // Converts an axis-angle rotation to a unit quaternion.
-    // :param axis: A tuple or list of 3 floats (x, y, z) representing the rotation axis.
-    // :param angle_rad: The rotation angle in radians.
-    // :return: A tuple (w, x, y, z) representing the unit quaternion.
-    // """
-    // # 1. Calculate the magnitude of the axis
-    // x, y, z = axis
-    // magnitude = math.sqrt(x**2 + y**2 + z**2)
+    pub fn lookAt(position: Vec3, target: Vec3) Vec4 {
+        const direction = target.sub(position).normalized();
 
-    // # Handle zero-vector edge case
-    // if magnitude == 0:
-    //     return (1.0, 0.0, 0.0, 0.0)
+        const yaw = std.math.atan2(direction.x, direction.y);
+        const pitch = std.math.asin(direction.z);
 
-    // # 2. Normalize the axis components
-    // ux = x / magnitude
-    // uy = y / magnitude
-    // uz = z / magnitude
+        const yaw_rotation = Vec4.axisAngleQuaternion(
+            Vec3.UP,
+            -yaw,
+        );
 
-    // # 3. Apply half-angle formulas
-    // half_angle = angle_rad / 2.0
-    // sin_half = math.sin(half_angle)
-    // cos_half = math.cos(half_angle)
+        const right = yaw_rotation.rotateVec3(Vec3.RIGHT);
 
-    // # 4. Construct the quaternion (w, x, y, z)
-    // w = cos_half
-    // qx = ux * sin_half
-    // qy = uy * sin_half
-    // qz = uz * sin_half
+        const pitch_rotation = Vec4.axisAngleQuaternion(
+            right,
+            pitch,
+        );
 
-    // return (w, qx, qy, qz)
+        return pitch_rotation.mul(yaw_rotation);
+    }
 
     /// Creates unit quaternion
     /// angle is in radians
@@ -228,8 +247,17 @@ pub const Vec4 = extern struct {
         };
     }
 
-    pub inline fn mul(self: Self, val: f32) Self {
+    pub inline fn mulScalar(self: Self, val: f32) Self {
         return make(self.x * val, self.y * val, self.z * val, self.w * val);
+    }
+
+    pub fn mul(self: Self, other: Self) Self {
+        return .{
+            .x = self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y,
+            .y = self.w * other.y - self.x * other.z + self.y * other.w + self.z * other.x,
+            .z = self.w * other.z + self.x * other.y - self.y * other.x + self.z * other.w,
+            .w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z,
+        };
     }
 
     pub fn nomalized(self: Self) Self {
@@ -284,9 +312,9 @@ pub const Mat4 = extern struct {
         Vec4.make(0.0, 0.0, 0.0, 1.0),
     );
 
-    pub inline fn lookAt(eye: Vec3, center: Vec3, up: Vec3) Self {
-        const f = center.sub(eye).normalized();
-        const r = f.cross(up).normalized();
+    pub inline fn lookAt(eye: Vec3, target: Vec3) Self {
+        const f = target.sub(eye).normalized();
+        const r = f.cross(Vec3.UP).normalized();
         const u = r.cross(f);
 
         return Mat4{
@@ -301,7 +329,6 @@ pub const Mat4 = extern struct {
         return .{ .i = i, .j = j, .k = k, .t = t };
     }
 
-    /// Returns the transpose of the input matrix
     pub fn transposed(self: Self) Self {
         return make(
             Vec4.make(self.i.x, self.j.x, self.k.x, self.t.x),
@@ -326,7 +353,7 @@ pub const Mat4 = extern struct {
             Vec4.make(1.0, 0.0, 0.0, 0.0),
             Vec4.make(0.0, 1.0, 0.0, 0.0),
             Vec4.make(0.0, 0.0, 1.0, 0.0),
-            v.toPoint4(),
+            v.toVec4(1.0),
         );
     }
 
@@ -336,7 +363,7 @@ pub const Mat4 = extern struct {
             self.i,
             self.j,
             self.k,
-            self.t.add(v.toVector4()),
+            self.t.add(v.toVec4(0.0)),
         );
     }
 
@@ -352,34 +379,6 @@ pub const Mat4 = extern struct {
             Vec4.make(0.0, 0.0, far / (near - far), -1.0),
             Vec4.make(0.0, 0.0, -(far * near) / (far - near), 0.0),
         );
-    }
-
-    /// Create a rotation matrix around an arbitrary axis.
-    // TODO: Add a faster version that assume the axis is normalized.
-    pub fn rotation(axis: Vec3, angle_rad: f32) Mat4 {
-        const c = @cos(angle_rad);
-        const s = @sin(angle_rad);
-        const t = 1.0 - c;
-
-        const sqr_norm = axis.squaredNorm();
-        if (sqr_norm == 0.0) {
-            return Mat4.IDENTITY;
-        } else if (abs(sqr_norm - 1.0) > 0.0001) {
-            const norm = @sqrt(sqr_norm);
-            return rotation(axis.div(norm), angle_rad);
-        }
-
-        const x = axis.x;
-        const y = axis.y;
-        const z = axis.z;
-
-        return make(Vec4.make(x * x * t + c, y * x * t + z * s, z * x * t - y * s, 0.0), Vec4.make(x * y * t - z * s, y * y * t + c, z * y * t + x * s, 0.0), Vec4.make(x * z * t + y * s, y * z * t - x * s, z * z * t + c, 0.0), Vec4.make(0.0, 0.0, 0.0, 1.0));
-    }
-
-    ///Rotates a matrix around an arbitrary axis.
-    // OPTIMIZE: We can work out the math to create the matrix directly.
-    pub fn rotate(m: Mat4, axis: Vec3, angle_rad: f32) Mat4 {
-        return mul(rotation(axis, angle_rad), m);
     }
 
     pub fn scale(v: Vec3) Mat4 {

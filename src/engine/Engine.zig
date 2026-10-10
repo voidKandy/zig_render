@@ -89,7 +89,7 @@ pub fn initRenderer(self: *@This(), opts: struct {
     physics_debug: bool = true,
 }) void {
     self.renderer = core.engine.Renderer.init(.{
-        .meshes2D = if (opts.meshes2D) self.swapchain.extent else null,
+        .meshes2D = opts.meshes2D,
         .meshes3D = opts.meshes3D,
         .physics_debug = if (opts.physics_debug) self.physics.debug_ctx.? else null,
     }) catch @panic("OOM");
@@ -571,7 +571,7 @@ fn recordCommandBuffer(
     };
     vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
 
-    self.renderer.recordCommands(&self.resources, &self.allocated_resources, frame.main_command_buffer);
+    self.renderer.recordCommands(&self.swapchain, &self.resources, &self.allocated_resources, frame.main_command_buffer);
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }
 

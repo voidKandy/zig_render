@@ -13,7 +13,7 @@ physics_debug: ?PhysicsDebug = null,
 pub const CreateInfo = struct {
     physics_debug: ?*const core.engine.Physics.DebugContext,
     meshes3D: bool,
-    meshes2D: ?vk.Extent2D,
+    meshes2D: bool,
 };
 
 pub fn init(
@@ -22,9 +22,7 @@ pub fn init(
     const meshes3D =
         if (ci.meshes3D) Meshes3D{} else null;
     const meshes2D =
-        if (ci.meshes2D) |extent| Meshes2D{
-            .window_extent = extent,
-        } else null;
+        if (ci.meshes2D) Meshes2D{} else null;
     const physics_debug =
         if (ci.physics_debug) |db| PhysicsDebug{ .debug_ctx_ptr = db } else null;
 
@@ -95,13 +93,14 @@ pub fn initPipelines(
 
 pub fn recordCommands(
     self: @This(),
+    swapchain: *const core.bindings.vulkan_init.Swapchain,
     resources: *const core.resources.Manager,
     allocated_resources: *const core.resources.Manager.AllocatedData,
     cmd: vk.CommandBuffer,
 ) void {
     if (self.meshes3D) |m| m.recordCommands(resources, allocated_resources, cmd);
     if (self.physics_debug) |p| p.recordCommands(allocated_resources, cmd);
-    if (self.meshes2D) |m| m.recordCommands(resources, allocated_resources, cmd);
+    if (self.meshes2D) |m| m.recordCommands(swapchain, resources, allocated_resources, cmd);
 }
 
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {

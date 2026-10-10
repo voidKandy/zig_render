@@ -19,13 +19,11 @@ pub const engine = struct {
         vma: clibs.vma.Allocator = undefined,
     };
 
-    pub const Camera = @import("engine/Camera.zig");
+    pub const frames = @import("engine/frames.zig");
+    pub const shaders = @import("engine/shaders.zig");
     pub const world = @import("engine/world.zig");
     pub const Engine = @import("engine/Engine.zig");
-    pub const frames = @import("engine/frames.zig");
     pub const Input = @import("engine/Input.zig");
-    pub const shaders = @import("engine/shaders.zig");
-
     pub const Physics = @import("engine/Physics.zig");
     pub const Renderer = @import("engine/rendering/Manager.zig");
 

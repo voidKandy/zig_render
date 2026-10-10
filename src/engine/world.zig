@@ -55,7 +55,7 @@ pub const GameWorld =
     core.lib.ecs.EntityStore(.{
         .max_entities = 64,
         .components = struct {
-            camera: core.engine.Camera,
+            camera: core.engine.systems.Camera.Controller,
             world_transform: WorldTransform,
             screen_transform: ScreenTransform,
             mesh3D: MaterialMesh3D,

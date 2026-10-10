@@ -8,7 +8,7 @@ layout(location = 0) out vec2 texCoord;
 layout(location = 1) flat out uint MaterialIndex;
 
 layout(push_constant) uniform PushConstants {
-    vec2 InverseWindowResolution;
+    vec2 WindowResolution;
     uint VertexOffset;
     uint IndexOffset;
 };
@@ -26,17 +26,19 @@ void main() {
     texCoord = inUV;
 
 
-    float aspect = InverseWindowResolution.y / InverseWindowResolution.x;
+    float aspect = WindowResolution.x / WindowResolution.y;
     vec2 local = inPosition;
     local.x /= aspect;
-
     vec2 screenPos = instance.ScreenPosition + local;
 
     vec2 ndc;
     ndc.x = screenPos.x * 2.0 - 1.0;
     ndc.y = -(screenPos.y * 2.0 - 1.0);
 
-    gl_Position = vec4(ndc, 0.0, 1.0);
+    if (gl_InstanceIndex == 0) {
+        debugPrintfEXT("vtx[%d] = (%f, %f)\n", gl_VertexIndex, inPosition.x, inPosition.y);
+    }   
 
+    gl_Position = vec4(ndc, 0.0, 1.0);
     MaterialIndex = instance.MaterialIndex;
 }

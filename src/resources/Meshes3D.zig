@@ -193,7 +193,6 @@ pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
     };
 }
 
-/// passes ownership to allocated data
 pub fn deinit(self: *@This(), a: std.mem.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.vertices.deinit(a);
     self.indices.deinit(a);
