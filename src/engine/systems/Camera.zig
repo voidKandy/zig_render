@@ -8,7 +8,6 @@ const Vec4 = core.lib.math.Vec4;
 const Mat4 = core.lib.math.Mat4;
 
 screen_extent: vk.Extent2D,
-
 main_camera_entity: ?u32 = null,
 gpu_camera: ?GPUData = null,
 
@@ -111,10 +110,10 @@ pub fn update(
     world: *core.engine.world.GameWorld,
 ) void {
     var camera_ent = world.entityHandle(self.main_camera_entity.?) catch @panic("No entity??");
-    var cam: *Controller = (camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?")).camera;
+    var controller: *Controller = (camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?")).camera;
     const trans: *core.engine.world.WorldTransform = (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
 
-    cam.control(&self.gpu_camera.?, trans, dt, input);
+    controller.control(&self.gpu_camera.?, trans, dt, input);
 }
 
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
@@ -152,17 +151,16 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
 }
 
 pub const Controller = struct {
-    /// for aspect ratio
     screen_extent: vk.Extent2D,
 
     fov: f32 = 45.0,
     near_plane: f32 = 0.1,
     far_plane: f32 = 100.0,
 
-    movement_speed: f32 = 5.0,
+    movement_speed: f32 = 10.0,
     mouse_sensitivity: f32 = 0.002,
     min_fov: f32 = 1.0,
-    max_fov: f32 = 45.0,
+    max_fov: f32 = 180.0,
     constrain_pitch: bool = true,
 
     pub const Angles = struct {
@@ -279,7 +277,12 @@ pub const Controller = struct {
         const aspect =
             @as(f32, @floatFromInt(self.screen_extent.width)) /
             @as(f32, @floatFromInt(self.screen_extent.height));
-        var proj = Mat4.perspective(self.fov, aspect, self.near_plane, self.far_plane);
+        var proj = Mat4.perspective(
+            std.math.degreesToRadians(self.fov),
+            aspect,
+            self.near_plane,
+            self.far_plane,
+        );
         proj.j.y *= -1;
         return proj;
     }

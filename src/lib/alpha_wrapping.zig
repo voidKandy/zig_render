@@ -8,18 +8,16 @@ const Vec3 = math_mod.Vec3;
 const Vec4 = math_mod.Vec4;
 const Mat3 = math_mod.Mat3;
 const delaunay = core.lib.delaunay;
+const Meshes3D = core.resources.Meshes3D;
 
 pub const Tag = enum { inside, outside };
 
 const Gate = struct {
-    /// the "inside" cell we're testing whether to carve
-    tet_idx: usize,
-    /// which of tet_idx's faces we're entering through
-    face_idx: usize,
-    /// the "outside" cell we're carving from
-    from_tet_idx: usize,
+    face: [3]usize, // sorted vertex key, stable across slot reuse
     radius: f32,
 };
+
+const ResolvedGate = struct { inside: usize, face_idx: usize, outside: ?usize };
 
 /// the gates are processed in order of decreasing circumradii
 fn gateOrder(context: void, a: Gate, b: Gate) std.math.Order {
@@ -48,10 +46,123 @@ pub const Wrapper = struct {
         self.tags.deinit(a);
     }
 
+    fn resolveGate(self: *const Wrapper, gate: Gate) ?ResolvedGate {
+        const entry = self.tri.adjacency.map.get(gate.face) orelse return null; // face no longer exists
+        var inside: ?struct { tet: usize, face: usize } = null;
+        var outside: ?usize = null;
+        for ([_]@TypeOf(entry.first){ entry.first, entry.second }) |maybe| {
+            const loc = maybe orelse continue;
+            if (self.tags.items[loc.tet] == .outside) {
+                outside = loc.tet;
+            } else {
+                if (inside != null) return null; // both sides inside: no longer a boundary
+                inside = .{ .tet = loc.tet, .face = loc.face };
+            }
+        }
+        const in = inside orelse return null;
+        return .{ .inside = in.tet, .face_idx = in.face, .outside = outside };
+    }
+
     fn ensureTagsCapacity(self: *Wrapper, a: Allocator) Allocator.Error!void {
         while (self.tags.items.len < self.tri.tetrahedra.items.len) {
             try self.tags.append(a, .inside); // placeholder; real new tets get set explicitly below
         }
+    }
+
+    fn containsBoth(f: delaunay.Triangulation.Face, e0: usize, e1: usize) bool {
+        var has0 = false;
+        var has1 = false;
+        for (f.vertices) |v| {
+            if (v == e0) has0 = true;
+            if (v == e1) has1 = true;
+        }
+        return has0 and has1;
+    }
+
+    /// Walks the tets around edge (e0, e1), leaving `start` through `first_face`.
+    /// Returns true if the walk came back to `start` (closed ring), false if it hit the hull.
+    fn walkEdgeRing(
+        self: *const Wrapper,
+        a: Allocator,
+        start: usize,
+        first_face: usize,
+        e0: usize,
+        e1: usize,
+        out: *std.ArrayList(usize),
+    ) Allocator.Error!bool {
+        var cur = start;
+        var face_idx = first_face;
+        while (true) {
+            const tet = self.tri.tetrahedra.items[cur].?;
+            const loc = self.tri.adjacency.neighborLocation(cur, face_idx, tet) orelse return false;
+            if (loc.tet == start) return true;
+            try out.append(a, loc.tet);
+
+            // leave the neighbor through its other face that contains the edge
+            const nt = self.tri.tetrahedra.items[loc.tet].?;
+            cur = loc.tet;
+            face_idx = for (nt.faces(), 0..) |f, fi| {
+                if (fi != loc.face and containsBoth(f, e0, e1)) break fi;
+            } else unreachable;
+        }
+    }
+
+    /// True if tagging `tet_idx` as .outside leaves every one of its edges manifold.
+    fn carveKeepsEdgesManifold(self: *const Wrapper, a: Allocator, tet_idx: usize) Allocator.Error!bool {
+        const tet = self.tri.tetrahedra.items[tet_idx].?;
+        const v = tet.vertices;
+        const edges = [6][2]usize{
+            .{ v[0], v[1] }, .{ v[0], v[2] }, .{ v[0], v[3] },
+            .{ v[1], v[2] }, .{ v[1], v[3] }, .{ v[2], v[3] },
+        };
+
+        for (edges) |e| {
+            var side: [2]usize = undefined;
+            var n: usize = 0;
+            for (tet.faces(), 0..) |f, fi| {
+                if (containsBoth(f, e[0], e[1])) {
+                    side[n] = fi;
+                    n += 1;
+                }
+            }
+            std.debug.assert(n == 2);
+
+            var fwd: std.ArrayListUnmanaged(usize) = .empty;
+            defer fwd.deinit(a);
+            var bwd: std.ArrayListUnmanaged(usize) = .empty;
+            defer bwd.deinit(a);
+
+            const closed = try self.walkEdgeRing(a, tet_idx, side[0], e[0], e[1], &fwd);
+            if (!closed) _ = try self.walkEdgeRing(a, tet_idx, side[1], e[0], e[1], &bwd);
+
+            // "is outside" flags around the edge, with this tet counted as carved.
+            // An open ring ends at the hull, which counts as outside.
+            var flags: std.ArrayListUnmanaged(bool) = .empty;
+            defer flags.deinit(a);
+            if (!closed) try flags.append(a, true);
+            var i = bwd.items.len;
+            while (i > 0) {
+                i -= 1;
+                try flags.append(a, self.tags.items[bwd.items[i]] == .outside);
+            }
+            try flags.append(a, true);
+            for (fwd.items) |t| try flags.append(a, self.tags.items[t] == .outside);
+            if (!closed) try flags.append(a, true);
+
+            var changes: usize = 0;
+            for (0..flags.items.len - 1) |k| {
+                if (flags.items[k] != flags.items[k + 1]) changes += 1;
+            }
+            if (closed and flags.items[0] != flags.items[flags.items.len - 1]) changes += 1;
+            if (changes > 2) {
+                std.debug.print(
+                    "REFUSED carve of tet {} at edge ({}, {}): closed={} flags={any} changes={}\n",
+                    .{ tet_idx, e[0], e[1], closed, flags.items, changes },
+                );
+                return false;
+            }
+        }
+        return true;
     }
 
     /// For a tetrahedron known to be .inside, pushes a gate for every one
@@ -64,40 +175,18 @@ pub const Wrapper = struct {
         tet_idx: usize,
         tet: delaunay.Tetrahedron,
         alpha: f32,
-        max_radius: f32, //  the radius of the gate that triggered this insertion
     ) Allocator.Error!void {
         for (tet.faces(), 0..) |face, face_idx| {
-            const loc = self.tri.adjacency.neighborLocation(tet_idx, face_idx, tet) orelse continue;
-            if (self.tags.items[loc.tet] != .outside) continue;
-
+            // no neighbor = hull face = borders the exterior, which is a gate too
+            if (self.tri.adjacency.neighborLocation(tet_idx, face_idx, tet)) |loc| {
+                if (self.tags.items[loc.tet] != .outside) continue;
+            }
             const radius = face.circumradius(self.tri) catch continue;
             if (radius <= alpha) continue;
-            if (radius >= max_radius) continue;
-
-            try queue.push(a, .{
-                .tet_idx = tet_idx,
-                .face_idx = face_idx,
-                .from_tet_idx = loc.tet,
-                .radius = radius,
-            });
+            try queue.push(a, .{ .face = face.key(), .radius = radius });
         }
     }
 
-    /// TEMP?
-    /// uses the inside cell's own circumcenter as both endpoints when there's no real outside cell
-    /// effectively a zero-length segment, meaning segmentOffsetIntersection will just check whether
-    /// that single point crosses the offset threshold. That's a reasonable
-    /// approximation for "entering from the true exterior" but isn't exactly what the paper describes
-    /// (which relies on the infinite cells having well-defined circumcenters too, a concept we don't have
-    /// in this simpler bounded-super-tetrahedron approach).
-    /// Worth flagging as an approximation, not a fully faithful translation
-    /// if it causes weird behavior at the outer hull specifically, this is the place to revisit.
-    const NO_OUTSIDE_CELL = std.math.maxInt(usize);
-    /// Shrink-wraps the triangulation: floods from the outer boundary
-    /// inward, tagging tetrahedra `.outside` wherever alpha-traversable
-    /// and not blocked. Cells are never removed, only tagged — the final
-    /// wrapped surface is the boundary between .inside and .outside cells.
-    ///
     /// TODO(oracle): currently a stub that never blocks traversal (no
     /// Steiner point insertion, no offset-surface intersection checks).
     /// A future pass replaces the hardcoded "always carve" with real
@@ -125,94 +214,98 @@ pub const Wrapper = struct {
                 const radius = face.circumradius(self.tri) catch @panic("Degenerate face?");
                 if (radius <= alpha) continue;
 
-                try queue.push(a, .{
-                    .tet_idx = entry.index,
-                    .face_idx = face_idx,
-                    .from_tet_idx = NO_OUTSIDE_CELL,
-                    .radius = radius,
-                });
+                try queue.push(a, .{ .face = face.key(), .radius = radius });
             }
         }
 
         while (queue.pop()) |gate| {
-            // stale gate
-            if (self.tags.items[gate.tet_idx] == .outside) continue;
-            // A gate whose entry face is already too small to traverse isn't eligible for refinement either
+            // if (self.tags.items[gate.tet_idx] == .outside) continue;
             if (gate.radius <= alpha) continue;
-            // skip if tombstoned since queued
-            const tet = self.tri.tetrahedra.items[gate.tet_idx] orelse continue;
+            const g = self.resolveGate(gate) orelse continue;
+            const tet = self.tri.tetrahedra.items[g.inside].?;
 
-            const circumsphere = tet.circumsphere(self.tri) catch {
-                self.tags.items[gate.tet_idx] = .outside;
-                continue;
-            };
-            const from_point: Vec3 = blk: {
-                // No exterior Voronoi vertex exists in bounded Delaunay.
-                // Approximate by testing the hull Voronoi vertex itself.
-                if (gate.from_tet_idx == NO_OUTSIDE_CELL)
-                    break :blk circumsphere.center;
+            if (tet.circumsphere(self.tri)) |circumsphere| {
+                const from_point: Vec3 = blk: {
+                    if (g.outside) |out_idx| {
+                        // Real outside neighbor: use its circumcenter (the other end of the Voronoi edge).
+                        const out_tet = self.tri.tetrahedra.items[out_idx] orelse break :blk circumsphere.center;
+                        const out_sphere = out_tet.circumsphere(self.tri) catch break :blk circumsphere.center;
+                        break :blk out_sphere.center;
+                    }
 
-                const from_tet = self.tri.tetrahedra.items[gate.from_tet_idx] orelse break :blk circumsphere.center;
-                const from_sphere = from_tet.circumsphere(self.tri) catch break :blk circumsphere.center;
-                break :blk from_sphere.center;
-            };
-            var new_tets: std.ArrayList(usize) = try .initCapacity(a, 64);
-            defer new_tets.deinit(a);
-
-            if (oracle.segmentOffsetIntersection(from_point, circumsphere.center, offset)) |steiner| {
-
-                // Can't usefully refine here; treat as resolved without inserting.
-                if (tooCloseToExisting(self.tri, steiner, min_steiner_separation)) continue;
-
-                new_tets.clearRetainingCapacity();
-
-                _ = self.tri.addVertexTracked(a, steiner, &new_tets) catch |err| switch (err) {
-                    error.DegenerateCavity, error.PointOutsideTriangulation => continue,
-                    else => return err,
+                    // Hull gate: no outside cell exists. Use a point just outside the face
+                    // instead, so the segment test can find the outer offset shell.
+                    const f = tet.faces()[g.face_idx];
+                    const p0 = self.tri.vertices.items[f.vertices[0]];
+                    const p1 = self.tri.vertices.items[f.vertices[1]];
+                    const p2 = self.tri.vertices.items[f.vertices[2]];
+                    const n = Vec3.cross(p1.sub(p0), p2.sub(p0)).normalized(); // outward, per faces() winding
+                    const centroid = p0.add(p1).add(p2).mul(1.0 / 3.0);
+                    break :blk centroid.add(n.mul(circumsphere.radius));
                 };
 
-                try self.ensureTagsCapacity(a);
-                for (new_tets.items) |idx| self.tags.items[idx] = .inside;
-                for (new_tets.items) |idx| {
-                    const new_tet = self.tri.tetrahedra.items[idx].?;
-                    try self.pushGatesIntoInsideTet(a, &queue, idx, new_tet, alpha, gate.radius);
+                var new_tets: std.ArrayList(usize) = try .initCapacity(a, 64);
+                defer new_tets.deinit(a);
+
+                if (oracle.segmentOffsetIntersection(from_point, circumsphere.center, offset)) |steiner| {
+
+                    // Can't usefully refine here; treat as resolved without inserting.
+                    if (tooCloseToExisting(self.tri, steiner, min_steiner_separation)) continue;
+
+                    new_tets.clearRetainingCapacity();
+
+                    _ = self.tri.addVertexTracked(a, steiner, &new_tets) catch |err| switch (err) {
+                        error.DegenerateCavity, error.PointOutsideTriangulation => continue,
+                        else => return err,
+                    };
+
+                    try self.ensureTagsCapacity(a);
+                    for (new_tets.items) |idx| self.tags.items[idx] = .inside;
+                    for (new_tets.items) |idx| {
+                        const new_tet = self.tri.tetrahedra.items[idx].?;
+                        try self.pushGatesIntoInsideTet(a, &queue, idx, new_tet, alpha);
+                    }
+                    try queue.push(a, gate);
+                    continue;
                 }
-                continue;
-            }
 
-            if (oracle.tetIntersectsMesh(self.tri, tet)) {
-                const proj = oracle.projectToOffset(circumsphere.center, offset);
+                if (oracle.tetIntersectsMesh(self.tri, tet)) {
+                    const proj = oracle.projectToOffset(circumsphere.center, offset);
 
-                std.debug.print("attempting steiner {any}, existing verts {}\n", .{ proj, self.tri.vertices.items.len });
+                    if (tooCloseToExisting(self.tri, proj, min_steiner_separation)) continue;
+                    new_tets.clearRetainingCapacity();
+                    _ = self.tri.addVertexTracked(a, proj, &new_tets) catch |err| switch (err) {
+                        error.DegenerateCavity, error.PointOutsideTriangulation => continue,
+                        else => return err,
+                    };
 
-                if (tooCloseToExisting(self.tri, proj, min_steiner_separation)) continue;
-                new_tets.clearRetainingCapacity();
-                _ = self.tri.addVertexTracked(a, proj, &new_tets) catch |err| switch (err) {
-                    error.DegenerateCavity, error.PointOutsideTriangulation => continue,
-                    else => return err,
-                };
-
-                try self.ensureTagsCapacity(a);
-                for (new_tets.items) |idx| self.tags.items[idx] = .inside;
-                for (new_tets.items) |idx| {
-                    const new_tet = self.tri.tetrahedra.items[idx].?;
-                    try self.pushGatesIntoInsideTet(a, &queue, idx, new_tet, alpha, gate.radius);
+                    try self.ensureTagsCapacity(a);
+                    for (new_tets.items) |idx| self.tags.items[idx] = .inside;
+                    for (new_tets.items) |idx| {
+                        const new_tet = self.tri.tetrahedra.items[idx].?;
+                        try self.pushGatesIntoInsideTet(a, &queue, idx, new_tet, alpha);
+                    }
+                    try queue.push(a, gate);
+                    continue;
                 }
-                continue;
+            } else |_| {
+                // Sliver with no circumcenter: no Voronoi test is possible, but never
+                // carve a cell that touches the input.
+                if (oracle.tetIntersectsMesh(self.tri, tet)) continue;
             }
-
-            self.tags.items[gate.tet_idx] = .outside;
+            if (!try self.carveKeepsEdgesManifold(a, g.inside)) continue;
+            self.tags.items[g.inside] = .outside;
 
             for (tet.faces(), 0..) |tface, tface_idx| {
-                if (tface_idx == gate.face_idx) continue; // don't re-cross the tface we entered through
-                const loc = self.tri.adjacency.neighborLocation(gate.tet_idx, tface_idx, tet) orelse continue;
+                if (tface_idx == g.face_idx) continue; // don't re-cross the tface we entered through
+                const loc = self.tri.adjacency.neighborLocation(g.inside, tface_idx, tet) orelse continue;
                 if (self.tags.items[loc.tet] == .outside) continue;
                 const radius = tface.circumradius(self.tri) catch continue;
                 if (radius <= alpha) continue;
                 try queue.push(a, .{
-                    .tet_idx = loc.tet,
-                    .face_idx = loc.face,
-                    .from_tet_idx = gate.tet_idx,
+                    // .tet_idx = loc.tet,
+                    .face = tface.key(),
+                    // .from_tet_idx = gate.tet_idx,
                     .radius = radius,
                 });
             }
@@ -252,7 +345,10 @@ const TEST_ALPHA: f32 = 0.5;
 
 test "Wrapper.run with stub oracle carves the entire single-tet triangulation" {
     const a = std.testing.allocator;
-    var tri = try delaunay.Triangulation.init(a, .{ .min = Vec3.make(-5, -5, -5), .max = Vec3.make(5, 5, 5) });
+    var tri = try delaunay.Triangulation.init(a, .{
+        .min = .{ -5, -5, -5 },
+        .max = .{ 5, 5, 5 },
+    });
     defer tri.deinit(a);
 
     var wrapper = try Wrapper.init(&tri, a);
@@ -290,12 +386,20 @@ test "Wrapper.run with stub oracle carves the entire single-tet triangulation" {
 
     try wrapper.run(a, TEST_ALPHA, 1.0, oracle);
 
-    try std.testing.expectEqual(Tag.outside, wrapper.tags.items[0]);
+    var outside_count: usize = 0;
+    for (wrapper.tags.items, 0..) |tag, i| {
+        if (tri.tetrahedra.items[i] != null and tag == .outside) outside_count += 1;
+    }
+    try std.testing.expect(outside_count > 0);
+    try expectInputEnclosed(&wrapper, oracle);
 }
 
 test "Steiner point insertion strictly shrinks the triggering facet's circumradius" {
     const a = std.testing.allocator;
-    var tri = try delaunay.Triangulation.init(a, .{ .min = Vec3.make(-5, -5, -5), .max = Vec3.make(5, 5, 5) });
+    var tri = try delaunay.Triangulation.init(a, .{
+        .min = .{ -5, -5, -5 },
+        .max = .{ 5, 5, 5 },
+    });
     defer tri.deinit(a);
 
     const tet = tri.tetrahedra.items[0].?;
@@ -441,7 +545,10 @@ test "projectToOffset produces near-duplicate points for different circumcenters
 
 test "inserting a Steiner point mid-flood correctly tags and gates new tetrahedra" {
     const a = std.testing.allocator;
-    var tri = try delaunay.Triangulation.init(a, .{ .min = Vec3.make(-5, -5, -5), .max = Vec3.make(5, 5, 5) });
+    var tri = try delaunay.Triangulation.init(a, .{
+        .min = .{ -5, -5, -5 },
+        .max = .{ 5, 5, 5 },
+    });
     defer tri.deinit(a);
 
     var wrapper = try Wrapper.init(&tri, a);
@@ -466,7 +573,10 @@ test "inserting a Steiner point mid-flood correctly tags and gates new tetrahedr
 
 test "Wrapper.run produces a wrap that strictly encloses the input mesh" {
     const a = std.testing.allocator;
-    const aabb = delaunay.Aabb{ .min = Vec3.make(-10, -10, -10), .max = Vec3.make(10, 10, 10) };
+    const aabb = Meshes3D.Aabb3D{
+        .min = .{ -10, -10, -10 },
+        .max = .{ 10, 10, 10 },
+    };
 
     var tri = try delaunay.Triangulation.init(a, aabb);
     defer tri.deinit(a);
@@ -515,11 +625,6 @@ test "Wrapper.run produces a wrap that strictly encloses the input mesh" {
                     .{ p, entry.index },
                 );
             } else found_containing_inside_tet = true;
-
-            std.debug.print(
-                "tet intersects? {}\n",
-                .{oracle.tetIntersectsMesh(&tri, entry.tet)},
-            );
         }
 
         try std.testing.expect(found_containing_inside_tet);
@@ -528,7 +633,10 @@ test "Wrapper.run produces a wrap that strictly encloses the input mesh" {
 
 test "Wrapper.run respects alpha: a large alpha prevents carving through a tight cavity" {
     const a = std.testing.allocator;
-    const aabb = delaunay.Aabb{ .min = Vec3.make(-10, -10, -10), .max = Vec3.make(10, 10, 10) };
+    const aabb = Meshes3D.Aabb3D{
+        .min = .{ -10, -10, -10 },
+        .max = .{ 10, 10, 10 },
+    };
 
     var tri = try delaunay.Triangulation.init(a, aabb);
     defer tri.deinit(a);
@@ -587,7 +695,10 @@ test "Wrapper.run respects alpha: a large alpha prevents carving through a tight
 
 test "Wrapper.init tags every tetrahedron .inside before run()" {
     const a = std.testing.allocator;
-    const aabb = delaunay.Aabb{ .min = Vec3.make(-10, -10, -10), .max = Vec3.make(10, 10, 10) };
+    const aabb = Meshes3D.Aabb3D{
+        .min = .{ -10, -10, -10 },
+        .max = .{ 10, 10, 10 },
+    };
 
     var tri = try delaunay.Triangulation.init(a, aabb);
     defer tri.deinit(a);
@@ -745,50 +856,40 @@ pub const MeshOracle = struct {
     /// exact (a sufficiently thin feature between samples could be
     /// missed) but matches the "inexact by construction" nature of the
     /// original algorithm, which also has no closed-form solution here.
+    ///
     pub fn segmentOffsetIntersection(self: MeshOracle, from: Vec3, to: Vec3, offset: f32) ?Vec3 {
-        const f = struct {
-            fn eval(oracle: MeshOracle, off: f32, p: Vec3) f32 {
-                return oracle.distance(p) - off;
-            }
-        }.eval;
+        const dir = to.sub(from);
+        const len = dir.norm();
+        if (len < 1e-9) return null;
 
+        const start_inside = self.distance(from) <= offset;
+        const tol = offset * 1e-3;
+
+        var t: f32 = 0.0; // distance travelled along the segment
         var prev_t: f32 = 0.0;
-        var prev_val = f(self, offset, from);
+        var iters: usize = 0;
+        while (iters < 512) : (iters += 1) {
+            const p = from.add(dir.mul(t / len));
+            const val = self.distance(p) - offset;
 
-        var i: usize = 1;
-        while (i <= SEGMENT_SAMPLE_COUNT) : (i += 1) {
-            const t: f32 = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(SEGMENT_SAMPLE_COUNT));
-            const p = from.add(to.sub(from).mul(t));
-            const val = f(self, offset, p);
+            if (@abs(val) < tol) return p; // on the shell
 
-            if ((prev_val <= 0) != (val <= 0)) {
-                // sign change between prev_t and t: bisect to refine
-                var lo_t = prev_t;
-                var hi_t = t;
-                var lo_val = prev_val;
-
-                var iter: usize = 0;
-                while (iter < 20) : (iter += 1) {
-                    const mid_t = (lo_t + hi_t) * 0.5;
-                    const mid_p = from.add(to.sub(from).mul(mid_t));
-                    const mid_val = f(self, offset, mid_p);
-
-                    if ((mid_val <= 0) == (lo_val <= 0)) {
-                        lo_t = mid_t;
-                        lo_val = mid_val;
-                    } else {
-                        hi_t = mid_t;
-                    }
+            if ((val <= 0) != start_inside) {
+                // stepped across: bisect between prev_t and t
+                var lo = prev_t;
+                var hi = t;
+                for (0..30) |_| {
+                    const mid = (lo + hi) * 0.5;
+                    const mv = self.distance(from.add(dir.mul(mid / len))) - offset;
+                    if ((mv <= 0) == start_inside) lo = mid else hi = mid;
                 }
-
-                const result_t = (lo_t + hi_t) * 0.5;
-                return from.add(to.sub(from).mul(result_t));
+                return from.add(dir.mul(((lo + hi) * 0.5) / len));
             }
 
             prev_t = t;
-            prev_val = val;
+            t += @max(@abs(val), tol);
+            if (t > len) return null;
         }
-
         return null;
     }
 
@@ -868,8 +969,190 @@ pub const MeshOracle = struct {
                     }
                 }
             }
+
+            // Case 3: any tet edge pierces the mesh triangle
+            // (the dominant case when triangles are larger than the tets)
+            const tv = tet.actualVertices(tri);
+            const tet_edges = [6][2]usize{
+                .{ 0, 1 }, .{ 0, 2 }, .{ 0, 3 }, .{ 1, 2 }, .{ 1, 3 }, .{ 2, 3 },
+            };
+            for (tet_edges) |e| {
+                if (segmentTriangleIntersection(tv[e[0]], tv[e[1]], mesh_tri) != null) return true;
+            }
         }
 
         return false;
     }
 };
+
+// Paste at the bottom of alpha_wrapping.zig. No changes to Wrapper needed.
+
+fn cubeVertex(x: f32, y: f32, z: f32) mesh_mod.Vertex3D {
+    return .{ .position = Vec4.make(x, y, z, 1), .normal = Vec4.ZERO, .uv = Vec2.ZERO, .color = Vec4.ZERO };
+}
+
+/// Every directed edge must appear exactly once (consistent winding, no
+/// non-manifold edges) and have its reverse present (no holes).
+fn expectClosedAndOriented(a: Allocator, faces: []const delaunay.Triangulation.Face) !void {
+    var directed = std.AutoHashMap([2]usize, void).init(a);
+    defer directed.deinit();
+
+    for (faces) |f| {
+        for (0..3) |i| {
+            const e = [2]usize{ f.vertices[i], f.vertices[(i + 1) % 3] };
+            if (try directed.fetchPut(e, {}) != null) return error.NonManifoldOrInconsistentWinding;
+        }
+    }
+
+    var open_edges: usize = 0;
+    var it = directed.keyIterator();
+    while (it.next()) |e| {
+        if (!directed.contains(.{ e[1], e[0] })) open_edges += 1;
+    }
+    if (open_edges != 0) {
+        std.debug.print("open edges: {}\n", .{open_edges});
+        return error.OpenEdges;
+    }
+}
+
+/// No wrap face may use one of the 4 super-tetrahedron vertices (indices 0..3).
+fn expectNoSuperVertices(faces: []const delaunay.Triangulation.Face) !void {
+    for (faces) |f| {
+        for (f.vertices) |v| {
+            if (v < 4) return error.WrapTouchesSuperTetrahedron;
+        }
+    }
+}
+
+/// Face normals must point away from the input mesh.
+fn expectFacesPointOutward(
+    tri: *const delaunay.Triangulation,
+    oracle: MeshOracle,
+    faces: []const delaunay.Triangulation.Face,
+) !void {
+    var inward: usize = 0;
+    for (faces) |f| {
+        const p0 = tri.vertices.items[f.vertices[0]];
+        const p1 = tri.vertices.items[f.vertices[1]];
+        const p2 = tri.vertices.items[f.vertices[2]];
+        const centroid = p0.add(p1).add(p2).mul(1.0 / 3.0);
+        const n = Vec3.cross(p1.sub(p0), p2.sub(p0));
+        const away = centroid.sub(oracle.closestPoint(centroid).point);
+        if (Vec3.dot(n, away) < 0) inward += 1;
+    }
+    if (inward != 0) {
+        std.debug.print("{} of {} faces point toward the mesh\n", .{ inward, faces.len });
+        return error.FacesPointInward;
+    }
+}
+
+/// Every wrap vertex must sit at least (about) `offset` away from the input.
+fn expectOffsetRespected(
+    tri: *const delaunay.Triangulation,
+    oracle: MeshOracle,
+    faces: []const delaunay.Triangulation.Face,
+    offset: f32,
+) !void {
+    var closest: f32 = std.math.inf(f32);
+    for (faces) |f| {
+        for (f.vertices) |vi| {
+            closest = @min(closest, oracle.distance(tri.vertices.items[vi]));
+        }
+    }
+    if (closest < offset * 0.98) {
+        std.debug.print("closest wrap vertex {d} is inside offset {d}\n", .{ closest, offset });
+        return error.WrapCutsInsideOffset;
+    }
+}
+
+/// Every input vertex must lie in an `.inside` tetrahedron.
+fn expectInputEnclosed(wrapper: *const Wrapper, oracle: MeshOracle) !void {
+    for (oracle.mesh.vertices) |mv| {
+        const p = mv.position.toVec3();
+        var enclosed = false;
+        var it = wrapper.tri.tetrahedronIterator();
+        while (it.next()) |entry| {
+            if (entry.tet.containsPoint(wrapper.tri, p) and wrapper.tags.items[entry.index] == .inside)
+                enclosed = true;
+        }
+        if (!enclosed) return error.InputVertexNotEnclosed;
+    }
+}
+
+fn debugSuperFaces(wrapper: *const Wrapper, faces: []const delaunay.Triangulation.Face) void {
+    var shown: usize = 0;
+    for (faces) |f| {
+        if (f.vertices[0] >= 4 and f.vertices[1] >= 4 and f.vertices[2] >= 4) continue;
+        if (shown >= 10) break;
+        shown += 1;
+
+        const entry = wrapper.tri.adjacency.map.get(f.key()) orelse continue;
+        std.debug.print("super face {any}: ", .{f.vertices});
+        for ([_]@TypeOf(entry.first){ entry.first, entry.second }) |maybe| {
+            if (maybe) |loc| {
+                std.debug.print("[tet {} {s}] ", .{ loc.tet, @tagName(wrapper.tags.items[loc.tet]) });
+            } else {
+                std.debug.print("[none] ", .{});
+            }
+        }
+        std.debug.print("radius={d}\n", .{f.circumradius(wrapper.tri) catch -1});
+    }
+}
+/// All checks together.
+fn expectValidWrap(
+    a: Allocator,
+    wrapper: *const Wrapper,
+    oracle: MeshOracle,
+    offset: f32,
+) !void {
+    const faces = try wrapper.extractBoundaryFaces(a);
+    debugSuperFaces(wrapper, faces);
+    defer a.free(faces);
+
+    try std.testing.expect(faces.len > 0);
+    try expectNoSuperVertices(faces);
+    try expectClosedAndOriented(a, faces);
+    try expectFacesPointOutward(wrapper.tri, oracle, faces);
+    try expectOffsetRespected(wrapper.tri, oracle, faces, offset);
+    try expectInputEnclosed(wrapper, oracle);
+}
+
+test "wrapping a cube yields a valid wrap" {
+    const a = std.testing.allocator;
+
+    // Cube [-1, 1]^3, outward (counter-clockwise from outside) winding.
+    const mesh = try mesh_mod.Mesh3D.init(
+        a,
+        &.{
+            cubeVertex(-1, -1, -1), cubeVertex(1, -1, -1), cubeVertex(1, 1, -1), cubeVertex(-1, 1, -1),
+            cubeVertex(-1, -1, 1),  cubeVertex(1, -1, 1),  cubeVertex(1, 1, 1),  cubeVertex(-1, 1, 1),
+        },
+        &.{
+            0, 2, 1, 0, 3, 2, // -z
+            4, 5, 6, 4, 6, 7, // +z
+            0, 1, 5, 0, 5, 4, // -y
+            3, 7, 6, 3, 6, 2, // +y
+            0, 4, 7, 0, 7, 3, // -x
+            1, 2, 6, 1, 6, 5, // +x
+        },
+    );
+    defer mesh.deinit(a);
+
+    const diag: f32 = 2.0 * @sqrt(3.0);
+    const alpha: f32 = diag / 10.0;
+    const offset: f32 = diag / 100.0;
+
+    var tri = try delaunay.Triangulation.init(a, .{
+        .min = .{ -1.5, -1.5, -1.5 },
+        .max = .{ 1.5, 1.5, 1.5 },
+    });
+    defer tri.deinit(a);
+
+    var wrapper = try Wrapper.init(&tri, a);
+    defer wrapper.deinit(a);
+
+    const oracle = MeshOracle{ .mesh = &mesh };
+    try wrapper.run(a, alpha, offset, oracle);
+
+    try expectValidWrap(a, &wrapper, oracle, offset);
+}

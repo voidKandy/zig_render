@@ -15,78 +15,6 @@ const DelaunayError = error{
 };
 const Error = Allocator.Error || DelaunayError;
 
-pub const Aabb = struct {
-    min: Vec3,
-    max: Vec3,
-
-    pub fn computeFromMesh(mesh: mesh_mod.Mesh3D) @This() {
-        std.debug.assert(mesh.vertices.len > 0);
-
-        const first = mesh.vertices[0].position.toVec3();
-
-        var min = first;
-        var max = first;
-
-        for (mesh.vertices[1..]) |vertex| {
-            const p = vertex.position.toVec3();
-
-            min.x = @min(min.x, p.x);
-            min.y = @min(min.y, p.y);
-            min.z = @min(min.z, p.z);
-
-            max.x = @max(max.x, p.x);
-            max.y = @max(max.y, p.y);
-            max.z = @max(max.z, p.z);
-        }
-
-        return .{
-            .min = min,
-            .max = max,
-        };
-    }
-
-    /// Returns corners in order shown below
-    ///     7------6
-    ///    /|     /|
-    ///   4------5 |
-    ///   | |    | |
-    ///   | 3----|-2
-    ///   |/     |/
-    ///   0------1
-    ///
-    pub fn corners(self: Aabb) [8]Vec3 {
-        return .{
-            Vec3.make(self.min.x, self.min.y, self.min.z), // 0
-            Vec3.make(self.max.x, self.min.y, self.min.z), // 1
-            Vec3.make(self.max.x, self.max.y, self.min.z), // 2
-            Vec3.make(self.min.x, self.max.y, self.min.z), // 3
-
-            Vec3.make(self.min.x, self.min.y, self.max.z), // 4
-            Vec3.make(self.max.x, self.min.y, self.max.z), // 5
-            Vec3.make(self.max.x, self.max.y, self.max.z), // 6
-            Vec3.make(self.min.x, self.max.y, self.max.z), // 7
-        };
-    }
-
-    pub fn center(self: Aabb) Vec3 {
-        return self.min.add(self.max).mul(0.5);
-    }
-
-    pub fn size(self: Aabb) Vec3 {
-        return self.max.sub(self.min);
-    }
-
-    pub fn diagonal(self: Aabb) f32 {
-        return self.max.sub(self.min).norm();
-    }
-
-    pub fn expand(self: *Aabb, amount: f32) void {
-        const delta = Vec3.make(amount, amount, amount);
-        self.min = self.min.sub(delta);
-        self.max = self.max.add(delta);
-    }
-};
-
 pub const Tetrahedron = struct {
     /// we store vertices indices
     vertices: [4]usize,
@@ -252,7 +180,7 @@ pub const Triangulation = struct {
         vertices: [3]usize,
 
         /// canonical form for equality checks, independent of winding
-        fn key(self: @This()) [3]usize {
+        pub fn key(self: @This()) [3]usize {
             var k = self.vertices;
             std.mem.sort(usize, &k, {}, std.sort.asc(usize));
             return k;
@@ -383,7 +311,7 @@ pub const Triangulation = struct {
 
     /// creates a single large tetrahedron that fits the
     /// entirety of the aabb
-    pub fn init(a: Allocator, aabb: Aabb) Allocator.Error!@This() {
+    pub fn init(a: Allocator, aabb: core.resources.Meshes3D.Aabb3D) Allocator.Error!@This() {
         var tri = @This(){
             .vertices = try std.ArrayList(Vec3).initCapacity(a, 64),
             .free_slots = std.AutoHashMap(usize, void).init(a),
@@ -609,49 +537,55 @@ pub const Triangulation = struct {
         }
     }
 
-    /// Same as addVertex, but appends the index of every newly-created
-    /// tetrahedron to `new_tets`. Used by callers (e.g. alpha-wrapping)
-    /// that need to know exactly what changed as a result of insertion.
+    fn insertVertex(
+        self: *@This(),
+        a: Allocator,
+        point: Vec3,
+        new_tets: ?*std.ArrayList(usize),
+    ) Error!usize {
+        const cavity = (try self.findCavity(a, point)) orelse return error.PointOutsideTriangulation;
+        defer a.free(cavity);
+
+        const boundary = try self.findBoundaryFaces(a, cavity);
+        defer a.free(boundary);
+
+        // Validate BEFORE mutating, so a rejected point leaves the triangulation untouched.
+        if (!isValidCavityBoundary(boundary)) return error.DegenerateCavity;
+        if (!self.isStarShapedAround(boundary, point)) return error.DegenerateCavity;
+
+        const new_vertex_idx = self.vertices.items.len;
+        try self.vertices.append(a, point);
+        try self.removeTetrahedra(cavity);
+        try self.fillCavity(a, boundary, @intCast(new_vertex_idx), new_tets);
+        return new_vertex_idx;
+    }
+
+    pub fn addVertex(self: *@This(), a: Allocator, point: Vec3) Error!usize {
+        return self.insertVertex(a, point, null);
+    }
+
     pub fn addVertexTracked(
         self: *@This(),
         a: Allocator,
         point: Vec3,
         new_tets: *std.ArrayList(usize),
     ) Error!usize {
-        const new_vertex_idx = self.vertices.items.len;
-        try self.vertices.append(a, point);
-
-        const cavity = (try self.findCavity(a, point)) orelse return error.PointOutsideTriangulation;
-        defer a.free(cavity);
-
-        const boundary = try self.findBoundaryFaces(a, cavity);
-        defer a.free(boundary);
-
-        try self.removeTetrahedra(cavity);
-        if (!isValidCavityBoundary(boundary)) return error.DegenerateCavity;
-        try self.fillCavity(a, boundary, @intCast(new_vertex_idx), new_tets);
-
-        return new_vertex_idx;
+        return self.insertVertex(a, point, new_tets);
     }
 
-    pub fn addVertex(self: *@This(), a: Allocator, point: Vec3) Error!usize {
-        const new_vertex_idx = self.vertices.items.len;
-        try self.vertices.append(a, point);
+    fn isStarShapedAround(self: *const @This(), boundary: []const Triangulation.Face, point: Vec3) bool {
+        for (boundary) |face| {
+            const p0 = self.vertices.items[face.vertices[0]];
+            const p1 = self.vertices.items[face.vertices[1]];
+            const p2 = self.vertices.items[face.vertices[2]];
 
-        const cavity = (try self.findCavity(a, point)) orelse return error.PointOutsideTriangulation;
-        defer a.free(cavity);
-
-        const boundary = try self.findBoundaryFaces(a, cavity);
-        defer a.free(boundary);
-
-        try self.removeTetrahedra(cavity);
-
-        if (!isValidCavityBoundary(boundary)) return error.DegenerateCavity;
-        try self.fillCavity(a, boundary, @intCast(new_vertex_idx), null);
-
-        return new_vertex_idx;
+            const vol = Tetrahedron.signedVolume(p0, p1, p2, point);
+            // scale-relative tolerance so small tets near the mesh aren't misjudged
+            const scale = p1.sub(p0).norm() * p2.sub(p0).norm() * point.sub(p0).norm();
+            if (vol >= -1e-6 * scale) return false;
+        }
+        return true;
     }
-
     /// Debug-only integrity check: verifies that `boundary` describes a
     /// well-formed cavity boundary before we attempt to stitch new
     /// tetrahedra onto it. Catches cavity/adjacency corruption at its
@@ -699,7 +633,10 @@ pub const Triangulation = struct {
 
 test "Triangulation.Face.circumradius matches closed form for equilateral triangle" {
     const a = std.testing.allocator;
-    var tri = try Triangulation.init(a, .{ .min = Vec3.make(-10, -10, -10), .max = Vec3.make(10, 10, 10) });
+    var tri = try Triangulation.init(a, .{
+        .min = .{ -10, -10, -10 },
+        .max = .{ 10, 10, 10 },
+    });
     defer tri.deinit(a);
     tri.tetrahedra.clearRetainingCapacity();
 
@@ -722,7 +659,10 @@ test "Triangulation.Face.circumradius matches closed form for equilateral triang
 
 test "Triangulation.Face.circumradius returns error for degenerate (collinear) triangle" {
     const a = std.testing.allocator;
-    var tri = try Triangulation.init(a, .{ .min = Vec3.make(-10, -10, -10), .max = Vec3.make(10, 10, 10) });
+    var tri = try Triangulation.init(a, .{
+        .min = .{ -10, -10, -10 },
+        .max = .{ 10, 10, 10 },
+    });
     defer tri.deinit(a);
     tri.tetrahedra.clearRetainingCapacity();
 
@@ -741,8 +681,8 @@ test "all tetrahedra have positive volume after insertions" {
     const a = std.testing.allocator;
 
     var tri = try Triangulation.init(a, .{
-        .min = Vec3.make(-5, -5, -5),
-        .max = Vec3.make(5, 5, 5),
+        .min = .{ -5, -5, -5 },
+        .max = .{ 5, 5, 5 },
     });
     defer tri.deinit(a);
 
@@ -777,8 +717,8 @@ test "every face belongs to at most two tetrahedra" {
     const a = std.testing.allocator;
 
     var tri = try Triangulation.init(a, .{
-        .min = Vec3.make(-5, -5, -5),
-        .max = Vec3.make(5, 5, 5),
+        .min = .{ -5, -5, -5 },
+        .max = .{ 5, 5, 5 },
     });
     defer tri.deinit(a);
 
@@ -812,8 +752,8 @@ test "adjacency entries reference valid tetrahedra" {
     const a = std.testing.allocator;
 
     var tri = try Triangulation.init(a, .{
-        .min = Vec3.make(-5, -5, -5),
-        .max = Vec3.make(5, 5, 5),
+        .min = .{ -5, -5, -5 },
+        .max = .{ 5, 5, 5 },
     });
     defer tri.deinit(a);
 
@@ -851,8 +791,8 @@ test "100 random insertions remain valid" {
     const a = std.testing.allocator;
 
     var tri = try Triangulation.init(a, .{
-        .min = Vec3.make(-10, -10, -10),
-        .max = Vec3.make(10, 10, 10),
+        .min = .{ -10, -10, -10 },
+        .max = .{ 10, 10, 10 },
     });
     defer tri.deinit(a);
 
@@ -885,8 +825,8 @@ test "triangulation satisfies delaunay condition" {
     const a = std.testing.allocator;
 
     var tri = try Triangulation.init(a, .{
-        .min = Vec3.make(-5, -5, -5),
-        .max = Vec3.make(5, 5, 5),
+        .min = .{ -5, -5, -5 },
+        .max = .{ 5, 5, 5 },
     });
     defer tri.deinit(a);
 

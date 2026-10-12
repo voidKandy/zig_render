@@ -209,17 +209,17 @@ fn createEntities(
         const idx = resources.meshes3D.mesh_indices.get("viking_room.obj").?;
         const bounds = resources.meshes3D.bounds.items[idx];
         const extents = bounds.extents();
-        const center = bounds.center(); // {0, 0, extents.z} after bottom-center recenter, in general
+        const center = bounds.center();
 
         const local_transform = core.clibs.box3d.Transform{
-            .p = .{ .x = center[0], .y = center[1], .z = center[2] },
+            .p = core.bindings.box3d_usage.fromCoreVec3(center),
             .q = core.bindings.box3d_usage.fromCoreVec4(.IDENTITY), // check exact identity-quat name in your bindings
         };
 
         const box = core.clibs.box3d.MakeTransformedBoxHull(
-            extents[0],
-            extents[1],
-            extents[2],
+            extents.x,
+            extents.y,
+            extents.z,
             local_transform,
         );
 

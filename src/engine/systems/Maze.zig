@@ -187,8 +187,8 @@ pub fn initEntities(
 
     const mesh2d_idx = resources.meshes2D.mesh_indices.get(MAZE_RESOURCE_NAME).?;
     const mesh_bounds = resources.meshes2D.bounds.items[mesh2d_idx];
-    const mesh_width = mesh_bounds.max[0] - mesh_bounds.min[0];
-    const mesh_height = mesh_bounds.max[1] - mesh_bounds.min[1];
+    const mesh_width = mesh_bounds.max.x - mesh_bounds.min.x;
+    const mesh_height = mesh_bounds.max.y - mesh_bounds.min.y;
 
     const margin: f32 = 0.05;
     const coordinates = core.lib.math.Vec2.make(

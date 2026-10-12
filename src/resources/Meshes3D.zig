@@ -6,63 +6,101 @@ const checkVk = core.bindings.vulkan_init.checkVk;
 const math_mod = core.lib.math;
 const vk = core.clibs.vk;
 const log = std.log.scoped(.Meshes3D);
+const Vec3 = core.lib.math.Vec3;
 
 pub const MeshRanges = struct {
     vertex: core.lib.mesh.RangeDesc,
     index: core.lib.mesh.RangeDesc,
 };
 
-pub const Aabb3D = struct {
-    min: [3]f32,
-    max: [3]f32,
+pub const Aabb = struct {
+    min: Vec3,
+    max: Vec3,
 
-    pub fn empty() Aabb3D {
+    pub fn empty() Aabb {
         return .{
-            .min = .{ std.math.inf(f32), std.math.inf(f32), std.math.inf(f32) },
-            .max = .{ -std.math.inf(f32), -std.math.inf(f32), -std.math.inf(f32) },
+            .min = .make(std.math.inf(f32), std.math.inf(f32), std.math.inf(f32)),
+            .max = .make(-std.math.inf(f32), -std.math.inf(f32), -std.math.inf(f32)),
         };
     }
 
-    pub fn expand(self: *Aabb3D, p: [3]f32) void {
-        self.min[0] = @min(self.min[0], p[0]);
-        self.min[1] = @min(self.min[1], p[1]);
-        self.min[2] = @min(self.min[2], p[2]);
-        self.max[0] = @max(self.max[0], p[0]);
-        self.max[1] = @max(self.max[1], p[1]);
-        self.max[2] = @max(self.max[2], p[2]);
+    pub fn expand(self: *Aabb, p: Vec3) void {
+        self.min.x = @min(self.min.x, p.x);
+        self.min.y = @min(self.min.y, p.y);
+        self.min.z = @min(self.min.z, p.z);
+        self.max.x = @max(self.max.x, p.x);
+        self.max.y = @max(self.max.y, p.y);
+        self.max.z = @max(self.max.z, p.z);
     }
 
-    pub fn merge(a: Aabb3D, b: Aabb3D) Aabb3D {
+    /// Returns corners in order shown below
+    ///     7------6
+    ///    /|     /|
+    ///   4------5 |
+    ///   | |    | |
+    ///   | 3----|-2
+    ///   |/     |/
+    ///   0------1
+    ///
+    pub fn corners(self: Aabb) [8]Vec3 {
         return .{
-            .min = .{ @min(a.min[0], b.min[0]), @min(a.min[1], b.min[1]), @min(a.min[2], b.min[2]) },
-            .max = .{ @max(a.max[0], b.max[0]), @max(a.max[1], b.max[1]), @max(a.max[2], b.max[2]) },
+            Vec3.make(self.min.x, self.min.y, self.min.z), // 0
+            Vec3.make(self.max.x, self.min.y, self.min.z), // 1
+            Vec3.make(self.max.x, self.max.y, self.min.z), // 2
+            Vec3.make(self.min.x, self.max.y, self.min.z), // 3
+
+            Vec3.make(self.min.x, self.min.y, self.max.z), // 4
+            Vec3.make(self.max.x, self.min.y, self.max.z), // 5
+            Vec3.make(self.max.x, self.max.y, self.max.z), // 6
+            Vec3.make(self.min.x, self.max.y, self.max.z), // 7
         };
     }
 
-    pub fn fromVertices(verts: []const core.lib.mesh.Vertex3D) Aabb3D {
-        var box = Aabb3D.empty();
-        for (verts) |v| box.expand([3]f32{
+    pub fn diagonal(self: Aabb) f32 {
+        return core.lib.math.Vec3.fromSizedArray(self.max).sub(
+            core.lib.math.Vec3.fromSizedArray(self.min),
+        ).norm();
+    }
+
+    pub fn merge(a: Aabb, b: Aabb) Aabb {
+        return .{
+            .min = .{
+                @min(a.min.x, b.min.x),
+                @min(a.min.y, b.min.y),
+                @min(a.min.z, b.min.z),
+            },
+            .max = .{
+                @max(a.max.x, b.max.x),
+                @max(a.max.y, b.max.y),
+                @max(a.max.z, b.max.z),
+            },
+        };
+    }
+
+    pub fn fromVertices(verts: []const core.lib.mesh.Vertex3D) Aabb {
+        var box = Aabb.empty();
+        for (verts) |v| box.expand(.make(
             v.position.x,
             v.position.y,
             v.position.z,
-        });
+        ));
         return box;
     }
 
-    pub fn center(self: Aabb3D) [3]f32 {
-        return .{
-            (self.min[0] + self.max[0]) * 0.5,
-            (self.min[1] + self.max[1]) * 0.5,
-            (self.min[2] + self.max[2]) * 0.5,
-        };
+    pub fn center(self: Aabb) Vec3 {
+        return .make(
+            (self.min.x + self.max.x) * 0.5,
+            (self.min.y + self.max.y) * 0.5,
+            (self.min.z + self.max.z) * 0.5,
+        );
     }
 
-    pub fn extents(self: Aabb3D) [3]f32 {
-        return .{
-            (self.max[0] - self.min[0]) * 0.5,
-            (self.max[1] - self.min[1]) * 0.5,
-            (self.max[2] - self.min[2]) * 0.5,
-        };
+    pub fn extents(self: Aabb) Vec3 {
+        return .make(
+            (self.max.x - self.min.x) * 0.5,
+            (self.max.y - self.min.y) * 0.5,
+            (self.max.z - self.min.z) * 0.5,
+        );
     }
 
     /// Transforms this object-space AABB by a 4x4 column-major matrix and
@@ -73,12 +111,12 @@ pub const Aabb3D = struct {
     /// `m` is expected as 4 columns of 4 floats (mat[col][row]), matching
     /// typical Vulkan/GLM-style column-major layout — adjust indexing if
     /// your math_mod.Mat4 stores row-major instead.
-    pub fn transform(self: Aabb3D, m: [4][4]f32) Aabb3D {
+    pub fn transform(self: Aabb, m: [4][4]f32) Aabb {
         const c = self.center();
         const e = self.extents();
 
-        var new_center: [3]f32 = undefined;
-        var new_extents: [3]f32 = .{ 0, 0, 0 };
+        var new_center: Vec3 = undefined;
+        var new_extents: Vec3 = .ZERO;
 
         inline for (0..3) |row| {
             new_center[row] = m[3][row]; // translation column
@@ -177,7 +215,7 @@ pub const AllocatedData = struct {
 vertices: std.ArrayList(core.lib.mesh.Vertex3D),
 indices: std.ArrayList(u32),
 ranges: std.ArrayList(MeshRanges),
-bounds: std.ArrayList(Aabb3D),
+bounds: std.ArrayList(Aabb),
 
 mesh_indices: std.StringArrayHashMapUnmanaged(usize) = .empty,
 mesh_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8) = .empty,
@@ -189,7 +227,7 @@ pub fn init(a: std.mem.Allocator) std.mem.Allocator.Error!@This() {
         .vertices = try std.ArrayList(core.lib.mesh.Vertex3D).initCapacity(a, 64),
         .indices = try std.ArrayList(u32).initCapacity(a, 64),
         .ranges = try std.ArrayList(MeshRanges).initCapacity(a, 16),
-        .bounds = try std.ArrayList(Aabb3D).initCapacity(a, 16),
+        .bounds = try std.ArrayList(Aabb).initCapacity(a, 16),
     };
 }
 
@@ -214,7 +252,7 @@ pub fn appendMesh(
     , .{name});
 
     const verts = mesh.vertices;
-    const bounds = Aabb3D.fromVertices(verts);
+    const bounds = Aabb.fromVertices(verts);
 
     const idx = self.ranges.items.len;
     try self.mesh_indices.put(a, name, idx);
