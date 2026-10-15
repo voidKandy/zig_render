@@ -28,7 +28,7 @@ fn closestPointOnTriangle(
 
     const bp = p.sub(b);
     const d3, const d4 = .{ ab.dot(bp), ac.dot(bp) };
-    if (d3 <= 0 and d4 <= 0) return b;
+    if (d3 >= 0 and d4 <= d3) return b;
 
     const vc = d1 * d4 - d3 * d2;
     if (vc <= 0 and d1 >= 0 and d3 <= 0) {
@@ -203,9 +203,8 @@ fn build(a: Allocator, tris_in: []Triangle) Allocator.Error!@This() {
     }
 
     try self.order.ensureTotalCapacity(a, tris_in.len);
-    for (0..self.triangles.items.len) |i| {
-        self.order.items[i] = i;
-    }
+    for (0..self.triangles.items.len) |i|
+        self.order.appendAssumeCapacity(i);
 
     if (self.triangles.items.len > 0) _ = try self.buildNode(a, 0, self.triangles.items.len, 0);
 
@@ -236,6 +235,8 @@ fn buildNode(self: *@This(), a: Allocator, start: usize, count: usize, depth: us
     var new_node = Node{
         .aabb = .empty(),
     };
+    // reserve up front because recursive calls may reallocate self.nodes
+    try self.nodes.append(a, undefined);
 
     for (start..start + count) |i| {
         shared.aabbExpandFromBox(&new_node.aabb, &triBox(&self.triangles.items[self.order.items[i]]));
@@ -245,7 +246,7 @@ fn buildNode(self: *@This(), a: Allocator, start: usize, count: usize, depth: us
         new_node.left = -1;
         new_node.start = @intCast(start);
         new_node.count = @intCast(count);
-        try self.nodes.append(a, new_node);
+        self.nodes.items[idx] = new_node;
         return @intCast(idx);
     }
     const ext = new_node.aabb.extents();
@@ -276,7 +277,8 @@ fn buildNode(self: *@This(), a: Allocator, start: usize, count: usize, depth: us
     // right child index stored in `start` for internal nodes
     new_node.start = r;
     new_node.count = -1;
-    try self.nodes.append(a, new_node);
+
+    self.nodes.items[idx] = new_node;
     return @intCast(idx);
 }
 

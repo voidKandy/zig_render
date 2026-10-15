@@ -1,6 +1,5 @@
 const std = @import("std");
 const core = @import("../../root.zig");
-const predicates = core.clibs.predicates;
 const shared = @import("shared.zig");
 const math_mod = core.lib.math;
 const mesh_mod = core.lib.mesh;
@@ -69,13 +68,13 @@ inline fn inConflict(self: *const @This(), c: CellId, p: Vec3) bool {
     const cc = self.cells.items[@intCast(c)];
     // Strictly inside the circumsphere. Cospherical (ZERO) treated as not-in-
     // conflict for now (general-position path; SoS layered separately).
-    return predicates.inSphere(
-        &self.points.items[@intCast(cc.vertices[0])].x,
-        &self.points.items[@intCast(cc.vertices[1])].x,
-        &self.points.items[@intCast(cc.vertices[2])].x,
-        &self.points.items[@intCast(cc.vertices[3])].x,
-        &p.x,
-    ) == @intFromEnum(Sign.positive);
+    return shared.inSphere(
+        self.points.items[@intCast(cc.vertices[0])],
+        self.points.items[@intCast(cc.vertices[1])],
+        self.points.items[@intCast(cc.vertices[2])],
+        self.points.items[@intCast(cc.vertices[3])],
+        p,
+    ) == Sign.positive;
 }
 
 inline fn facetIndexOfNeighbor(self: *const @This(), c: CellId, neighbor: CellId) i32 {
@@ -117,7 +116,7 @@ fn init(
         .make(-1, 1, -1),
         .make(-1, -1, 1),
     };
-    for (0..4) |i| try self.points.append(a, c.add(dirs[i]).mul(s));
+    for (0..4) |i| try self.points.append(a, c.add(dirs[i].mul(s)));
 
     // // Ensure the initial cell (0,1,2,3) is positively oriented; swap if not.
     var v = [4]VertexId{ 0, 1, 2, 3 };
@@ -383,12 +382,12 @@ fn verifyTopology(self: *const @This(), a: Allocator, err: *std.ArrayListUnmanag
     for (0..self.cells.items.len) |c| {
         const cc = self.cells.items[@intCast(c)];
         if (!cc.alive) continue;
-        if (predicates.orient3d(
-            &self.points.items[@intCast(cc.vertices[0])].x,
-            &self.points.items[@intCast(cc.vertices[1])].x,
-            &self.points.items[@intCast(cc.vertices[2])].x,
-            &self.points.items[@intCast(cc.vertices[3])].x,
-        ) != @intFromEnum(Sign.positive)) {
+        if (shared.orient3d(
+            self.points.items[@intCast(cc.vertices[0])],
+            self.points.items[@intCast(cc.vertices[1])],
+            self.points.items[@intCast(cc.vertices[2])],
+            self.points.items[@intCast(cc.vertices[3])],
+        ) != Sign.positive) {
             return fail(a, err,
                 \\ cell not positively oriented: {d}
             , .{c});
@@ -429,15 +428,15 @@ fn verifyDelaunay(self: *const @This(), a: Allocator, err: *std.ArrayListUnmanag
         if (!self.cells.items[@intCast(c)].alive) continue;
         const cc = self.cells.items[@intCast(c)];
         if (cc.vertices[0] < 4 or cc.vertices[1] < 4 or cc.vertices[2] < 4 or cc.vertices[3] < 4) continue;
-        for (4..nv) |q| {
+        for (4..self.points.items.len) |q| {
             if (q == cc.vertices[0] or q == cc.vertices[1] or q == cc.vertices[2] or q == cc.vertices[3]) continue;
-            if (predicates.inSphere(
-                &self.points.items[@intCast(cc.vertices[0])].x,
-                &self.points.items[@intCast(cc.vertices[1])].x,
-                &self.points.items[@intCast(cc.vertices[2])].x,
-                &self.points.items[@intCast(cc.vertices[3])].x,
-                &self.points.items[@intCast(q)].x,
-            ) == @intFromEnum(Sign.positive))
+            if (shared.inSphere(
+                self.points.items[@intCast(cc.vertices[0])],
+                self.points.items[@intCast(cc.vertices[1])],
+                self.points.items[@intCast(cc.vertices[2])],
+                self.points.items[@intCast(cc.vertices[3])],
+                self.points.items[@intCast(q)],
+            ) == Sign.positive)
                 return fail(a, err,
                     \\ empty-sphere violated: cell {d}
                     \\ contains vertex {d} 
@@ -587,7 +586,6 @@ test "delaunay.random_cloud_invariants" {
     }
 
     try testing.expectEqual(@as(usize, 0), miss);
-    @panic("FAIL");
 }
 
 test "delaunay.duplicate_insertion_is_idempotent" {
@@ -745,4 +743,3 @@ test "delaunay.larger_cloud_stress" {
 
     try testVerify(&t, a);
 }
-// };

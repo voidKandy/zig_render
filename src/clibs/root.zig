@@ -1002,13 +1002,15 @@ pub const stbi = struct {
 };
 
 pub const predicates = struct {
+    ///  Be sure to call exactinit() once, before calling any of the arithmetic
+    pub const exactinit = c.exactinit;
     pub const orient2d = c.orient2d;
     pub const orient3d = c.orient3d;
-    pub const inCircle = c.incircle;
-    pub const inSphere = c.insphere;
+    pub const incircle = c.incircle;
+    pub const insphere = c.insphere;
 
-    pub const orient2dFast = c.orient2dfast;
-    pub const orient3dFast = c.orient3dfast;
-    pub const inCircleFast = c.incirclefast;
-    pub const inSphereFast = c.inspherefast;
+    pub const orient2dfast = c.orient2dfast;
+    pub const orient3dfast = c.orient3dfast;
+    pub const incirclefast = c.incirclefast;
+    pub const inspherefast = c.inspherefast;
 };
