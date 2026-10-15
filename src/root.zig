@@ -116,8 +116,15 @@ pub const lib = struct {
     pub const Maze = @import("lib/Maze.zig");
     pub const mesh = @import("lib/mesh.zig");
     pub const terrain = @import("lib/terrain.zig");
-    pub const delaunay = @import("lib/delaunay.zig");
-    pub const alpha_wrapping = @import("lib/alpha_wrapping.zig");
+    pub const alpha_wrapping = struct {
+        pub const Delaunay = @import("lib/alpha_wrapping/Delaunay.zig");
+        pub const Wrap = @import("lib/alpha_wrapping/Wrap.zig");
+        pub const Oracle = @import("lib/alpha_wrapping/Oracle.zig");
+        test {
+            std.testing.refAllDecls(@This());
+        }
+    };
+
     test {
         std.testing.refAllDecls(@This());
     }

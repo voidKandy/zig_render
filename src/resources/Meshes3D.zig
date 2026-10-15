@@ -24,6 +24,10 @@ pub const Aabb = struct {
         };
     }
 
+    pub fn isEmpty(self: @This()) bool {
+        return self.min.x > self.max.x;
+    }
+
     pub fn expand(self: *Aabb, p: Vec3) void {
         self.min.x = @min(self.min.x, p.x);
         self.min.y = @min(self.min.y, p.y);
@@ -57,9 +61,7 @@ pub const Aabb = struct {
     }
 
     pub fn diagonal(self: Aabb) f32 {
-        return core.lib.math.Vec3.fromSizedArray(self.max).sub(
-            core.lib.math.Vec3.fromSizedArray(self.min),
-        ).norm();
+        return self.max.sub(self.min).norm();
     }
 
     pub fn merge(a: Aabb, b: Aabb) Aabb {

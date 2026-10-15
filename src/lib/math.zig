@@ -74,11 +74,11 @@ pub const Vec3 = extern struct {
     }
 
     pub inline fn squaredNorm(self: Self) f32 {
-        return self.x * self.x + self.y * self.y + self.z * self.z;
+        return self.dot(self);
     }
 
     pub fn norm(self: Self) f32 {
-        return @sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
+        return @sqrt(self.squaredNorm());
     }
 
     pub inline fn add(self: Self, other: Self) Self {
@@ -91,6 +91,10 @@ pub const Vec3 = extern struct {
 
     pub inline fn eucDist(self: Self, other: Self) f32 {
         return self.sub(other).norm();
+    }
+
+    pub inline fn distSquared(self: Self, other: Self) f64 {
+        return self.sub(other).squaredNorm();
     }
 
     pub inline fn sub(self: Self, other: Self) Self {

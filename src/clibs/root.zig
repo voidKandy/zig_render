@@ -1000,3 +1000,15 @@ pub const stbi = struct {
 
     pub const rgb_alpha = c.STBI_rgb_alpha;
 };
+
+pub const predicates = struct {
+    pub const orient2d = c.orient2d;
+    pub const orient3d = c.orient3d;
+    pub const inCircle = c.incircle;
+    pub const inSphere = c.insphere;
+
+    pub const orient2dFast = c.orient2dfast;
+    pub const orient3dFast = c.orient3dfast;
+    pub const inCircleFast = c.incirclefast;
+    pub const inSphereFast = c.inspherefast;
+};

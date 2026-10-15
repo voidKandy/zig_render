@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) !void {
     translate_c.addIncludePath(b.path("libs/stb"));
     translate_c.addIncludePath(b.path("libs/imgui"));
     translate_c.addIncludePath(b.path("libs/box3d/include/box3d"));
+    translate_c.addIncludePath(b.path("libs/predicates/include"));
     // translate_c.linkSystemLibrary("vk_mem_alloc", .{});
     // translate_c.linkSystemLibrary("stb_image", .{});
     // translate_c.linkSystemLibrary("cimgui", .{});
@@ -49,6 +50,7 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/stb/"));
     core_lib.addIncludePath(b.path("libs/imgui/"));
     core_lib.addIncludePath(b.path("libs/box3d/"));
+    core_lib.addIncludePath(b.path("libs/predicates/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/clibs/stb_image.c"), .flags = &.{""} });
 
     addAllShaders(b, io, core_lib);
@@ -58,6 +60,9 @@ pub fn build(b: *std.Build) !void {
 
     const box3d_lib = buildBox3D(b, target, optimize);
     core_lib.linkLibrary(box3d_lib);
+
+    const predicates_lib = buildPredicates(b, target, optimize);
+    core_lib.linkLibrary(predicates_lib);
 
     const exe_tests = b.addTest(.{
         .root_module = core_lib,
@@ -111,6 +116,41 @@ fn buildImgui(
         },
     });
     return imgui_lib;
+}
+
+fn buildPredicates(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Step.Compile {
+    const predicates_lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "predicates",
+        .root_module = b.addModule("predicates", .{
+            .root_source_file = null,
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    predicates_lib.root_module.addIncludePath(b.path("libs/predicates/include"));
+    // src/ also needs to be on the include path — predicates's own .c files
+    // #include internal headers like "core.h" relative to src/, not include/
+    predicates_lib.root_module.addIncludePath(b.path("libs/predicates/src"));
+    predicates_lib.root_module.link_libc = true;
+
+    predicates_lib.root_module.addCSourceFiles(.{
+        .files = &.{
+            "libs/predicates/src/constants.c",
+            "libs/predicates/src/constants.h",
+            "libs/predicates/src/predicates.c",
+            "libs/predicates/src/printing.c",
+            "libs/predicates/src/random.c",
+        },
+        .flags = &.{},
+    });
+
+    return predicates_lib;
 }
 
 fn buildBox3D(
@@ -203,7 +243,7 @@ fn buildBinaries(
     opt: std.builtin.OptimizeMode,
     imports: []const struct { []const u8, *std.Build.Module },
 ) void {
-    const dir = std.Io.Dir.cwd().openDir(io, BINARIES_PATH, .{}) catch @panic("Failed to get directory");
+    const dir = std.Io.Dir.cwd().openDir(io, BINARIES_PATH, .{}) catch std.debug.panic("Failed to get directory: {s}", .{BINARIES_PATH});
     var buffer: [256]u8 = undefined;
     @memset(&buffer, 0);
     var fba = std.heap.FixedBufferAllocator.init(&buffer);

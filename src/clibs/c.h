@@ -5,6 +5,7 @@
 #include <vk_mem_alloc.h>
 #include <stb_image.h>
 #include <box3d.h>
+#include <predicates.h>
 #include <cimgui.h>
 #include <cimgui_impl_vulkan.h>
 #include <cimgui_impl_sdl3.h>
