@@ -110,8 +110,6 @@ pub fn main(init: std.process.Init) void {
     );
     defer engine.deinit();
 
-    engine.initRenderer(.{});
-
     const maze_system_ci = core.engine.systems.Maze.CreateInfo{
         .push_constants = core.engine.systems.Maze.PushConstants{
             .width = 10,

@@ -15,7 +15,6 @@ const VkError = vki.VkError;
 const log = std.log.scoped(.Engine);
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
-pub const MAIN_RENDER_PASS_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
 const INITIAL_WINDOW_EXTENT = vk.Extent2D{ .width = 1600, .height = 900 };
 
 const Self = @This();
@@ -51,7 +50,6 @@ system_manager: SystemManager = .{},
 physics: core.engine.Physics = undefined,
 
 renderer: core.engine.Renderer = undefined,
-main_render_pass: vk.RenderPass = undefined,
 
 swapchain: vki.Swapchain = undefined,
 framebuffer_resized: bool = false,
@@ -78,21 +76,16 @@ pub fn init(
     };
 
     self.initWindow();
+
+    self.renderer = core.engine.Renderer.init(.{
+        .meshes2D = true,
+        .meshes3D = true,
+        .physics_debug = self.physics.debug_ctx,
+    }) catch @panic("OOM");
+
     self.initVulkan();
 
     return self;
-}
-
-pub fn initRenderer(self: *@This(), opts: struct {
-    meshes2D: bool = true,
-    meshes3D: bool = true,
-    physics_debug: bool = true,
-}) void {
-    self.renderer = core.engine.Renderer.init(.{
-        .meshes2D = opts.meshes2D,
-        .meshes3D = opts.meshes3D,
-        .physics_debug = if (opts.physics_debug) self.physics.debug_ctx.? else null,
-    }) catch @panic("OOM");
 }
 
 pub fn deinit(self: *Self) void {
@@ -114,8 +107,6 @@ pub fn deinit(self: *Self) void {
     self.system_manager.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
-
-    vk.DestroyRenderPass(self.logical_device.handle, self.main_render_pass, self.alloc_cbs);
 
     var stats: c.vma.TotalStatistics = undefined;
     c.vma.CalculateStatistics(self.allocs.vma, &stats);
@@ -279,11 +270,13 @@ fn initVulkan(self: *Self) void {
         .alloc_cb = self.alloc_cbs,
         .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
-    self.initMainRenderPass();
+
+    self.renderer.createMainRenderPass(self.logical_device.handle, self.physical_device, self.alloc_cbs);
+
     self.swapchain.createFramebuffers(
         self.allocs.std,
         self.logical_device.handle,
-        self.main_render_pass,
+        self.renderer.main_render_pass,
         self.alloc_cbs,
     ) catch @panic("failed to create framebuffers");
 }
@@ -345,81 +338,12 @@ pub fn initPipelines(
 ) void {
     const graphics_common = core.engine.pipelines.Common{
         .device = self.logical_device.handle,
-        .render_pass = self.main_render_pass,
+        .render_pass = self.renderer.main_render_pass,
         .window_extent = self.swapchain.extent,
     };
 
     self.renderer.initPipelines(graphics_common, &self.resources, self.alloc_cbs);
     self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
-}
-
-fn initMainRenderPass(self: *Self) void {
-    const color_attachment = vk.AttachmentDescription{
-        .format = MAIN_RENDER_PASS_IMAGE_FORMAT,
-        .samples = vk.SAMPLE_COUNT_1_BIT,
-        .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
-        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
-        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-        .initialLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
-    };
-
-    const color_attachment_ref = vk.AttachmentReference{
-        .attachment = 0,
-        .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    };
-
-    const depth_attachment = vk.AttachmentDescription{
-        .format = util.findDepthFormat(self.physical_device),
-        .samples = vk.SAMPLE_COUNT_1_BIT,
-        .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
-        .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-        .initialLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    };
-
-    const depth_attachment_ref = vk.AttachmentReference{
-        .attachment = 1,
-        .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    };
-
-    const subpass = vk.SubpassDescription{
-        .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &color_attachment_ref,
-        // .pDepthStencilAttachment = null,
-        .pDepthStencilAttachment = &depth_attachment_ref,
-    };
-
-    const dependency = vk.SubpassDependency{
-        .srcSubpass = vk.SUBPASS_EXTERNAL,
-        .dstSubpass = 0,
-        .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        // .srcAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .srcAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        // .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-    };
-
-    const all_attachments = &[_]vk.AttachmentDescription{ color_attachment, depth_attachment };
-
-    const ci = vk.RenderPassCreateInfo{
-        .sType = vk.STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = all_attachments.len,
-        .pAttachments = all_attachments,
-        .subpassCount = 1,
-        .pSubpasses = &subpass,
-        .dependencyCount = 1,
-        .pDependencies = &dependency,
-    };
-
-    checkVk(vk.CreateRenderPass(self.logical_device.handle, &ci, self.alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
 }
 
 fn drawImgui(self: *Self) void {
@@ -505,7 +429,7 @@ fn drawFrame(self: *Self) void {
                     .depth_buffer = true,
                 },
                 self.window,
-                self.main_render_pass,
+                self.renderer.main_render_pass,
                 self.alloc_cbs,
             );
             self.framebuffer_resized = false;
@@ -538,7 +462,7 @@ fn recordCommandBuffer(
 
     var render_pass_info = vk.RenderPassBeginInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = self.main_render_pass,
+        .renderPass = self.renderer.main_render_pass,
         .framebuffer = self.swapchain.framebuffers[image_idx],
         .renderArea = .{ .offset = .{
             .x = 0,
@@ -648,6 +572,6 @@ fn initImgui(self: *Self) void {
         .MSAASamples = vk.SAMPLE_COUNT_1_BIT,
     };
 
-    _ = c.imgui.impl_vulkan.Init(&init_info, self.main_render_pass);
+    _ = c.imgui.impl_vulkan.Init(&init_info, self.renderer.main_render_pass);
     _ = c.imgui.impl_vulkan.CreateFontsTexture();
 }

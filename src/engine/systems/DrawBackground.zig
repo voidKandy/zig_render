@@ -27,7 +27,7 @@ pub fn init(
                 .height = swapchain_extent.height,
                 .depth = 1,
             },
-            .format = core.engine.Engine.MAIN_RENDER_PASS_IMAGE_FORMAT,
+            .format = core.engine.Renderer.MAIN_RENDER_PASS_IMAGE_FORMAT,
             .usages = vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
                 vk.IMAGE_USAGE_TRANSFER_DST_BIT |
                 vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
