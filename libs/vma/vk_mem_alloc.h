@@ -14227,7 +14227,7 @@ VmaAllocator_T::VmaAllocator_T(const VmaAllocatorCreateInfo* pCreateInfo) :
                 0, // algorithm
                 0.5f, // priority (0.5 is the default per Vulkan spec)
                 GetMemoryTypeMinAlignment(memTypeIndex), // minAllocationAlignment
-                VMA_NULL); // // pMemoryAllocateNext
+                VMA_NULL);  // pMemoryAllocateNext
             // No need to call m_pBlockVectors[memTypeIndex][blockVectorTypeIndex]->CreateMinBlocks here,
             // becase minBlockCount is 0.
         }

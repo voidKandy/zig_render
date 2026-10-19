@@ -3,10 +3,8 @@ const shared = @import("shared.zig");
 const core = @import("../../root.zig");
 const Vec3 = shared.Vec3;
 const Aabb = shared.Aabb;
+const Triangle = shared.Triangle;
 const Allocator = std.mem.Allocator;
-
-const Triangle = [3]Vec3;
-const Oracle = @This();
 
 fn closestPointOnTriangle(
     p: Vec3,
@@ -167,19 +165,20 @@ fn boxesOverlap(x: *const Aabb, y: *const Aabb) bool {
     return true;
 }
 
+const Oracle = @This();
 triangles: std.ArrayListUnmanaged(Triangle) = .empty,
 /// triangle indices, permuted by the tree
 order: std.ArrayListUnmanaged(usize) = .empty,
 nodes: std.ArrayListUnmanaged(Node) = .empty,
 bounding_box: Aabb,
 
-fn deinit(self: *@This(), a: Allocator) void {
+pub fn deinit(self: *@This(), a: Allocator) void {
     self.triangles.deinit(a);
     self.order.deinit(a);
     self.nodes.deinit(a);
 }
 
-fn build(a: Allocator, tris_in: []Triangle) Allocator.Error!@This() {
+pub fn build(a: Allocator, tris_in: []const Triangle) Allocator.Error!@This() {
     // Drop degenerate (near-zero-area) triangles: they carry no distance/
     // intersection information and, left in, make the offset projection and
     // tet-intersection tests misbehave (a source of runaway refinement on
@@ -230,7 +229,7 @@ const CentroidSortCtx = struct {
     }
 };
 
-fn buildNode(self: *@This(), a: Allocator, start: usize, count: usize, depth: usize) Allocator.Error!i32 {
+pub fn buildNode(self: *@This(), a: Allocator, start: usize, count: usize, depth: usize) Allocator.Error!i32 {
     const idx = self.nodes.items.len;
     var new_node = Node{
         .aabb = .empty(),
@@ -282,7 +281,7 @@ fn buildNode(self: *@This(), a: Allocator, start: usize, count: usize, depth: us
     return @intCast(idx);
 }
 
-fn nearestRecursive(
+pub fn nearestRecursive(
     self: *const @This(),
     node: usize,
     p: Vec3,
@@ -316,28 +315,26 @@ fn nearestRecursive(
         self.nearestRecursive(@intCast(lc), p, best2, best);
     }
 }
-//                        Vec3& best) const;
-// bool intersect_tet_recursive(int node, const Box& qbox, const Vec3& a,
-//                              const Vec3& b, const Vec3& c, const Vec3& d) const;
-fn squaredDistance(self: *const @This(), p: Vec3) f64 {
+
+pub fn squaredDistance(self: *const @This(), p: Vec3) f64 {
     var best2 = std.math.inf(f64);
     var best = p;
     if (self.nodes.items.len > 0) self.nearestRecursive(0, p, &best2, &best);
     return best2;
 }
 
-fn unsignedDistance(self: *const @This(), p: Vec3) f64 {
+pub fn unsignedDistance(self: *const @This(), p: Vec3) f64 {
     return @sqrt(self.squaredDistance(p));
 }
 
-fn closestPoint(self: *const @This(), p: Vec3) Vec3 {
+pub fn closestPoint(self: *const @This(), p: Vec3) Vec3 {
     var best2 = std.math.inf(f64);
     var best = p;
     if (self.nodes.items.len > 0) self.nearestRecursive(0, p, &best2, &best);
     return best;
 }
 
-fn intersectTetRecursive(
+pub fn intersectTetRecursive(
     self: *const @This(),
     alloc: Allocator,
     node: usize,
@@ -361,7 +358,7 @@ fn intersectTetRecursive(
         try self.intersectTetRecursive(alloc, @intCast(nd.start), aabb, a, b, c, d);
 }
 
-fn doIntersectTet(
+pub fn doIntersectTet(
     self: *const @This(),
     alloc: Allocator,
     a: Vec3,
@@ -381,7 +378,7 @@ fn distHelper(self: *const @This(), a: Vec3, b: Vec3, t: f64, delta: f64) f64 {
     return self.unsignedDistance(x) - delta;
 }
 
-fn firstOffsetCrossing(
+pub fn firstOffsetCrossing(
     self: *const @This(),
     a: Vec3,
     b: Vec3,

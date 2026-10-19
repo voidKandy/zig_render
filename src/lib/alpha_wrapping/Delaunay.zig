@@ -5,12 +5,10 @@ const math_mod = core.lib.math;
 const mesh_mod = core.lib.mesh;
 const Allocator = std.mem.Allocator;
 const Vec3 = shared.Vec3;
+const CellId = shared.CellId;
+const VertexId = shared.VertexId;
 const Aabb = shared.Aabb;
 const Sign = shared.Sign;
-
-pub const VertexId = i32;
-pub const CellId = i32;
-const NO_CELL: CellId = -1;
 
 inline fn edgeKey(a: VertexId, b: VertexId) u64 {
     const lo: u64 = @intCast(@min(a, b));
@@ -20,7 +18,7 @@ inline fn edgeKey(a: VertexId, b: VertexId) u64 {
 
 const Cell = struct {
     vertices: [4]VertexId = .{-1} ** 4,
-    cells: [4]CellId = .{NO_CELL} ** 4,
+    cells: [4]CellId = .{shared.NO_CELL} ** 4,
     alive: bool = false,
 };
 
@@ -33,11 +31,11 @@ points: std.ArrayListUnmanaged(Vec3) = .empty,
 cells: std.ArrayListUnmanaged(Cell) = .empty,
 free_cells: std.ArrayListUnmanaged(CellId) = .empty,
 live_cell_count: usize = 0,
-last_cell: CellId = NO_CELL, // walk hint cache
+last_cell: CellId = shared.NO_CELL, // walk hint cache
 mark: std.ArrayListUnmanaged(u32) = .empty, // per-cell BFS stamp (conflict-zone)
 mark_ctr: usize = 0,
 
-const FACET: [4]Vec3 = .{
+pub const FACET: [4]Vec3 = .{
     .make(1, 2, 3), .make(0, 3, 2), .make(0, 1, 3), .make(0, 2, 1),
 };
 
@@ -51,7 +49,8 @@ fn newCell(self: *@This(), a: Allocator) Allocator.Error!CellId {
         try self.cells.append(a, .{});
     }
     self.cells.items[@intCast(id)].alive = true;
-    self.cells.items[@intCast(id)].cells = .{ NO_CELL, NO_CELL, NO_CELL, NO_CELL };
+
+    self.cells.items[@intCast(id)].cells = .{shared.NO_CELL} ** 4;
     self.live_cell_count += 1;
     return id;
 }
@@ -62,7 +61,27 @@ fn killCell(self: *@This(), a: Allocator, cell_id: CellId) Allocator.Error!void 
     self.live_cell_count -= 1;
 }
 
-// // True iff p is strictly inside cell c's circumsphere (SoS-free; ZERO -> false).
+pub fn cellAt(self: *const @This(), c: CellId) ?Cell {
+    const idx: usize = @intCast(c);
+    return if (idx < self.cells.items.len)
+        self.cells.items[idx]
+    else
+        null;
+}
+
+pub fn cellAlive(self: *const @This(), c: CellId) bool {
+    return (self.cellAt(c) orelse return false).alive;
+}
+
+pub fn pointAt(self: *const @This(), v: VertexId) ?Vec3 {
+    const idx: usize = @intCast(v);
+    return if (idx < self.points.items.len)
+        self.points.items[idx]
+    else
+        null;
+}
+
+// True iff p is strictly inside cell c's circumsphere (SoS-free; ZERO -> false).
 // bool in_conflict(Cid c, const Vec3& p) const;
 inline fn inConflict(self: *const @This(), c: CellId, p: Vec3) bool {
     const cc = self.cells.items[@intCast(c)];
@@ -84,11 +103,25 @@ inline fn facetIndexOfNeighbor(self: *const @This(), c: CellId, neighbor: CellId
     return -1;
 }
 
-// // Build the enclosing super-tetrahedron. `domain` must contain every point
-// // that will ever be inserted; the super-tet is placed `margin` box-diagonals
-// // away so real points stay strictly interior.
-// void init(const Box& domain, double margin = 1000.0);
-fn init(
+pub fn isSuperVertex(v: VertexId) bool {
+    return v < 4;
+}
+
+pub fn cellIsOuter(self: *const @This(), c: CellId) bool {
+    const cc = self.cellAt(c).?;
+    for (cc.vertices) |vert|
+        if (vert < 4) return true;
+    return false;
+}
+
+pub fn isFiniteVertex(v: VertexId) bool {
+    return v >= 4;
+}
+
+/// Build the enclosing super-tetrahedron. `domain` must contain every point
+/// that will ever be inserted; the super-tet is placed `margin` box-diagonals
+/// away so real points stay strictly interior.
+pub fn init(
     a: Allocator,
     domain: core.resources.Meshes3D.Aabb,
     margin: f32,
@@ -118,7 +151,7 @@ fn init(
     };
     for (0..4) |i| try self.points.append(a, c.add(dirs[i].mul(s)));
 
-    // // Ensure the initial cell (0,1,2,3) is positively oriented; swap if not.
+    // Ensure the initial cell (0,1,2,3) is positively oriented; swap if not.
     var v = [4]VertexId{ 0, 1, 2, 3 };
     if (shared.orient3d(
         self.points.items[0],
@@ -133,10 +166,17 @@ fn init(
     }
     const c0: CellId = try self.newCell(a);
     self.cells.items[@intCast(c0)].vertices = v;
-    self.cells.items[@intCast(c0)].cells = .{NO_CELL} ** 4;
+    self.cells.items[@intCast(c0)].cells = .{shared.NO_CELL} ** 4;
     self.last_cell = c0;
 
     return self;
+}
+
+pub fn deinit(self: *@This(), a: Allocator) void {
+    self.cells.deinit(a);
+    self.points.deinit(a);
+    self.free_cells.deinit(a);
+    self.mark.deinit(a);
 }
 
 /// Insert a real point (must be strictly inside the super-tet). Returns its
@@ -144,7 +184,7 @@ fn init(
 /// detected and return the existing id without modifying the triangulation.
 /// If `new_cells` is non-null it receives the ids of cells created by this
 /// insertion (empty on a duplicate).
-fn insert(
+pub fn insert(
     self: *@This(),
     a: Allocator,
     p: Vec3,
@@ -152,7 +192,7 @@ fn insert(
 ) Allocator.Error!VertexId {
     if (out_new_cells.items.len > 0) out_new_cells.clearRetainingCapacity();
     const c0 = self.locate(p, self.last_cell);
-    // // Duplicate detection against the located cell's vertices.
+    // Duplicate detection against the located cell's vertices.
     for (0..4) |i| {
         const vi = self.cells.items[@intCast(c0)].vertices[i];
         const q = self.points.items[@intCast(vi)];
@@ -162,7 +202,7 @@ fn insert(
     const vp: VertexId = @intCast(self.points.items.len);
     try self.points.append(a, p);
 
-    // // ---- gather conflict zone (BFS from c0) using stamps ----
+    // ---- gather conflict zone (BFS from c0) using stamps ----
     if (self.mark.items.len < self.cells.items.len) try self.mark.resize(a, self.cells.items.len + 1);
     const stamp_checked: u32 = @intCast(self.mark_ctr);
     self.mark_ctr += 1;
@@ -185,7 +225,7 @@ fn insert(
         //   stack.pop_back();
         for (0..4) |i| {
             const o = self.cells.items[@intCast(c)].cells[i];
-            if (o == NO_CELL) continue;
+            if (o == shared.NO_CELL) continue;
             if (self.mark.items[@intCast(o)] == stamp_conflict or self.mark.items[@intCast(o)] == stamp_checked) continue;
             if (self.inConflict(o, p)) {
                 self.mark.items[@intCast(o)] = stamp_conflict;
@@ -197,15 +237,20 @@ fn insert(
         }
     }
 
-    // // ---- stellate: create new cells from boundary facets to vp ----
+    // ---- stellate: create new cells from boundary facets to vp ----
     var edge_map: std.AutoHashMapUnmanaged(u64, struct { CellId, usize }) = .empty;
     try edge_map.ensureTotalCapacity(a, @intCast(conflict.items.len * 3));
     var new_cells = try std.ArrayListUnmanaged(CellId).initCapacity(a, conflict.items.len * 2);
 
+    defer {
+        edge_map.deinit(a);
+        new_cells.deinit(a);
+    }
+
     for (conflict.items) |c| {
         for (0..4) |fi| {
             const o = self.cells.items[@intCast(c)].cells[fi];
-            const boundary = (o == NO_CELL) or (self.mark.items[@intCast(o)] != stamp_conflict);
+            const boundary = (o == shared.NO_CELL) or (self.mark.items[@intCast(o)] != stamp_conflict);
             if (!boundary) continue;
 
             const t0: VertexId = self.cells.items[@intCast(c)].vertices[@trunc(FACET[fi].x)];
@@ -216,7 +261,7 @@ fn insert(
             try new_cells.append(a, w);
             self.cells.items[@intCast(w)].vertices = .{ t0, t2, t1, vp };
             self.cells.items[@intCast(w)].cells[3] = o;
-            if (o != NO_CELL) {
+            if (o != shared.NO_CELL) {
                 const back = self.facetIndexOfNeighbor(o, c);
                 self.cells.items[@intCast(o)].cells[@intCast(back)] = w;
             }
@@ -239,41 +284,24 @@ fn insert(
     }
 
     self.last_cell = if (new_cells.items.len == 0) c0 else new_cells.getLast();
-    if (out_new_cells.items.len > 0) out_new_cells.* = new_cells;
+    try out_new_cells.appendSlice(a, new_cells.items);
+
     return vp;
 }
-
-// // ---- accessors ----
-// int num_vertices() const { return static_cast<int>(points_.size()); }
-// int num_cells() const { return static_cast<int>(cells_.size()); }  // includes dead
-// int num_live_cells() const { return live_cell_count_; }
-// const Vec3& point(Vid v) const { return points_[v]; }
-// const Cell& cell(Cid c) const { return cells_[c]; }
-// bool cell_alive(Cid c) const { return cells_[c].alive; }
-
-// // The 4 super-tet vertices are ids 0..3.
-// bool is_super_vertex(Vid v) const { return v < 4; }
-// bool cell_is_outer(Cid c) const {
-//   const auto& cc = cells_[c];
-//   return cc.v[0] < 4 || cc.v[1] < 4 || cc.v[2] < 4 || cc.v[3] < 4;
-// }
-// bool is_finite_vertex(Vid v) const { return v >= 4; }
 
 fn det3(u: Vec3, v: Vec3, w: Vec3) f64 {
     return u.x * (v.y * w.z - v.z * w.y) - u.y * (v.x * w.z - v.z * w.x) +
         u.z * (v.x * w.y - v.y * w.x);
 }
-// // Cell circumcenter (inexact construction). Undefined for degenerate cells.
-// Vec3 circumcenter(Cid c) const;
-fn circumcenter(self: *const @This(), c: CellId) Vec3 {
+
+// Cell circumcenter (inexact construction). Undefined for degenerate cells.
+pub fn circumcenter(self: *const @This(), c: CellId) Vec3 {
     const cc = self.cells.items[@intCast(c)];
     const a = self.points.items[@intCast(cc.vertices[0])];
     const b = self.points.items[@intCast(cc.vertices[1])];
     const d = self.points.items[@intCast(cc.vertices[2])];
     const e = self.points.items[@intCast(cc.vertices[3])];
     // Solve M x' = rhs where rows of M are (b-a),(d-a),(e-a) and
-    // rhs = 0.5*(|b-a|^2, |d-a|^2, |e-a|^2); circumcenter = a + x'.
-    // Vec3 r0 = b - a, r1 = d - a, r2 = e - a;
     const r0, const r1, const r2 = .{
         b.sub(a),
         d.sub(a),
@@ -307,7 +335,7 @@ fn circumcenter(self: *const @This(), c: CellId) Vec3 {
     return a.add(Vec3.make(dx * invdet, dy * invdet, dz * invdet));
 }
 // Squared circumradius of a cell (inexact).
-fn squaredCircumradius(self: *const @This(), c: CellId) f64 {
+pub fn squaredCircumradius(self: *const @This(), c: CellId) f64 {
     const cc = self.circumcenter(c);
     return cc.distSquared(self.points.items[@intCast(self.cells.items[@intCast(c)].vertices[0])]);
 }
@@ -316,8 +344,8 @@ fn squaredCircumradius(self: *const @This(), c: CellId) f64 {
 // live cell that contains p (in closure). p must be inside the super-tet.
 fn locate(self: *@This(), p: Vec3, hint: CellId) CellId {
     var c = hint;
-    if (c == NO_CELL or !self.cells.items[@intCast(c)].alive) c = self.last_cell;
-    if (c == NO_CELL or !self.cells.items[@intCast(c)].alive) {
+    if (c == shared.NO_CELL or !self.cells.items[@intCast(c)].alive) c = self.last_cell;
+    if (c == shared.NO_CELL or !self.cells.items[@intCast(c)].alive) {
         for (0..self.cells.items.len) |i| {
             if (self.cells.items[@intCast(i)].alive) {
                 c = @intCast(i);
@@ -326,10 +354,10 @@ fn locate(self: *@This(), p: Vec3, hint: CellId) CellId {
         }
     }
     const max_steps = 2 * self.cells.items.len + 16;
-    var prev = NO_CELL;
+    var prev = shared.NO_CELL;
     for (0..max_steps) |_| {
         const cc = self.cells.items[@intCast(c)];
-        var next = NO_CELL;
+        var next = shared.NO_CELL;
         for (0..4) |i| {
             if (cc.cells[i] == prev) continue; // don't walk straight back
             const a = self.points.items[@intCast(cc.vertices[@trunc(FACET[i].x)])];
@@ -342,12 +370,12 @@ fn locate(self: *@This(), p: Vec3, hint: CellId) CellId {
                 d,
                 p,
             ) == .positive) {
-                if (cc.cells[i] == NO_CELL) continue; // p outside domain across a hull face
+                if (cc.cells[i] == shared.NO_CELL) continue; // p outside domain across a hull face
                 next = cc.cells[i];
                 break;
             }
         }
-        if (next == NO_CELL) {
+        if (next == shared.NO_CELL) {
             self.last_cell = c;
             return c; // p is inside (closure of) c
         }
@@ -374,7 +402,9 @@ fn fail(
     err.appendSlice(a, str) catch @panic("OOM");
     return false;
 }
-// ---- validation (used by tests) ----
+
+//   ---TESTING---
+const testing = std.testing;
 // Neighbor symmetry + each internal facet shared by two cells with matching
 // vertex sets, and every live cell positively oriented.
 // bool verify_topology(std::string* err = nullptr) const;
@@ -394,7 +424,7 @@ fn verifyTopology(self: *const @This(), a: Allocator, err: *std.ArrayListUnmanag
         }
         for (0..4) |i| {
             const o = cc.cells[i];
-            if (o == NO_CELL) continue;
+            if (o == shared.NO_CELL) continue;
             if (!self.cells.items[@intCast(o)].alive) return fail(a, err, "neighbor dead", .{});
             const oi = self.facetIndexOfNeighbor(o, @intCast(c));
             if (oi < 0) return fail(a, err, "neighbor not symmetric", .{});
@@ -445,9 +475,6 @@ fn verifyDelaunay(self: *const @This(), a: Allocator, err: *std.ArrayListUnmanag
     }
     return true;
 }
-
-//   ---TESTING---
-const testing = std.testing;
 
 fn bboxOf(points: []const Vec3) Aabb {
     var b: Aabb = .empty();
@@ -502,7 +529,7 @@ fn testRandomSigned(random: std.Random) f64 {
     return random.float(f64) * 2.0 - 1.0;
 }
 
-test "delaunay.single_point" {
+test "single_point" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -513,6 +540,7 @@ test "delaunay.single_point" {
     dom.expand(.make(1, 1, 1));
 
     var t = try Delaunay.init(a, dom, 1000.0);
+    defer t.deinit(a);
     var new_cells: std.ArrayListUnmanaged(CellId) = .empty;
 
     try testing.expectEqual(@as(usize, 1), t.live_cell_count);
@@ -523,7 +551,7 @@ test "delaunay.single_point" {
     try testVerify(&t, a);
 }
 
-test "delaunay.five_points_tetra_plus_center" {
+test "five_points_tetra_plus_center" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -537,6 +565,7 @@ test "delaunay.five_points_tetra_plus_center" {
     };
 
     var t = try Delaunay.init(a, bboxOf(&pts), 1000.0);
+    defer t.deinit(a);
     var new_cells: std.ArrayListUnmanaged(CellId) = .empty;
 
     for (pts) |p| {
@@ -546,7 +575,7 @@ test "delaunay.five_points_tetra_plus_center" {
     try testVerify(&t, a);
 }
 
-test "delaunay.random_cloud_invariants" {
+test "random_cloud_invariants" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -564,6 +593,7 @@ test "delaunay.random_cloud_invariants" {
     }
 
     var t = try Delaunay.init(a, bboxOf(pts.items), 1000.0);
+    defer t.deinit(a);
     var new_cells: std.ArrayListUnmanaged(CellId) = .empty;
 
     for (pts.items) |p| {
@@ -581,14 +611,14 @@ test "delaunay.random_cloud_invariants" {
         );
 
         const c = t.locate(q, t.last_cell);
-        if (c == NO_CELL or !t.testCellContains(c, q))
+        if (c == shared.NO_CELL or !t.testCellContains(c, q))
             miss += 1;
     }
 
     try testing.expectEqual(@as(usize, 0), miss);
 }
 
-test "delaunay.duplicate_insertion_is_idempotent" {
+test "duplicate_insertion_is_idempotent" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -601,6 +631,7 @@ test "delaunay.duplicate_insertion_is_idempotent" {
     };
 
     var t = try Delaunay.init(a, bboxOf(&pts), 1000.0);
+    defer t.deinit(a);
     var new_cells: std.ArrayListUnmanaged(CellId) = .empty;
 
     const p = Vec3.make(0.2, 0.2, 0.2);
@@ -613,7 +644,7 @@ test "delaunay.duplicate_insertion_is_idempotent" {
     try testing.expectEqual(cells_after_first, t.live_cell_count);
 }
 
-test "delaunay.circumcenter_of_known_tet" {
+test "circumcenter_of_known_tet" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -626,6 +657,7 @@ test "delaunay.circumcenter_of_known_tet" {
     };
 
     var t = try Delaunay.init(a, bboxOf(&pts), 1000.0);
+    defer t.deinit(a);
     var new_cells: std.ArrayListUnmanaged(CellId) = .empty;
 
     for (pts) |p| {
@@ -659,7 +691,7 @@ test "delaunay.circumcenter_of_known_tet" {
     try testing.expect(found);
 }
 
-test "delaunay.degenerate_inputs" {
+test "degenerate_inputs" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -700,6 +732,7 @@ test "delaunay.degenerate_inputs" {
 
     for (cases) |pts| {
         var t = try Delaunay.init(a, bboxOf(pts), 1000.0);
+        defer t.deinit(a);
         var new_cells: std.ArrayListUnmanaged(CellId) = .empty;
 
         for (pts) |p| {
@@ -710,7 +743,7 @@ test "delaunay.degenerate_inputs" {
     }
 }
 
-test "delaunay.larger_cloud_stress" {
+test "larger_cloud_stress" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -735,6 +768,7 @@ test "delaunay.larger_cloud_stress" {
     }
 
     var t = try Delaunay.init(a, bboxOf(pts.items), 1000.0);
+    defer t.deinit(a);
     var new_cells: std.ArrayListUnmanaged(CellId) = .empty;
 
     for (pts.items) |p| {

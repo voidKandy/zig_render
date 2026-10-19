@@ -2,6 +2,12 @@ const std = @import("std");
 const core = @import("../../root.zig");
 const predicates = core.clibs.predicates;
 pub const Aabb = core.resources.Meshes3D.Aabb;
+const Allocator = std.mem.Allocator;
+
+pub const Triangle = [3]Vec3;
+pub const CellId = i32;
+pub const VertexId = i32;
+pub const NO_CELL: CellId = -1;
 
 pub fn aabbExpand(aabb: *Aabb, v: Vec3) void {
     aabb.expand(.{
@@ -95,7 +101,7 @@ pub const Vec3 = extern struct {
         return self.dot(self);
     }
 
-    pub fn norm(self: @This()) f32 {
+    pub fn norm(self: @This()) f64 {
         return @sqrt(self.squaredNorm());
     }
 
@@ -184,3 +190,336 @@ pub fn inSphere(
     );
     return Sign.from(-r);
 }
+
+pub const testing_util = struct {
+    const Mesh = @import("Wrap.zig").Mesh;
+
+    // ---- adjust these imports to your project layout ----
+
+    // ---------------------------------------------------------------------------
+    // soup builders
+    // ---------------------------------------------------------------------------
+
+    /// Appends a quad a-b-c-d as two triangles (a,b,c) and (a,c,d).
+    /// Winding: normal = (b-a) x (c-a).
+    pub fn addQuad(
+        alloc: Allocator,
+        soup: *std.ArrayListUnmanaged(Triangle),
+        a: Vec3,
+        b: Vec3,
+        c: Vec3,
+        d: Vec3,
+    ) !void {
+        try soup.append(alloc, .{ a, b, c });
+        try soup.append(alloc, .{ a, c, d });
+    }
+
+    /// Axis-aligned unit cube [0,1]^3, 12 triangles, outward-facing.
+    pub fn unitCube(alloc: Allocator) ![]Triangle {
+        var soup = std.ArrayListUnmanaged(Triangle).empty;
+        errdefer soup.deinit(alloc);
+
+        // -x
+        try addQuad(
+            alloc,
+            &soup,
+            Vec3.make(0, 0, 0),
+            Vec3.make(0, 0, 1),
+            Vec3.make(0, 1, 1),
+            Vec3.make(0, 1, 0),
+        );
+        // +x
+        try addQuad(
+            alloc,
+            &soup,
+            Vec3.make(1, 0, 0),
+            Vec3.make(1, 1, 0),
+            Vec3.make(1, 1, 1),
+            Vec3.make(1, 0, 1),
+        );
+        // -y
+        try addQuad(
+            alloc,
+            &soup,
+            Vec3.make(0, 0, 0),
+            Vec3.make(1, 0, 0),
+            Vec3.make(1, 0, 1),
+            Vec3.make(0, 0, 1),
+        );
+        // +y
+        try addQuad(
+            alloc,
+            &soup,
+            Vec3.make(0, 1, 0),
+            Vec3.make(0, 1, 1),
+            Vec3.make(1, 1, 1),
+            Vec3.make(1, 1, 0),
+        );
+        // -z
+        try addQuad(
+            alloc,
+            &soup,
+            Vec3.make(0, 0, 0),
+            Vec3.make(0, 1, 0),
+            Vec3.make(1, 1, 0),
+            Vec3.make(1, 0, 0),
+        );
+        // +z
+        try addQuad(
+            alloc,
+            &soup,
+            Vec3.make(0, 0, 1),
+            Vec3.make(1, 0, 1),
+            Vec3.make(1, 1, 1),
+            Vec3.make(0, 1, 1),
+        );
+
+        return soup.toOwnedSlice(alloc);
+    }
+
+    /// UV sphere (y is the polar axis), outward-facing. Pole triangles that would
+    /// be degenerate are skipped.
+    pub fn sphereSoup(
+        alloc: Allocator,
+        center: Vec3,
+        radius: f64,
+        stacks: usize,
+        slices: usize,
+    ) ![]Triangle {
+        var soup = std.ArrayListUnmanaged(Triangle).empty;
+        errdefer soup.deinit(alloc);
+
+        const pt = struct {
+            fn at(c: Vec3, r: f64, st: usize, sl: usize, i: usize, j: usize) Vec3 {
+                const theta = std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(st));
+                const phi = 2.0 * std.math.pi * @as(f64, @floatFromInt(j)) / @as(f64, @floatFromInt(sl));
+                return Vec3.make(
+                    c.x + r * @sin(theta) * @cos(phi),
+                    c.y + r * @cos(theta),
+                    c.z + r * @sin(theta) * @sin(phi),
+                );
+            }
+        }.at;
+
+        for (0..stacks) |i| {
+            for (0..slices) |j| {
+                const j1 = (j + 1) % slices;
+                const p00 = pt(center, radius, stacks, slices, i, j);
+                const p01 = pt(center, radius, stacks, slices, i, j1);
+                const p10 = pt(center, radius, stacks, slices, i + 1, j);
+                const p11 = pt(center, radius, stacks, slices, i + 1, j1);
+                if (i != stacks - 1) try soup.append(alloc, .{ p00, p11, p10 });
+                if (i != 0) try soup.append(alloc, .{ p00, p01, p11 });
+            }
+        }
+
+        return soup.toOwnedSlice(alloc);
+    }
+
+    /// Torus around the z axis with major radius R, minor radius r,
+    /// `major` segments around the ring and `minor` segments around the tube.
+    /// Outward-facing.
+    pub fn torusSoup(
+        alloc: Allocator,
+        R: f64,
+        r: f64,
+        major: usize,
+        minor: usize,
+    ) ![]Triangle {
+        var soup = std.ArrayListUnmanaged(Triangle).empty;
+        errdefer soup.deinit(alloc);
+
+        const pt = struct {
+            fn at(big: f64, small: f64, nu: usize, nv: usize, i: usize, j: usize) Vec3 {
+                const u = 2.0 * std.math.pi * @as(f64, @floatFromInt(i % nu)) / @as(f64, @floatFromInt(nu));
+                const v = 2.0 * std.math.pi * @as(f64, @floatFromInt(j % nv)) / @as(f64, @floatFromInt(nv));
+                const ring = big + small * @cos(v);
+                return Vec3.make(ring * @cos(u), ring * @sin(u), small * @sin(v));
+            }
+        }.at;
+
+        for (0..major) |i| {
+            for (0..minor) |j| {
+                const a = pt(R, r, major, minor, i, j);
+                const b = pt(R, r, major, minor, i + 1, j);
+                const c = pt(R, r, major, minor, i + 1, j + 1);
+                const d = pt(R, r, major, minor, i, j + 1);
+                try addQuad(alloc, &soup, a, b, c, d);
+            }
+        }
+
+        return soup.toOwnedSlice(alloc);
+    }
+
+    // ---------------------------------------------------------------------------
+    // mesh checks
+    // ---------------------------------------------------------------------------
+
+    pub const MeshCheck = struct {
+        V: usize = 0, // vertices referenced by at least one face
+        E: usize = 0, // unique undirected edges
+        F: usize = 0,
+        euler: i32 = 0, // V - E + F
+        closed: bool = false, // every edge shared by exactly 2 faces
+        edge_manifold: bool = false, // no edge shared by more than 2 faces
+        oriented: bool = false, // no directed edge used twice (consistent winding)
+        vertex_manifold: bool = false, // each vertex's incident faces form one fan
+    };
+
+    fn find(p: []u32, x: u32) u32 {
+        var i = x;
+        while (p[i] != i) {
+            p[i] = p[p[i]];
+            i = p[i];
+        }
+        return i;
+    }
+
+    fn unite(p: []u32, a: u32, b: u32) void {
+        p[find(p, a)] = find(p, b);
+    }
+
+    pub fn checkMesh(alloc: Allocator, m: Mesh) !MeshCheck {
+        const nv = m.vertices.items.len;
+        const faces = m.faces.items;
+
+        const used = try alloc.alloc(bool, nv);
+        defer alloc.free(used);
+        @memset(used, false);
+
+        var edge_count = std.AutoHashMapUnmanaged(u64, u32).empty;
+        defer edge_count.deinit(alloc);
+        var directed = std.AutoHashMapUnmanaged(u64, void).empty;
+        defer directed.deinit(alloc);
+
+        var oriented = true;
+        for (faces) |f| {
+            for (0..3) |k| {
+                const a = f[k];
+                const b = f[(k + 1) % 3];
+                used[a] = true;
+
+                const lo = @min(a, b);
+                const hi = @max(a, b);
+                const key = (@as(u64, lo) << 32) | hi;
+                const e = try edge_count.getOrPut(alloc, key);
+                if (e.found_existing) e.value_ptr.* += 1 else e.value_ptr.* = 1;
+
+                const dkey = (@as(u64, a) << 32) | b;
+                const d = try directed.getOrPut(alloc, dkey);
+                if (d.found_existing) oriented = false;
+            }
+        }
+
+        var closed = faces.len > 0;
+        var edge_manifold = true;
+        var it = edge_count.valueIterator();
+        while (it.next()) |c| {
+            if (c.* != 2) closed = false;
+            if (c.* > 2) edge_manifold = false;
+        }
+
+        var v_count: usize = 0;
+        for (used) |u| {
+            if (u) v_count += 1;
+        }
+
+        // ---- vertex manifoldness: incident faces of each vertex must be one fan ----
+        // CSR vertex -> incident faces
+        const start = try alloc.alloc(u32, nv + 1);
+        defer alloc.free(start);
+        @memset(start, 0);
+        for (faces) |f| {
+            for (0..3) |k| start[f[k] + 1] += 1;
+        }
+        for (0..nv) |i| start[i + 1] += start[i];
+
+        const fill = try alloc.dupe(u32, start[0..nv]);
+        defer alloc.free(fill);
+        const inc = try alloc.alloc(u32, faces.len * 3);
+        defer alloc.free(inc);
+        for (faces, 0..) |f, fi| {
+            for (0..3) |k| {
+                inc[fill[f[k]]] = @intCast(fi);
+                fill[f[k]] += 1;
+            }
+        }
+
+        var vtx_manifold = true;
+        var nbr_first = std.AutoHashMapUnmanaged(u32, u32).empty;
+        defer nbr_first.deinit(alloc);
+        var parent = std.ArrayListUnmanaged(u32).empty;
+        defer parent.deinit(alloc);
+
+        for (0..nv) |vi| {
+            const v: u32 = @intCast(vi);
+            const list = inc[start[vi]..start[vi + 1]];
+            if (list.len <= 1) continue;
+
+            nbr_first.clearRetainingCapacity();
+            parent.clearRetainingCapacity();
+            for (0..list.len) |i| try parent.append(alloc, @intCast(i));
+
+            // two incident faces are adjacent around v if they share another vertex
+            for (list, 0..) |fi, i| {
+                const f = faces[fi];
+                for (0..3) |k| {
+                    if (f[k] == v) continue;
+                    const g = try nbr_first.getOrPut(alloc, f[k]);
+                    if (g.found_existing) {
+                        unite(parent.items, @intCast(i), g.value_ptr.*);
+                    } else {
+                        g.value_ptr.* = @intCast(i);
+                    }
+                }
+            }
+
+            var roots: usize = 0;
+            for (0..list.len) |i| {
+                if (find(parent.items, @intCast(i)) == i) roots += 1;
+            }
+            if (roots > 1) {
+                vtx_manifold = false;
+                break;
+            }
+        }
+
+        const e_count = edge_count.count();
+        return .{
+            .V = v_count,
+            .E = e_count,
+            .F = faces.len,
+            .euler = @as(i32, @intCast(v_count)) - @as(i32, @intCast(e_count)) + @as(i32, @intCast(faces.len)),
+            .closed = closed,
+            .edge_manifold = edge_manifold,
+            .oriented = oriented,
+            .vertex_manifold = vtx_manifold,
+        };
+    }
+
+    /// Number of connected components (vertices connected through shared faces).
+    pub fn meshComponents(alloc: Allocator, m: Mesh) !usize {
+        const nv = m.vertices.items.len;
+        const parent = try alloc.alloc(u32, nv);
+        defer alloc.free(parent);
+        for (0..nv) |i| parent[i] = @intCast(i);
+
+        const used = try alloc.alloc(bool, nv);
+        defer alloc.free(used);
+        @memset(used, false);
+
+        for (m.faces.items) |f| {
+            used[f[0]] = true;
+            used[f[1]] = true;
+            used[f[2]] = true;
+            unite(parent, f[0], f[1]);
+            unite(parent, f[1], f[2]);
+        }
+
+        var comps: usize = 0;
+        for (0..nv) |i| {
+            if (used[i] and find(parent, @intCast(i)) == i) comps += 1;
+        }
+        return comps;
+    }
+};
