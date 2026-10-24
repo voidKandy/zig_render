@@ -113,7 +113,7 @@ pub fn drawImgui(self: *@This(), _: core.engine.systems.manager.DrawImguiContext
 pub fn recordComputeCommands(
     self: @This(),
     allocated_resources: core.resources.Manager.AllocatedData,
-    swapchain: core.bindings.vulkan_init.Swapchain,
+    swapchain: core.engine.Renderer.Swapchain,
     cmd: vk.CommandBuffer,
     framebuffer_index: u32,
 ) void {
@@ -157,8 +157,12 @@ pub fn recordComputeCommands(
     );
 
     // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
-    const w: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(draw_image.extent.width)) / 16.0));
-    const h: u32 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(draw_image.extent.height)) / 16.0));
+    const w: u32 = @intFromFloat(
+        std.math.ceil(@as(f32, @floatFromInt(self.swapchain_extent.width)) / 16.0),
+    );
+    const h: u32 = @intFromFloat(
+        std.math.ceil(@as(f32, @floatFromInt(self.swapchain_extent.height)) / 16.0),
+    );
     vk.CmdDispatch(cmd, w, h, 1);
 
     core.bindings.vulkan_util.transitionImageLayout(
@@ -189,10 +193,7 @@ pub fn recordComputeCommands(
         cmd,
         draw_image.image,
         swapchain.images[framebuffer_index],
-        vk.Extent2D{
-            .height = draw_image.extent.height,
-            .width = draw_image.extent.width,
-        },
+        self.swapchain_extent,
         swapchain.extent,
     );
 

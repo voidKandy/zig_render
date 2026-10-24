@@ -58,24 +58,18 @@ pub const AllocatedImage = struct {
     allocation: c.vma.Allocation = undefined,
     image: vk.Image = undefined,
     view: vk.ImageView = undefined,
-    extent: vk.Extent3D,
-    format: vk.Format,
 
     /// Image view must still be created after AllocatedImage is initialized
     /// Do this by initializing some create info
-    /// and then vk.CreateImageView
+    /// and then call `createView`
     pub fn init(
         vma_a: c.vma.Allocator,
         format: vk.Format,
         extent: vk.Extent3D,
         usages: vk.ImageUsageFlags,
     ) @This() {
-        var image: @This() = .{
-            .format = format,
-            .extent = extent,
-        };
-
-        const ci = vki.imageCreateInfo(image.format, usages, image.extent);
+        var image = @This(){};
+        const ci = vki.imageCreateInfo(format, usages, extent);
 
         const ai = c.vma.AllocationCreateInfo{
             .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
@@ -86,6 +80,32 @@ pub const AllocatedImage = struct {
             std.debug.panic("failed to create draw image: {s}", .{@errorName(e)});
 
         return image;
+    }
+
+    pub fn initWithInfo(
+        vma_a: c.vma.Allocator,
+        ci: vk.ImageCreateInfo,
+    ) @This() {
+        var image = @This(){};
+
+        const ai = c.vma.AllocationCreateInfo{
+            .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        };
+
+        checkVk(c.vma.CreateImage(vma_a, &ci, &ai, &image.image, &image.allocation, null)) catch |e|
+            std.debug.panic("failed to create draw image: {s}", .{@errorName(e)});
+
+        return image;
+    }
+
+    pub fn createView(
+        self: *@This(),
+        ci: vk.ImageViewCreateInfo,
+        device: vk.Device,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) void {
+        checkVk(vk.CreateImageView(device, &ci, alloc_cbs, &self.view)) catch @panic("Failed to create image view");
     }
 
     pub fn deinit(self: @This(), vma_a: c.vma.Allocator, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {

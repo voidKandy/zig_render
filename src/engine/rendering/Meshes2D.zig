@@ -151,7 +151,7 @@ pub fn initPipeline(
 
 pub fn recordCommands(
     self: @This(),
-    swapchain: *const core.bindings.vulkan_init.Swapchain,
+    swapchain: *const @import("Swapchain.zig"),
     resources: *const core.resources.Manager,
     alloc_resources: *const core.resources.Manager.AllocatedData,
     cmd: vk.CommandBuffer,

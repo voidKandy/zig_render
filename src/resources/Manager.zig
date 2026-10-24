@@ -106,7 +106,6 @@ pub fn createSamplersAndDescriptorSetLayouts(self: *@This(), device: vk.Device, 
     );
 
     self.meshes3D.createDescriptorSetLayout(
-        Meshes3D.DEFAULT_BINDINGS,
         device,
         alloc_cbs,
     );

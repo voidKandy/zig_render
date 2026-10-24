@@ -51,7 +51,7 @@ physics: core.engine.Physics = undefined,
 
 renderer: core.engine.Renderer = undefined,
 
-swapchain: vki.Swapchain = undefined,
+swapchain: core.engine.Renderer.Swapchain = undefined,
 framebuffer_resized: bool = false,
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
 
@@ -91,7 +91,7 @@ pub fn init(
 pub fn deinit(self: *Self) void {
     checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
 
-    self.swapchain.deinit(self.allocs.std, self.allocs.vma, self.logical_device.handle, self.alloc_cbs);
+    self.swapchain.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     c.imgui.impl_vulkan.Shutdown();
 
@@ -259,7 +259,7 @@ fn initVulkan(self: *Self) void {
     self.frames.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
     self.upload_context.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
 
-    self.swapchain = vki.Swapchain.create(self.allocs.std, self.allocs.vma, .{
+    self.swapchain = core.engine.Renderer.Swapchain.create(self.allocs, .{
         .physical_device = self.physical_device,
         .logical_device = self.logical_device.handle,
         .surface = self.surface,
@@ -313,7 +313,6 @@ pub fn allocateResources(self: *Self) void {
 
     self.allocated_resources.meshes3D.updateDescriptorSet(
         self.logical_device.handle,
-        core.resources.Meshes3D.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
     self.allocated_resources.materials.updateStaticTextureSet(
@@ -415,9 +414,8 @@ fn drawFrame(self: *Self) void {
             self.framebuffer_resized)
         {
             self.swapchain.recreate(
-                self.allocs.std,
-                self.allocs.vma,
-                vki.SwapchainCreateOpts{
+                self.allocs,
+                .{
                     .physical_device = self.physical_device,
                     .logical_device = self.logical_device.handle,
                     .surface = self.surface,
@@ -474,7 +472,7 @@ fn recordCommandBuffer(
     };
 
     if (self.swapchain.depth_resource) |res|
-        vki.DepthResource.transition(frame.main_command_buffer, res);
+        core.engine.Renderer.Swapchain.DepthResource.transition(frame.main_command_buffer, res);
 
     vk.CmdBeginRenderPass(frame.main_command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
     defer vk.CmdEndRenderPass(frame.main_command_buffer);

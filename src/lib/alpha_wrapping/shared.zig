@@ -364,6 +364,8 @@ pub const testing_util = struct {
         edge_manifold: bool = false, // no edge shared by more than 2 faces
         oriented: bool = false, // no directed edge used twice (consistent winding)
         vertex_manifold: bool = false, // each vertex's incident faces form one fan
+        boundary_edges: usize = 0, // used by exactly 1 face
+        nonmanifold_edges: usize = 0, // used by 3+ faces
     };
 
     fn find(p: []u32, x: u32) u32 {
@@ -411,13 +413,19 @@ pub const testing_util = struct {
             }
         }
 
-        var closed = faces.len > 0;
+        // var closed = faces.len > 0;
         var edge_manifold = true;
+        var boundary: usize = 0;
+        var nonman: usize = 0;
         var it = edge_count.valueIterator();
         while (it.next()) |c| {
-            if (c.* != 2) closed = false;
+            // if (c.* != 2) closed = false;
             if (c.* > 2) edge_manifold = false;
+            if (c.* == 1) boundary += 1;
+            if (c.* > 2) nonman += 1;
         }
+
+        const closed = faces.len > 0 and boundary == 0;
 
         var v_count: usize = 0;
         for (used) |u| {
@@ -494,6 +502,8 @@ pub const testing_util = struct {
             .edge_manifold = edge_manifold,
             .oriented = oriented,
             .vertex_manifold = vtx_manifold,
+            .boundary_edges = boundary,
+            .nonmanifold_edges = nonman,
         };
     }
 

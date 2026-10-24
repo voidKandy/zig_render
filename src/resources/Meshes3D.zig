@@ -143,18 +143,20 @@ pub const Aabb = struct {
     }
 };
 
-pub const Bindings = struct {
-    vertex: u32,
-    index: u32,
-};
-
-pub const DEFAULT_BINDINGS = Bindings{
-    .vertex = 0,
-    .index = 1,
+pub const Bindings = enum(u32) {
+    index = 0,
+    position = 1,
+    uv = 2,
+    normal = 3,
+    albedo = 4,
 };
 
 pub const AllocatedData = struct {
-    vertex_buffer: vma_usage.AllocatedBuffer,
+    positions_buffer: vma_usage.AllocatedBuffer,
+    uvs_buffer: vma_usage.AllocatedBuffer,
+    normals_buffer: vma_usage.AllocatedBuffer,
+    albedo_buffer: vma_usage.AllocatedBuffer,
+
     index_buffer: vma_usage.AllocatedBuffer,
     descriptor_set: vk.DescriptorSet,
 
@@ -162,52 +164,64 @@ pub const AllocatedData = struct {
         self: @This(),
         allocs: core.engine.Allocators,
     ) void {
-        self.vertex_buffer.deinit(allocs.vma);
+        self.positions_buffer.deinit(allocs.vma);
+        self.uvs_buffer.deinit(allocs.vma);
+        self.normals_buffer.deinit(allocs.vma);
+        self.albedo_buffer.deinit(allocs.vma);
         self.index_buffer.deinit(allocs.vma);
     }
 
     pub fn updateDescriptorSet(
         self: @This(),
         device: vk.Device,
-        bindings: Bindings,
     ) std.mem.Allocator.Error!void {
-        const vertex_info = vk.DescriptorBufferInfo{
-            .buffer = self.vertex_buffer.buffer,
-            .offset = 0,
-            .range = self.vertex_buffer.size,
-        };
-        const index_info = vk.DescriptorBufferInfo{
-            .buffer = self.index_buffer.buffer,
-            .offset = 0,
-            .range = self.index_buffer.size,
+        const infos = [_]struct { Bindings, vk.DescriptorBufferInfo }{
+            .{ Bindings.index, .{
+                .buffer = self.index_buffer.buffer,
+                .offset = 0,
+                .range = self.index_buffer.size,
+            } },
+            .{ Bindings.position, .{
+                .buffer = self.positions_buffer.buffer,
+                .offset = 0,
+                .range = self.positions_buffer.size,
+            } },
+            .{ Bindings.uv, .{
+                .buffer = self.uvs_buffer.buffer,
+                .offset = 0,
+                .range = self.uvs_buffer.size,
+            } },
+            .{ Bindings.normal, .{
+                .buffer = self.normals_buffer.buffer,
+                .offset = 0,
+                .range = self.normals_buffer.size,
+            } },
+            .{ Bindings.albedo, .{
+                .buffer = self.albedo_buffer.buffer,
+                .offset = 0,
+                .range = self.albedo_buffer.size,
+            } },
         };
 
-        const write_sets =
-            &[_]vk.WriteDescriptorSet{
-                .{
-                    .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet = self.descriptor_set,
-                    .dstBinding = bindings.vertex,
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                    .pBufferInfo = &vertex_info,
-                },
+        var writes: [5]vk.WriteDescriptorSet = undefined;
 
-                .{
-                    .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet = self.descriptor_set,
-                    .dstBinding = bindings.index,
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                    .pBufferInfo = &index_info,
-                },
+        for (&writes, 0..) |*write, i| {
+            const binding = infos[i].@"0";
+            write.* = .{
+                .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = self.descriptor_set,
+                .dstBinding = @intFromEnum(binding),
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &infos[i].@"1",
             };
+        }
+
         vk.UpdateDescriptorSets(
             device,
-            @as(u32, @intCast(write_sets.len)),
-            write_sets.ptr,
+            @as(u32, @intCast(writes.len)),
+            &writes,
             0,
             null,
         );
@@ -281,19 +295,36 @@ pub fn appendMesh(
 
 pub fn createDescriptorSetLayout(
     self: *@This(),
-    bindings: Bindings,
     device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     const layout_bindings = [_]vk.DescriptorSetLayoutBinding{
         .{
-            .binding = bindings.vertex,
+            .binding = @intFromEnum(Bindings.position),
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
         .{
-            .binding = bindings.index,
+            .binding = @intFromEnum(Bindings.uv),
+            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        },
+        .{
+            .binding = @intFromEnum(Bindings.normal),
+            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        },
+        .{
+            .binding = @intFromEnum(Bindings.albedo),
+            .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
+        },
+        .{
+            .binding = @intFromEnum(Bindings.index),
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
@@ -310,6 +341,34 @@ pub fn createDescriptorSetLayout(
         @panic("failed to create descriptor set layout");
 }
 
+const VertexData = struct {
+    positions: []core.lib.math.Vec4,
+    uvs: []core.lib.math.Vec2,
+    normals: []core.lib.math.Vec4,
+    albedos: []core.lib.math.Vec4,
+};
+
+fn prepareVertexData(
+    self: *const @This(),
+    a: std.mem.Allocator,
+) std.mem.Allocator.Error!VertexData {
+    var dat = VertexData{
+        .positions = try a.alloc(core.lib.math.Vec4, self.vertices.items.len),
+        .uvs = try a.alloc(core.lib.math.Vec2, self.vertices.items.len),
+        .normals = try a.alloc(core.lib.math.Vec4, self.vertices.items.len),
+        .albedos = try a.alloc(core.lib.math.Vec4, self.vertices.items.len),
+    };
+
+    for (self.vertices.items, 0..) |vertex, i| {
+        dat.positions[i] = vertex.position;
+        dat.uvs[i] = vertex.uv;
+        dat.normals[i] = vertex.normal;
+        dat.albedos[i] = vertex.color;
+    }
+
+    return dat;
+}
+
 pub fn upload(
     self: *@This(),
     allocs: core.engine.Allocators,
@@ -317,92 +376,165 @@ pub fn upload(
     upload_ctx: *core.bindings.vulkan_init.UploadContext,
     device: core.bindings.vulkan_init.LogicalDevice,
 ) AllocatedData {
-    var vertex_buffer: vma_usage.AllocatedBuffer = undefined;
-    var index_buffer: vma_usage.AllocatedBuffer = undefined;
-    var desc_set: vk.DescriptorSet = undefined;
+    const vrt_data = self.prepareVertexData(allocs.std) catch @panic("failed to prepare vertex data");
+    defer {
+        allocs.std.free(vrt_data.positions);
+        allocs.std.free(vrt_data.uvs);
+        allocs.std.free(vrt_data.normals);
+        allocs.std.free(vrt_data.albedos);
+    }
 
-    const vert_alloc_size, const idx_alloc_size = .{
-        self.vertices.items.len * @sizeOf(core.lib.mesh.Vertex3D),
-        self.indices.items.len * @sizeOf(u32),
-    };
+    const index_size = self.indices.items.len * @sizeOf(u32);
 
-    var vert_staging_buffer = vma_usage.AllocatedBuffer.create(
+    const vertex_count = self.vertices.items.len;
+    const position_size = vertex_count * @sizeOf(core.lib.math.Vec4);
+    const uv_size = vertex_count * @sizeOf(core.lib.math.Vec2);
+    const normal_size = vertex_count * @sizeOf(core.lib.math.Vec4);
+    const albedo_size = vertex_count * @sizeOf(core.lib.math.Vec4);
+
+    const position_offset: usize = 0;
+    const uv_offset = position_offset + position_size;
+    const normal_offset = uv_offset + uv_size;
+    const albedo_offset = normal_offset + normal_size;
+    const total_size = albedo_offset + albedo_size;
+
+    var idx_staging_buffer = vma_usage.AllocatedBuffer.create(
         allocs.vma,
-        vert_alloc_size,
+        index_size,
         vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
         core.clibs.vma.MEMORY_USAGE_CPU_ONLY,
         0,
     );
-    var idx_staging_buffer = vma_usage.AllocatedBuffer.create(
+
+    var vert_staging_buffer = vma_usage.AllocatedBuffer.create(
         allocs.vma,
-        idx_alloc_size,
+        total_size,
         vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
         core.clibs.vma.MEMORY_USAGE_CPU_ONLY,
         0,
     );
 
     defer {
-        vert_staging_buffer.deinit(allocs.vma);
         idx_staging_buffer.deinit(allocs.vma);
+        vert_staging_buffer.deinit(allocs.vma);
     }
 
     // mapping memory
     {
-        var data: ?*anyopaque = undefined;
-        checkVk(core.clibs.vma.MapMemory(allocs.vma, vert_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
-        defer core.clibs.vma.UnmapMemory(allocs.vma, vert_staging_buffer.allocation);
+        var mapped: ?*anyopaque = null;
+        checkVk(core.clibs.vma.MapMemory(allocs.vma, vert_staging_buffer.allocation, &mapped)) catch @panic("failed to map vertex staging");
 
-        const vert_aligned_data: [*]core.lib.mesh.Vertex3D = @ptrCast(@alignCast(data));
-        @memcpy(vert_aligned_data, self.vertices.items);
+        const bytes: [*]u8 = @ptrCast(mapped.?);
 
-        data = undefined;
-        checkVk(core.clibs.vma.MapMemory(allocs.vma, idx_staging_buffer.allocation, &data)) catch @panic("failed to map memory");
-        defer core.clibs.vma.UnmapMemory(allocs.vma, idx_staging_buffer.allocation);
+        @memcpy(bytes[position_offset..][0..position_size], std.mem.sliceAsBytes(vrt_data.positions));
+        @memcpy(bytes[uv_offset..][0..uv_size], std.mem.sliceAsBytes(vrt_data.uvs));
+        @memcpy(bytes[normal_offset..][0..normal_size], std.mem.sliceAsBytes(vrt_data.normals));
+        @memcpy(bytes[albedo_offset..][0..albedo_size], std.mem.sliceAsBytes(vrt_data.albedos));
 
-        const idx_aligned_data: [*]u32 = @ptrCast(@alignCast(data));
-        @memcpy(idx_aligned_data, self.indices.items);
+        core.clibs.vma.UnmapMemory(allocs.vma, vert_staging_buffer.allocation);
+
+        mapped = null;
+        checkVk(core.clibs.vma.MapMemory(allocs.vma, idx_staging_buffer.allocation, &mapped)) catch @panic("failed to map index staging");
+        const indices: [*]u32 = @ptrCast(@alignCast(mapped.?));
+        @memcpy(indices[0..self.indices.items.len], self.indices.items);
+        core.clibs.vma.UnmapMemory(allocs.vma, idx_staging_buffer.allocation);
     }
 
-    vertex_buffer = vma_usage.AllocatedBuffer.create(
+    const gpu_usage =
+        vk.BUFFER_USAGE_TRANSFER_DST_BIT |
+        vk.BUFFER_USAGE_STORAGE_BUFFER_BIT;
+
+    const index_buffer = vma_usage.AllocatedBuffer.create(
         allocs.vma,
-        vert_alloc_size,
-        vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        index_size,
+        gpu_usage,
         core.clibs.vma.MEMORY_USAGE_GPU_ONLY,
         0,
     );
-    index_buffer = vma_usage.AllocatedBuffer.create(
+
+    const positions_buffer = vma_usage.AllocatedBuffer.create(
         allocs.vma,
-        vert_alloc_size,
-        vk.BUFFER_USAGE_INDEX_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        position_size,
+        gpu_usage,
+        core.clibs.vma.MEMORY_USAGE_GPU_ONLY,
+        0,
+    );
+    const uvs_buffer = vma_usage.AllocatedBuffer.create(
+        allocs.vma,
+        uv_size,
+        gpu_usage,
+        core.clibs.vma.MEMORY_USAGE_GPU_ONLY,
+        0,
+    );
+    const normals_buffer = vma_usage.AllocatedBuffer.create(
+        allocs.vma,
+        normal_size,
+        gpu_usage,
+        core.clibs.vma.MEMORY_USAGE_GPU_ONLY,
+        0,
+    );
+    const albedo_buffer = vma_usage.AllocatedBuffer.create(
+        allocs.vma,
+        albedo_size,
+        gpu_usage,
         core.clibs.vma.MEMORY_USAGE_GPU_ONLY,
         0,
     );
 
-    const SubmitCtx =
-        struct {
-            mesh_buffer: vk.Buffer,
-            staging_buffer: vk.Buffer,
-            size: usize,
+    const Copy = struct {
+        src: vk.Buffer,
+        dst: vk.Buffer,
+        src_offset: usize,
+        size: usize,
 
-            pub fn submit(ctx: @This(), cmd: vk.CommandBuffer) void {
-                const copy_region = vk.BufferCopy{
-                    .size = ctx.size,
-                };
-                vk.CmdCopyBuffer(cmd, ctx.staging_buffer, ctx.mesh_buffer, 1, &copy_region);
-            }
-        };
+        pub fn submit(ctx: @This(), cmd: vk.CommandBuffer) void {
+            const region = vk.BufferCopy{
+                .srcOffset = ctx.src_offset,
+                .dstOffset = 0,
+                .size = ctx.size,
+            };
+            vk.CmdCopyBuffer(cmd, ctx.src, ctx.dst, 1, &region);
+        }
+    };
 
-    upload_ctx.immediateSubmit(device, SubmitCtx{
-        .mesh_buffer = vertex_buffer.buffer,
-        .staging_buffer = vert_staging_buffer.buffer,
-        .size = vert_alloc_size,
-    });
+    const copies = [_]Copy{
+        .{
+            .src = vert_staging_buffer.buffer,
+            .dst = positions_buffer.buffer,
+            .src_offset = position_offset,
+            .size = position_size,
+        },
+        .{
+            .src = vert_staging_buffer.buffer,
+            .dst = uvs_buffer.buffer,
+            .src_offset = uv_offset,
+            .size = uv_size,
+        },
+        .{
+            .src = vert_staging_buffer.buffer,
+            .dst = normals_buffer.buffer,
+            .src_offset = normal_offset,
+            .size = normal_size,
+        },
+        .{
+            .src = vert_staging_buffer.buffer,
+            .dst = albedo_buffer.buffer,
+            .src_offset = albedo_offset,
+            .size = albedo_size,
+        },
+        .{
+            .src = idx_staging_buffer.buffer,
+            .dst = index_buffer.buffer,
+            .src_offset = 0,
+            .size = index_size,
+        },
+    };
 
-    upload_ctx.immediateSubmit(device, SubmitCtx{
-        .mesh_buffer = index_buffer.buffer,
-        .staging_buffer = idx_staging_buffer.buffer,
-        .size = idx_alloc_size,
-    });
+    for (copies) |copy| {
+        upload_ctx.immediateSubmit(device, copy);
+    }
+
+    var desc_set: vk.DescriptorSet = undefined;
 
     const ai = vk.DescriptorSetAllocateInfo{
         .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -412,12 +544,14 @@ pub fn upload(
         .pSetLayouts = &self.descriptor_set_layout,
     };
 
-    checkVk(vk.AllocateDescriptorSets(device.handle, &ai, &desc_set)) catch
-        @panic("failed to allocate descriptor sets");
+    checkVk(vk.AllocateDescriptorSets(device.handle, &ai, &desc_set)) catch @panic("failed to allocate descriptor set");
 
     return .{
+        .positions_buffer = positions_buffer,
+        .uvs_buffer = uvs_buffer,
+        .normals_buffer = normals_buffer,
+        .albedo_buffer = albedo_buffer,
         .index_buffer = index_buffer,
-        .vertex_buffer = vertex_buffer,
         .descriptor_set = desc_set,
     };
 }

@@ -347,7 +347,7 @@ pub fn SystemManager(
         pub fn recordComputeCommands(
             self: @This(),
             allocated_resources: core.resources.Manager.AllocatedData,
-            swapchain: core.bindings.vulkan_init.Swapchain,
+            swapchain: core.engine.Renderer.Swapchain,
             cmd: vk.CommandBuffer,
             framebuffer_idx: u32,
         ) void {

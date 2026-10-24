@@ -238,7 +238,7 @@ fn computeSteinerPoint(
 const GateQueue =
     std.PriorityQueue(Gate, @TypeOf(.{}), struct {
         fn c(_: @TypeOf(.{}), a: Gate, b: Gate) std.math.Order {
-            return std.math.order(a.r2, b.r2);
+            return std.math.order(b.r2, a.r2);
         }
     }.c);
 
@@ -264,7 +264,7 @@ fn makeMesh(
         .max = center.add(extents).add(.make(offset, offset, offset)),
     };
 
-    log.warn("bbox min=({d},{d},{d}) max=({d},{d},{d})", .{
+    log.debug("bbox min=({d},{d},{d}) max=({d},{d},{d})", .{
         loose.min.x, loose.min.y, loose.min.z,
         loose.max.x, loose.max.y, loose.max.z,
     });
@@ -310,8 +310,8 @@ fn makeMesh(
             if (!self.delaunay.cellAlive(c)) continue;
             if (self.labelOf(c) == .inside) n_in += 1 else n_out += 1;
         }
-        log.warn("inside={d} outside={d}", .{ n_in, n_out });
-        log.warn("cellAt(0) null={} cellAlive(0)={} flag0={}", .{
+        log.debug("inside={d} outside={d}", .{ n_in, n_out });
+        log.debug("cellAt(0) null={} cellAlive(0)={} flag0={}", .{
             self.delaunay.cellAt(0) == null,
             self.delaunay.cellAlive(0),
             self.delaunay.cells.items[0].alive,
@@ -319,9 +319,9 @@ fn makeMesh(
 
         for (self.delaunay.cells.items, 0..) |cell, i| {
             if (!cell.alive) continue;
-            log.warn("cell {d}: v={any} outer={}", .{ i, cell.vertices, self.delaunay.cellIsOuter(@intCast(i)) });
+            log.debug("cell {d}: v={any} outer={}", .{ i, cell.vertices, self.delaunay.cellIsOuter(@intCast(i)) });
         }
-        for (0..4) |v| log.warn("super {d} = {any}", .{ v, self.delaunay.pointAt(@intCast(v)) });
+        for (0..4) |v| log.debug("super {d} = {any}", .{ v, self.delaunay.pointAt(@intCast(v)) });
     }
     var pq = GateQueue.initContext(.{});
     defer pq.deinit(alloc);
@@ -356,14 +356,13 @@ fn makeMesh(
         var rule: usize = 0;
         const hit = try self.computeSteinerPoint(alloc, g.outside, g.fi, inside, &sp, &rule);
 
-        if (self.stats.gates_popped <= 12) log.warn(
+        if (self.stats.gates_popped <= 12) log.debug(
             "pop {d}: r2={d} outside={d} inside={d} steiner={} rule={d} sp={any}",
             .{ self.stats.gates_popped, g.r2, g.outside, inside, hit, rule, sp },
         );
         if (hit) {
             if (self.stats.steiner_points >= max_steiner) break;
             _ = try self.delaunay.insert(alloc, sp, &new_cells);
-            log.warn("inserted: new_cells={d}", .{new_cells.items.len});
 
             self.stats.steiner_points += 1;
             if (rule == 1) self.stats.rule1 += 1 else self.stats.rule2 += 1;
@@ -403,7 +402,7 @@ fn makeMesh(
         }
     }
 
-    log.warn("AFTER LOOP: popped={d} carved={d} steiner={d}", .{
+    log.debug("AFTER LOOP: popped={d} carved={d} steiner={d}", .{
         self.stats.gates_popped, self.stats.carved, self.stats.steiner_points,
     });
 
@@ -544,20 +543,26 @@ fn alphaWrap(alloc: Allocator, tris: []const shared.Triangle, params: WrapParams
 /// Union find over a small local set (indices into a vector)
 const Dsu = struct {
     p: std.ArrayListUnmanaged(u32) = .empty,
+    fn deinit(self: *@This(), a: Allocator) void {
+        self.p.deinit(a);
+    }
+
     fn reset(self: *@This(), a: Allocator, n: usize) Allocator.Error!void {
         try self.p.resize(a, n);
-        for (0..n) |i| self.p.appendAssumeCapacity(@intCast(i));
+        for (self.p.items, 0..) |*e, i| e.* = @intCast(i);
     }
     fn find(self: *const @This(), x: usize) usize {
-        var out = x;
-        while (self.p.items[x] != x) {
-            self.p.items[x] = self.p.items[self.p.items[x]];
-            out = self.p.items[x];
+        var cur = x;
+        while (self.p.items[cur] != cur) {
+            self.p.items[cur] = self.p.items[self.p.items[cur]];
+            cur = self.p.items[cur];
         }
-        return out;
+        return cur;
     }
     fn uni(self: *@This(), a: usize, b: usize) void {
-        self.p.items[self.find(a)] = @intCast(self.find(b));
+        const ra = self.find(a);
+        const rb = self.find(b);
+        self.p.items[ra] = @intCast(rb);
     }
 };
 
@@ -590,10 +595,14 @@ const Helpers = struct {
         want_solid: bool,
     ) Allocator.Error!usize {
         const cells = incident_map.get(v).?;
-        // const n = cells.items.len;
 
         var idx_map = std.AutoHashMapUnmanaged(shared.CellId, usize).empty;
         var members = std.ArrayListUnmanaged(shared.CellId).empty;
+
+        defer {
+            idx_map.deinit(alloc);
+            members.deinit(alloc);
+        }
         for (cells.items) |c| {
             if (wrap.isSolid(c) == want_solid) {
                 try idx_map.put(alloc, c, members.items.len);
@@ -603,7 +612,11 @@ const Helpers = struct {
         const m = members.items.len;
         if (m == 0) return 0;
         var dsu = Dsu{};
+        defer dsu.deinit(alloc);
         try dsu.reset(alloc, m);
+        std.debug.assert(dsu.p.items.len == m);
+        std.debug.assert(dsu.p.items[m - 1] == m - 1);
+
         for (members.items, 0..) |c, i| {
             const cc = wrap.delaunay.cellAt((c)).?;
             for (0..4) |fi| {
@@ -733,7 +746,6 @@ fn maxFacetR2(m: Mesh) f64 {
 
 /// Mirrors the C++ `alpha_wrap(soup, alpha, offset, manifold, &stats)` convenience wrapper.
 /// Assumes alphaWrap has the signature
-///   alphaWrap(alloc, tris, params, stats: ?*WrapStats) !Mesh
 fn runWrap(
     alloc: Allocator,
     soup: []const shared.Triangle,
@@ -814,7 +826,8 @@ test "sphere_band_and_facet_bound" {
 
     // The real guarantee: every output vertex is strictly outside the input soup
     // and within the offset band (distance-to-soup in [~offset, offset+alpha]).
-    const orc = try Oracle.build(alloc, soup); // NOTE: add `alloc` here if your Oracle.build takes one
+    var orc = try Oracle.build(alloc, soup); // NOTE: add `alloc` here if your Oracle.build takes one
+    defer orc.deinit(alloc);
 
     var dlo: f64 = 1e9;
     var dhi: f64 = 0;
@@ -972,6 +985,7 @@ test "alpha_controls_gap_bridging" {
         const cb = try tu.checkMesh(alloc, big);
         const comps = try tu.meshComponents(alloc, big);
         std.debug.print("    big-alpha: comps={d} closed={} F={d}\n", .{ comps, cb.closed, cb.F });
+        std.debug.print("    big-alpha edges: boundary={d} nonmanifold={d}\n", .{ cb.boundary_edges, cb.nonmanifold_edges });
         try testing.expect(cb.closed);
         try testing.expectEqual(@as(usize, 1), comps);
     }

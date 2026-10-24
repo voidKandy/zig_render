@@ -306,7 +306,7 @@ pub fn update(
 pub fn recordComputeCommands(
     self: @This(),
     allocated_resources: core.resources.Manager.AllocatedData,
-    _: core.bindings.vulkan_init.Swapchain,
+    _: core.engine.Renderer.Swapchain,
     cmd: vk.CommandBuffer,
     _: u32,
 ) void {

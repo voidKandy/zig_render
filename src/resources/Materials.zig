@@ -178,7 +178,8 @@ pub const MaterialData = struct {
                 .layerCount = 1,
             },
         };
-        checkVk(vk.CreateImageView(device.handle, &image_view_ci, alloc_cbs, &image.view)) catch @panic("Failed to create image view");
+
+        image.createView(image_view_ci, device.handle, alloc_cbs);
 
         return image;
     }
@@ -459,7 +460,7 @@ pub fn upload(
                     ci.extent,
                     ci.usages,
                 );
-                const view_ci = vki.imageViewCreateInfo(image.format, image.image, ci.aspect_flags);
+                const view_ci = vki.imageViewCreateInfo(ci.format, image.image, ci.aspect_flags);
 
                 checkVk(vk.CreateImageView(logical_device.handle, &view_ci, alloc_cbs, &image.view)) catch
                     @panic("failed to create maze image view");
@@ -538,11 +539,6 @@ pub fn upload(
 }
 
 pub const AllocatedData = struct {
-    // material_indices: std.StringHashMapUnmanaged(usize),
-    // material_names_reverse_lookup: std.AutoHashMapUnmanaged(usize, [:0]const u8),
-
-    // libraries: std.StringHashMapUnmanaged(MaterialLibrary.AllocatedData),
-
     /// All writable textures
     textures: std.StringHashMapUnmanaged(vma_usage.AllocatedImage),
 

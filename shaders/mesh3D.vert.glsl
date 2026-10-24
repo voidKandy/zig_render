@@ -32,8 +32,11 @@ layout (set = 0, binding = 0) readonly uniform CameraData {
     mat4 proj;
 } camera_Ubo;
 
-layout (std430, set = 3, binding = 0) readonly buffer Vertices { VertexData v[]; } in_Vertices;
-layout (set = 3, binding = 1) readonly buffer Indices { int i[]; } in_Indices;
+layout (set = 3, binding = 0) readonly buffer Indices { int i[]; } in_Indices;
+layout (std430, set = 3, binding = 1) readonly buffer Positions { vec4 data[]; } in_Positions;
+layout (std430, set = 3, binding = 2) readonly buffer Uvs { vec2 data[]; } in_Uvs;
+layout (std430, set = 3, binding = 3) readonly buffer Normals { vec4 data[]; } in_Normals;
+layout (std430, set = 3, binding = 4) readonly buffer Albedo { vec4 data[]; } in_Albedo;
 
 layout(std430, set = 4, binding = 0) readonly buffer InstanceSSBO { Instance instances[]; } InstanceBuf;
 
@@ -73,11 +76,19 @@ void main()
 
     int Index = in_Indices.i[gl_VertexIndex];
 
-    VertexData vtx = in_Vertices.v[Index + pc.VertexOffset];
+
+    uint vertexDataIdx = Index + pc.VertexOffset;
+
+    vec4 pos = in_Positions.data[vertexDataIdx];
+    vec2 uv = in_Uvs.data[vertexDataIdx];
+    vec4 normal = in_Normals.data[vertexDataIdx];
+    vec4 albedo = in_Albedo.data[vertexDataIdx];
+
+    
     mat4 modelTransform = buildModelMatrix(instance.position, instance.rotation, instance.scale);
     
-    gl_Position = camera_Ubo.proj * camera_Ubo.view * modelTransform * vec4(vtx.position.xyz, 1.0);
+    gl_Position = camera_Ubo.proj * camera_Ubo.view * modelTransform * vec4(pos.xyz, 1.0);
 
-    texCoord = vec2(vtx.uv.x, vtx.uv.y);
+    texCoord = vec2(uv.x, uv.y);
 }
 

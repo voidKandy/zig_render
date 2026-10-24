@@ -181,16 +181,6 @@ pub fn recordCommands(
     var i: u32 = 0;
 
     for (resources.meshes3D.ranges.items) |m3d_rg| {
-
-        // const instances_range = self.ranges.get(i) orelse continue;
-
-        // vk.CmdDraw(
-        //     cmd,
-        //     @as(u32, @intCast(m3d_rg.index.range)),
-        //     instances_range.range, // num instances
-        //     @as(u32, @intCast(m3d_rg.index.offset)),
-        //     instances_range.offset, // first instance
-        // );
         defer i += 1;
         vk.CmdPushConstants(
             cmd,
