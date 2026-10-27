@@ -268,10 +268,9 @@ fn initVulkan(self: *Self) void {
         .window_width = @intCast(win_width),
         .window_height = @intCast(win_height),
         .alloc_cb = self.alloc_cbs,
-        .depth_buffer = true,
     }) catch @panic("failed to create swapchain");
 
-    self.renderer.createMainRenderPass(self.logical_device.handle, self.physical_device, self.alloc_cbs);
+    self.renderer.createMainRenderPassNew(&self.swapchain, self.logical_device.handle, self.alloc_cbs);
 
     self.swapchain.createFramebuffers(
         self.allocs.std,
@@ -424,7 +423,6 @@ fn drawFrame(self: *Self) void {
                     .window_width = @intCast(INITIAL_WINDOW_EXTENT.width),
                     .window_height = @intCast(INITIAL_WINDOW_EXTENT.height),
                     .alloc_cb = self.alloc_cbs,
-                    .depth_buffer = true,
                 },
                 self.window,
                 self.renderer.main_render_pass,
@@ -471,8 +469,11 @@ fn recordCommandBuffer(
         } },
     };
 
-    if (self.swapchain.depth_resource) |res|
-        core.engine.Renderer.Swapchain.DepthResource.transition(frame.main_command_buffer, res);
+    // BAD move this into Swapchain or Renderer module
+    core.engine.Renderer.Swapchain.Attachments.transitionDepth(
+        frame.main_command_buffer,
+        self.swapchain.attachments.plexe.depth,
+    );
 
     vk.CmdBeginRenderPass(frame.main_command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
     defer vk.CmdEndRenderPass(frame.main_command_buffer);

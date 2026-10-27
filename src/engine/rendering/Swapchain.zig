@@ -18,9 +18,314 @@ image_views: []vk.ImageView = &.{},
 framebuffers: []vk.Framebuffer = &.{},
 format: vk.Format = undefined,
 extent: vk.Extent2D = undefined,
-depth_resource: ?vma_usage.AllocatedImage = null,
+attachments: Attachments,
+// depth_resource: ?vma_usage.AllocatedImage = null,
 
 const Swapchain = @This();
+
+const FrameBufferAttachment = struct {
+    image: vma_usage.AllocatedImage,
+    format: vk.Format,
+};
+
+pub const Attachments = struct {
+    const Tags = enum {
+        final,
+        depth,
+        // position,
+        // normal,
+        // albedo,
+
+        fn layout(self: *const @This()) vk.ImageLayout {
+            return switch (self.*) {
+                .final => vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .depth => vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                // .position => vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                // .normal => vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                // .albedo => vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+        }
+    };
+
+    /// Holds all attachments other than 'final'
+    /// 'final' is handled by `Swapchain`
+    const Plexe =
+        @Struct(
+            .auto,
+            null,
+            std.meta.fieldNames(Tags)[1..],
+            &@splat(FrameBufferAttachment),
+            &@splat(.{}),
+        );
+
+    plexe: Plexe,
+
+    pub fn deinit(
+        self: *@This(),
+        vma_a: vma.Allocator,
+        device: vk.Device,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) void {
+        self.plexe.depth.image.deinit(vma_a, device, alloc_cbs);
+        // self.plexe.position.image.deinit(vma_a, device, alloc_cbs);
+        // self.plexe.normal.image.deinit(vma_a, device, alloc_cbs);
+        // self.plexe.albedo.image.deinit(vma_a, device, alloc_cbs);
+    }
+
+    /// final image is passed from swapchain
+    fn imageViews(self: *const @This(), final_image: vk.ImageView) [std.meta.fields(Tags).len]vk.ImageView {
+        var views: [std.meta.fields(Tags).len]vk.ImageView = undefined;
+        inline for (&views, std.meta.fields(Tags)) |*v, enfld| {
+            const tag = comptime std.meta.stringToEnum(Tags, enfld.name).?;
+            if (tag == .final)
+                v.* = final_image
+            else
+                v.* = @field(self.plexe, enfld.name).image.view;
+        }
+        return views;
+    }
+
+    pub fn attachmentReferences() std.EnumArray(Tags, vk.AttachmentReference) {
+        var refs = std.EnumArray(Tags, vk.AttachmentReference).initUndefined();
+        inline for (std.meta.fields(Tags)) |enfld| {
+            const tag = comptime std.meta.stringToEnum(Tags, enfld.name).?;
+            refs.set(tag, vk.AttachmentReference{
+                .attachment = @intFromEnum(tag),
+                .layout = tag.layout(),
+            });
+        }
+        return refs;
+    }
+
+    pub fn attachmentDescriptions(self: *const @This()) std.EnumArray(Tags, vk.AttachmentDescription) {
+        var descs = std.EnumArray(Tags, vk.AttachmentDescription).initUndefined();
+        inline for (std.meta.fields(Tags)) |enfld| {
+            const tag = comptime std.meta.stringToEnum(Tags, enfld.name).?;
+            const format = if (tag == .final)
+                core.engine.Renderer.MAIN_RENDER_PASS_IMAGE_FORMAT
+            else
+                @field(self.plexe, enfld.name).format;
+
+            const desc: vk.AttachmentDescription =
+                switch (tag) {
+                    .final => .{
+                        .format = format,
+                        .samples = vk.SAMPLE_COUNT_1_BIT,
+                        .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
+                        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
+                        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .initialLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                    },
+
+                    .depth => .{
+                        .format = format,
+                        .samples = vk.SAMPLE_COUNT_1_BIT,
+                        .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
+                        .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .initialLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                        .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    },
+                    // .position => .{
+                    //     .format = format,
+                    //     .samples = vk.SAMPLE_COUNT_1_BIT,
+                    //     .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                    //     .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                    //     .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                    //     .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                    //     .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                    //     .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    // },
+                    // .normal => .{
+                    //     .format = format,
+                    //     .samples = vk.SAMPLE_COUNT_1_BIT,
+                    //     .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                    //     .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                    //     .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                    //     .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                    //     .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                    //     .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    // },
+                    // .albedo => .{
+                    //     .format = format,
+                    //     .samples = vk.SAMPLE_COUNT_1_BIT,
+                    //     .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                    //     .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                    //     .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                    //     .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                    //     .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                    //     .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    // },
+                };
+
+            descs.set(tag, desc);
+        }
+
+        return descs;
+    }
+
+    fn findDepthFormat(device: vki.PhysicalDevice) vk.Format {
+        return device.findSupportedFormat(
+            &[_]vk.Format{ vk.FORMAT_D32_SFLOAT, vk.FORMAT_D32_SFLOAT_S8_UINT, vk.FORMAT_D24_UNORM_S8_UINT },
+            vk.IMAGE_TILING_OPTIMAL,
+            vk.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        ) catch @panic("failed to find depth format");
+    }
+
+    /// Transitions depth image into DepthStencil format
+    /// BAD
+    /// (see call site)
+    pub fn transitionDepth(
+        cmd: vk.CommandBuffer,
+        attachment: FrameBufferAttachment,
+    ) void {
+        vku.transitionImageLayout(
+            cmd,
+            attachment.image.image,
+            vk.IMAGE_LAYOUT_UNDEFINED,
+            vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            0,
+            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        );
+    }
+
+    fn createAttachment(
+        vma_a: vma.Allocator,
+        logical_device: vk.Device,
+        swapchain_extent: vk.Extent2D,
+        format: vk.Format,
+        usage: vk.ImageUsageFlags,
+        vk_alloc_cbs: ?*vk.AllocationCallbacks,
+    ) FrameBufferAttachment {
+        const extent = vk.Extent3D{
+            .depth = 1,
+            .height = swapchain_extent.height,
+            .width = swapchain_extent.width,
+        };
+        var image: vma_usage.AllocatedImage = undefined;
+
+        const ci = vk.ImageCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = vk.IMAGE_TYPE_2D,
+            .format = format,
+            .extent = extent,
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = vk.SAMPLE_COUNT_1_BIT,
+            .tiling = vk.IMAGE_TILING_OPTIMAL,
+            .usage = usage | vk.IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+            .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
+            .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+        };
+
+        const ai = vma.AllocationCreateInfo{
+            .usage = vma.MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        };
+
+        checkVk(vma.CreateImage(
+            vma_a,
+            &ci,
+            &ai,
+            &image.image,
+            &image.allocation,
+            null,
+        )) catch @panic("failed to create image");
+
+        const aspect_mask: u32 =
+            switch (usage) {
+                vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT => vk.IMAGE_ASPECT_COLOR_BIT,
+                vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT => vk.IMAGE_ASPECT_DEPTH_BIT,
+                // | vk.IMAGE_ASPECT_STENCIL_BIT,
+                else => @panic("UNEXPECTED USAGE FLAG"),
+            };
+
+        const imvi_ci = vk.ImageViewCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image.image,
+            .viewType = vk.IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .subresourceRange = .{
+                .aspectMask = aspect_mask,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        checkVk(vk.CreateImageView(
+            logical_device,
+            &imvi_ci,
+            vk_alloc_cbs,
+            &image.view,
+        )) catch @panic("Failed to create image view");
+
+        return .{
+            .image = image,
+            .format = format,
+        };
+    }
+
+    pub fn init(
+        vma_a: vma.Allocator,
+        physical_device: vki.PhysicalDevice,
+        logical_device: vk.Device,
+        swapchain_extent: vk.Extent2D,
+        vk_alloc_cbs: ?*vk.AllocationCallbacks,
+    ) @This() {
+        const depth = createAttachment(
+            vma_a,
+            logical_device,
+            swapchain_extent,
+            findDepthFormat(physical_device),
+            vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            vk_alloc_cbs,
+        );
+
+        // const position = createAttachment(
+        //     vma_a,
+        //     logical_device,
+        //     swapchain_extent,
+        //     vk.FORMAT_R16G16B16A16_SFLOAT,
+        //     vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        //     vk_alloc_cbs,
+        // );
+
+        // const normal = createAttachment(
+        //     vma_a,
+        //     logical_device,
+        //     swapchain_extent,
+        //     vk.FORMAT_R16G16B16A16_SFLOAT,
+        //     vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        //     vk_alloc_cbs,
+        // );
+
+        // const color = createAttachment(
+        //     vma_a,
+        //     logical_device,
+        //     swapchain_extent,
+        //     vk.FORMAT_R8G8B8A8_UNORM,
+        //     vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        //     vk_alloc_cbs,
+        // );
+
+        return .{
+            .plexe = .{
+                .depth = depth,
+                // .position = position,
+                // .normal = normal,
+                // .color = color,
+            },
+        };
+    }
+};
 
 pub const CreateOpts = struct {
     physical_device: vki.PhysicalDevice,
@@ -32,7 +337,6 @@ pub const CreateOpts = struct {
     window_width: u32 = 0,
     window_height: u32 = 0,
     alloc_cb: ?*vk.AllocationCallbacks = null,
-    depth_buffer: bool,
 };
 
 pub fn create(allocs: core.engine.Allocators, opts: CreateOpts) (vki.VkError || Allocator.Error)!@This() {
@@ -108,17 +412,6 @@ pub fn create(allocs: core.engine.Allocators, opts: CreateOpts) (vki.VkError || 
         checkVk(vk.CreateSemaphore(opts.logical_device, &semaphore_ci, opts.alloc_cb, &semaphores[i])) catch @panic("failed to create semaphore");
     }
 
-    const depth_resource = if (opts.depth_buffer)
-        DepthResource.init(
-            allocs.vma,
-            opts.physical_device,
-            opts.logical_device,
-            extent,
-            opts.alloc_cb,
-        )
-    else
-        null;
-
     return .{
         .handle = swapchain,
         .images = swapchain_images,
@@ -126,7 +419,14 @@ pub fn create(allocs: core.engine.Allocators, opts: CreateOpts) (vki.VkError || 
         .image_views = swapchain_image_views,
         .format = format,
         .extent = extent,
-        .depth_resource = depth_resource,
+        .attachments = Attachments.init(
+            allocs.vma,
+            opts.physical_device,
+            opts.logical_device,
+            extent,
+            opts.alloc_cb,
+        ),
+        // .depth_resource = depth_resource,
     };
 }
 
@@ -139,12 +439,11 @@ pub fn deinit(self: *@This(), allocs: core.engine.Allocators, device: vk.Device,
         vk.DestroyImageView(device, iv, vk_alloc_cbs);
     }
 
-    for (0..self.render_semaphores.len) |k| {
-        vk.DestroySemaphore(device, self.render_semaphores[k], vk_alloc_cbs);
+    for (self.render_semaphores) |s| {
+        vk.DestroySemaphore(device, s, vk_alloc_cbs);
     }
 
-    if (self.depth_resource) |b|
-        b.deinit(allocs.vma, device, vk_alloc_cbs);
+    self.attachments.deinit(allocs.vma, device, vk_alloc_cbs);
 
     allocs.std.free(self.images);
     allocs.std.free(self.image_views);
@@ -191,16 +490,17 @@ pub fn createFramebuffers(
     errdefer a.free(framebuffers);
 
     for (0..self.image_views.len) |i| {
-        const attachments = &if (self.depth_resource) |r|
-            [_]vk.ImageView{ self.image_views[i], r.view }
-        else
-            [_]vk.ImageView{self.image_views[i]};
+        const attachments = Attachments.imageViews(&self.attachments, self.image_views[i]);
+        // const attachments = &if (self.depth_resource) |r|
+        //     [_]vk.ImageView{ self.image_views[i], r.view }
+        // else
+        //     [_]vk.ImageView{self.image_views[i]};
 
         const ci = vk.FramebufferCreateInfo{
             .sType = vk.STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass = render_pass,
             .attachmentCount = @as(u32, @intCast(attachments.len)),
-            .pAttachments = attachments.ptr,
+            .pAttachments = &attachments,
             .width = self.extent.width,
             .height = self.extent.height,
             .layers = 1,
@@ -336,101 +636,5 @@ pub const SupportInfo = struct {
         extent.height = @min(@max(extent.height, min_support_h), max_support_h);
 
         return extent;
-    }
-};
-
-pub const DepthResource = struct {
-    pub fn findDepthFormat(device: vki.PhysicalDevice) vk.Format {
-        return device.findSupportedFormat(
-            &[_]vk.Format{ vk.FORMAT_D32_SFLOAT, vk.FORMAT_D32_SFLOAT_S8_UINT, vk.FORMAT_D24_UNORM_S8_UINT },
-            vk.IMAGE_TILING_OPTIMAL,
-            vk.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT,
-        ) catch @panic("failed to find depth format");
-    }
-
-    /// Transitions depth image into DepthStencil format
-    pub fn transition(
-        cmd: vk.CommandBuffer,
-        image: vma_usage.AllocatedImage,
-    ) void {
-        vku.transitionImageLayout(
-            cmd,
-            image.image,
-            vk.IMAGE_LAYOUT_UNDEFINED,
-            vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            0,
-            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        );
-    }
-
-    pub fn init(
-        vma_a: vma.Allocator,
-        physical_device: vki.PhysicalDevice,
-        logical_device: vk.Device,
-        swapchain_extent: vk.Extent2D,
-        vk_alloc_cbs: ?*vk.AllocationCallbacks,
-    ) vma_usage.AllocatedImage {
-        const depth_format = findDepthFormat(physical_device);
-        const extent = vk.Extent3D{
-            .depth = 1,
-            .height = swapchain_extent.height,
-            .width = swapchain_extent.width,
-        };
-        const usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-        var image: vma_usage.AllocatedImage = undefined;
-
-        const ci = vk.ImageCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = vk.IMAGE_TYPE_2D,
-            .format = depth_format,
-            .extent = extent,
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = vk.SAMPLE_COUNT_1_BIT,
-            .tiling = vk.IMAGE_TILING_OPTIMAL,
-            .usage = usage,
-            .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
-            .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
-        };
-
-        const ai = vma.AllocationCreateInfo{
-            .usage = vma.MEMORY_USAGE_GPU_ONLY,
-            .requiredFlags = vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        };
-
-        checkVk(vma.CreateImage(
-            vma_a,
-            &ci,
-            &ai,
-            &image.image,
-            &image.allocation,
-            null,
-        )) catch @panic("failed to create image");
-
-        const depth_image_view_ci = vk.ImageViewCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = image.image,
-            .viewType = vk.IMAGE_VIEW_TYPE_2D,
-            .format = depth_format,
-            .subresourceRange = .{
-                .aspectMask = vk.IMAGE_ASPECT_DEPTH_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-        };
-
-        checkVk(vk.CreateImageView(
-            logical_device,
-            &depth_image_view_ci,
-            vk_alloc_cbs,
-            &image.view,
-        )) catch @panic("Failed to create depth image view");
-
-        return image;
     }
 };

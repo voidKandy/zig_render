@@ -144,11 +144,6 @@ pub fn createMainRenderPass(self: *@This(), log_device: vk.Device, phys_device: 
         .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
 
-    const final_color_attachment_ref = vk.AttachmentReference{
-        .attachment = 0,
-        .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    };
-
     const color_attachment_ref = vk.AttachmentReference{
         .attachment = 0,
         .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -158,34 +153,6 @@ pub fn createMainRenderPass(self: *@This(), log_device: vk.Device, phys_device: 
         .attachment = 1,
         .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
-
-    const input_references = [_]vk.AttachmentReference{
-        .{
-            .attachment = 1,
-            .layout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        },
-        .{
-            .attachment = 2,
-            .layout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        },
-    };
-
-    const subpass_descriptions = [_]vk.SubpassDescription{
-        .{
-            .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &color_attachment_ref,
-            .pDepthStencilAttachment = &depth_attachment_ref,
-        },
-        .{
-            .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &final_color_attachment_ref,
-            .inputAttachmentCount = input_references.len,
-            .pInputAttachments = &input_references,
-        },
-    };
-    _ = subpass_descriptions;
 
     const subpass = vk.SubpassDescription{
         .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
@@ -213,13 +180,79 @@ pub fn createMainRenderPass(self: *@This(), log_device: vk.Device, phys_device: 
         .pAttachments = all_attachments,
         .subpassCount = 1,
         .pSubpasses = &subpass,
+        .dpendencyCount = 1,
+        .pDependencies = &dependency,
+    };
+
+    checkVk(vk.CreateRenderPass(log_device, &ci, alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
+}
+pub fn createMainRenderPassNew(
+    self: *@This(),
+    swapchain: *const Swapchain,
+    log_device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    const attachment_descriptions = swapchain.attachments.attachmentDescriptions();
+    const attachment_references = Swapchain.Attachments.attachmentReferences();
+
+    // const input_attachments = attachment_references.values[@intFromEnum(Swapchain.Attachments.Tags.position)..];
+
+    const subpass_descriptions = [_]vk.SubpassDescription{
+        .{
+            .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &attachment_references.get(.final),
+            .pDepthStencilAttachment = &attachment_references.get(.depth),
+            // .inputAttachmentCount = input_attachments.len,
+            // .pInputAttachments = &input_attachments,
+        },
+        // .{
+        //     .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
+        //     .colorAttachmentCount = 1,
+        //     .pColorAttachments = &color_attachment_ref,
+        //     .pDepthStencilAttachment = &depth_attachment_ref,
+        // },
+        // .{
+        //     .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
+        //     .colorAttachmentCount = 1,
+        //     .pColorAttachments = &final_color_attachment_ref,
+        //     .inputAttachmentCount = input_references.len,
+        //     .pInputAttachments = &input_references,
+        // },
+    };
+
+    // const subpass = vk.SubpassDescription{
+    //     .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
+    //     .colorAttachmentCount = 1,
+    //     .pColorAttachments = &color_attachment_ref,
+    //     .pDepthStencilAttachment = &depth_attachment_ref,
+    // };
+
+    const dependency = vk.SubpassDependency{
+        .srcSubpass = vk.SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    };
+
+    // const all_attachments = &[_]vk.AttachmentDescription{ color_attachment, depth_attachment };
+
+    const ci = vk.RenderPassCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = attachment_descriptions.values.len,
+        .pAttachments = &attachment_descriptions.values,
+        .subpassCount = subpass_descriptions.len,
+        .pSubpasses = &subpass_descriptions,
         .dependencyCount = 1,
         .pDependencies = &dependency,
     };
 
     checkVk(vk.CreateRenderPass(log_device, &ci, alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
 }
-
 const Resource = struct {
     name: []const u8,
     /// Pixel format (RGBA8, Depth24Stencil8, etc.)
@@ -337,158 +370,6 @@ const RenderGraph = struct {
                 , .{@typeName(PassContext)})),
         };
         try self.passes.append(a, pass);
-    }
-
-    fn createRenderPass(
-        self: *@This(),
-        alloc: Allocator,
-        log_device: vk.Device,
-        phys_device: vki.PhysicalDevice,
-        alloc_cbs: ?*vk.AllocationCallbacks,
-    ) Allocator.Error!void {
-        _ = log_device;
-        _ = alloc_cbs;
-        const color_attachment = vk.AttachmentDescription{
-            .format = MAIN_RENDER_PASS_IMAGE_FORMAT,
-            .samples = vk.SAMPLE_COUNT_1_BIT,
-            .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
-            .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
-            .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-            .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-            .initialLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        };
-
-        const depth_attachment = vk.AttachmentDescription{
-            .format = util.findDepthFormat(phys_device),
-            .samples = vk.SAMPLE_COUNT_1_BIT,
-            .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
-            .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-            .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-            .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-            .initialLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        };
-
-        const final_color_attachment_ref = vk.AttachmentReference{
-            .attachment = 0,
-            .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        };
-
-        const color_attachment_ref = vk.AttachmentReference{
-            .attachment = 1,
-            .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        };
-
-        const depth_attachment_ref = vk.AttachmentReference{
-            .attachment = 2,
-            .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        };
-
-        const input_references = [_]vk.AttachmentReference{
-            .{
-                .attachment = 1,
-                .layout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            },
-            .{
-                .attachment = 2,
-                .layout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            },
-        };
-
-        _ = final_color_attachment_ref;
-        _ = color_attachment_ref;
-
-        _ = depth_attachment_ref;
-        _ = input_references;
-
-        var subpass_descriptions = try std.ArrayListUnmanaged(vk.SubpassDescription).initCapacity(alloc, 16);
-        for (self.execution_order.items) |idx| {
-            var color_attachments = try std.ArrayListUnmanaged(vk.AttachmentReference).initCapacity(alloc, 4);
-            var input_attachments = try std.ArrayListUnmanaged(vk.AttachmentReference).initCapacity(alloc, 4);
-            var depth_attachments = try std.ArrayListUnmanaged(vk.AttachmentReference).initCapacity(alloc, 4);
-            const pass = self.passes.items[idx];
-            for (pass.inputs) |in| {
-                const res = self.resources.get(in) orelse std.debug.panic(
-                    \\ pass references resource '{s}' but it doesn't exist?
-                , .{in});
-
-                var arr = switch (res.final_layout) {
-                    vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL => &color_attachments,
-                    vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL => &depth_attachments,
-                    else => &input_attachments,
-                };
-
-                const ref = vk.AttachmentReference{
-                    .attachment = arr.items.len,
-                    .layout = res.final_layout,
-                };
-
-                try arr.append(alloc, ref);
-            }
-            const desc = vk.SubpassDescription{
-                .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
-                .colorAttachmentCount = color_attachments.items.len,
-                .pColorAttachments = color_attachments.toOwnedSlice(alloc),
-                .inputAttachmentCount = input_attachments.items.len,
-                .pInputAttachments = input_attachments.toOwnedSlice(alloc),
-                .pDepthStencilAttachment = depth_attachments.toOwnedSlice(alloc),
-            };
-
-            try subpass_descriptions.append(alloc, desc);
-        }
-
-        // const subpass_descriptions = [_]vk.SubpassDescription{
-        //     .{
-        //         .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
-        //         .colorAttachmentCount = 1,
-        //         .pColorAttachments = &color_attachment_ref,
-        //         .pDepthStencilAttachment = &depth_attachment_ref,
-        //     },
-        //     .{
-        //         .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
-        //         .colorAttachmentCount = 1,
-        //         .pColorAttachments = &final_color_attachment_ref,
-        //         .inputAttachmentCount = input_references.len,
-        //         .pinputAttachments = &input_references,
-        //     },
-        // };
-        // _ = subpass_descriptions;
-
-        // const subpass = vk.SubpassDescription{
-        //     .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
-        //     .colorAttachmentCount = 1,
-        //     .pColorAttachments = &color_attachment_ref,
-        //     .pDepthStencilAttachment = &depth_attachment_ref,
-        // };
-
-        const dependency = vk.SubpassDependency{
-            .srcSubpass = vk.SUBPASS_EXTERNAL,
-            .dstSubpass = 0,
-            .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            .srcAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-            .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        };
-
-        const all_attachments = &[_]vk.AttachmentDescription{ color_attachment, depth_attachment };
-        _ =
-            dependency;
-        _ =
-            all_attachments;
-        // const ci = vk.RenderPassCreateInfo{
-        //     .sType = vk.STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        //     .attachmentCount = all_attachments.len,
-        //     .pAttachments = all_attachments,
-        //     .subpassCount = 1,
-        //     .pSubpasses = &subpass,
-        //     .dependencyCount = 1,
-        //     .pDependencies = &dependency,
-        // };
-
-        // checkVk(vk.CreateRenderPass(log_device, &ci, alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
     }
 
     fn visit(
