@@ -144,6 +144,7 @@ pub fn initPipeline(
         GraphicsPipeline.init(.{
             .layouts = layouts,
             .common = common,
+            .subpass_idx = 0,
             .vertex_shader = vert_shader,
             .fragment_shader = frag_shader,
         }, alloc_cbs);
@@ -306,7 +307,7 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
 
         for (self.instances.items[start..end]) |inst| {
             var buf: [64]u8 = undefined;
-            const zbuf = std.fmt.bufPrintZ(&buf, "instance: {d}", .{inst.entity_id}) catch @panic("Buffer couldnt print??");
+            const zbuf = std.fmt.bufPrintSentinel(&buf, "instance: {d}", .{inst.entity_id}, 0) catch @panic("Buffer couldnt print??");
             if (imgui.TreeNode(zbuf.ptr)) {
                 defer imgui.TreePop();
                 const mtl_name = ctx.resources.materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");

@@ -4,7 +4,7 @@ const zbt = @import("zbullet");
 const core = @import("../root.zig");
 const log = std.log.scoped(.ecs);
 const warn = std.log.warn;
-const Type = std.builtin.Type;
+const Type = std.lang.Type;
 const Shape = zbt.Shape;
 const Allocator = std.mem.Allocator;
 
@@ -25,7 +25,7 @@ pub fn IdentifierManager(
         identifier_map: std.AutoHashMap(usize, *IdentifierNode),
         count: usize,
 
-        data: [MAX]?T = .{null} ** MAX,
+        data: [MAX]?T = @splat(null),
 
         /// when an entity is removed, it's index is added to this list
         /// the next time an entity is registered it will be put in this spot
@@ -259,7 +259,7 @@ pub fn EntityStore(
         const ThisStore = @This();
         pub const Opts = Options;
         const N_COMPONENTS: usize =
-            @intCast(@typeInfo(Options.components).@"struct".fields.len);
+            @intCast(@typeInfo(Options.components).@"struct".field_names.len);
         entities: EntityManager,
         components: ComponentsManager,
 
@@ -296,7 +296,7 @@ pub fn EntityStore(
         }
 
         pub inline fn componentType(variant: Meta.ComponentTag) type {
-            const idx = @intFromEnum(variant);
+            const idx = @backingInt(variant);
             return @typeInfo(Options.components).@"struct".fields[idx].type;
         }
 
@@ -331,7 +331,7 @@ pub fn EntityStore(
                     }.cmp,
                     .any => struct {
                         fn cmp(sig: Signature, other: Signature) bool {
-                            return !sig.intersectWith(other).eql(Signature.initEmpty());
+                            return !sig.intersectWith(other).eql(Signature.empty);
                         }
                     }.cmp,
                 };
@@ -389,13 +389,16 @@ pub fn EntityStore(
 
             enum_vals: [N_COMPONENTS]u32 = undefined,
 
-            un_field_attrs: [N_COMPONENTS]Type.UnionField.Attributes = undefined,
+            un_field_attrs: [N_COMPONENTS]Type.Union.FieldAttributes = undefined,
             un_ptr_types: [N_COMPONENTS]type = undefined,
 
             const STATIC: @This() = blk: {
+                const strct_info =
+                    @typeInfo(Options.components).@"struct";
                 var meta = @This(){};
                 for (
-                    @typeInfo(Options.components).@"struct".fields,
+                    strct_info.field_types,
+                    strct_info.field_names,
                     &meta.names,
                     &meta.types,
                     &meta.enum_vals,
@@ -404,7 +407,8 @@ pub fn EntityStore(
                     &meta.un_ptr_types,
                     0..,
                 ) |
-                    field,
+                    str_field_type,
+                    str_field_name,
                     *fnm,
                     *ftyp,
                     *envl,
@@ -413,14 +417,14 @@ pub fn EntityStore(
                     *unptr_typ,
                     i,
                 | {
-                    fnm.* = field.name;
-                    ftyp.* = field.type;
+                    fnm.* = str_field_name;
+                    ftyp.* = str_field_type;
                     envl.* = i;
-                    strtyp.* = [Options.max_entities]?field.type;
-                    unfld_att.* = Type.UnionField.Attributes{
-                        .@"align" = @alignOf(field.type),
+                    strtyp.* = [Options.max_entities]?str_field_type;
+                    unfld_att.* = Type.Union.FieldAttributes{
+                        .@"align" = @alignOf(str_field_type),
                     };
-                    unptr_typ.* = *field.type;
+                    unptr_typ.* = *str_field_type;
                 }
                 break :blk meta;
             };
@@ -441,7 +445,7 @@ pub fn EntityStore(
             const ALL_COMPONENT_TAGS: [N_COMPONENTS]ComponentTag = blk: {
                 var all: [N_COMPONENTS]ComponentTag = undefined;
                 for (0..N_COMPONENTS) |i| {
-                    all[i] = @enumFromInt(i);
+                    all[i] = @fromBackingInt(@intCast(i));
                 }
                 break :blk all;
             };
@@ -607,7 +611,7 @@ pub fn EntityStore(
 
             /// Creates an empty with an empty `Signature`
             pub fn register(self: *@This(), name: ?[]const u8) Allocator.Error!EntityHandle {
-                const id, const i = try self.manager.register(Signature.initEmpty());
+                const id, const i = try self.manager.register(Signature.empty);
 
                 log.warn(
                     \\ registering {d} at {d}

@@ -62,6 +62,7 @@ pub const engine = struct {
 
                 layouts: Layouts,
                 common: Common,
+                subpass_idx: u32,
                 vertex_shader: clibs.vk.ShaderModule,
                 fragment_shader: clibs.vk.ShaderModule,
 

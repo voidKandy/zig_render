@@ -201,25 +201,21 @@ pub const MeshOptions = struct {
             .{
                 .position = math.Vec4.make(p0[0], p0[1], p0[2], 1),
                 .normal = norm,
-                .color = math.Vec4.ZERO,
                 .uv = math.Vec2.make(0, 0),
             },
             .{
                 .position = math.Vec4.make(p1[0], p1[1], p1[2], 1),
                 .normal = norm,
-                .color = math.Vec4.ZERO,
                 .uv = math.Vec2.make(1, 0),
             },
             .{
                 .position = math.Vec4.make(p2[0], p2[1], p2[2], 1),
                 .normal = norm,
-                .color = math.Vec4.ZERO,
                 .uv = math.Vec2.make(1, 1),
             },
             .{
                 .position = math.Vec4.make(p3[0], p3[1], p3[2], 1),
                 .normal = norm,
-                .color = math.Vec4.ZERO,
                 .uv = math.Vec2.make(0, 1),
             },
         });

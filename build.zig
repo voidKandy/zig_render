@@ -86,7 +86,7 @@ pub fn build(b: *std.Build) !void {
 fn buildImgui(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 ) *std.Build.Step.Compile {
     const imgui_lib = b.addLibrary(.{
         .linkage = .static,
@@ -121,7 +121,7 @@ fn buildImgui(
 fn buildPredicates(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 ) *std.Build.Step.Compile {
     const predicates_lib = b.addLibrary(.{
         .linkage = .static,
@@ -156,7 +156,7 @@ fn buildPredicates(
 fn buildBox3D(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 ) *std.Build.Step.Compile {
     const box3d_lib = b.addLibrary(.{
         .linkage = .static,
@@ -240,7 +240,7 @@ fn buildBinaries(
     b: *std.Build,
     io: std.Io,
     target: std.Build.ResolvedTarget,
-    opt: std.builtin.OptimizeMode,
+    opt: std.lang.Optimize,
     imports: []const struct { []const u8, *std.Build.Module },
 ) void {
     const dir = std.Io.Dir.cwd().openDir(io, BINARIES_PATH, .{}) catch std.debug.panic("Failed to get directory: {s}", .{BINARIES_PATH});
@@ -274,9 +274,7 @@ fn buildBinaries(
         const step = b.step(name, f.name);
         step.dependOn(&run.step);
 
-        if (b.args) |args| {
-            run.addArgs(args);
-        }
+        run.addPassthruArgs();
     }
 }
 
@@ -287,10 +285,9 @@ fn addAllShaders(
     io: std.Io,
     lib: *std.Build.Module,
 ) void {
-    const shaders_dir = if (@hasDecl(@TypeOf(b.build_root.handle), "openIterableDir"))
-        b.build_root.handle.openIterableDir(io, SHADERS_PATH, .{}) catch @panic("Failed to open shaders directory")
-    else
-        b.build_root.handle.openDir(io, SHADERS_PATH, .{ .iterate = true }) catch @panic("Failed to open shaders directory");
+    const shaders_dir = b.root.openDir(io, SHADERS_PATH, .{
+        .iterate = true,
+    }) catch @panic("Failed to open shaders directory");
 
     var file_it = shaders_dir.iterate();
     while (file_it.next(io) catch @panic("Failed to iterate shader directory")) |entry| {

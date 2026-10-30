@@ -11,10 +11,10 @@ const math_mod = core.lib.math;
 scroll: f32 = 0.0,
 mouse_delta: math_mod.Vec2 = .ZERO,
 quit: bool = false,
-keys: std.StaticBitSet(std.meta.fields(sdl_usage.KeyCode).len) = .initEmpty(),
+keys: std.StaticBitSet(@typeInfo(sdl_usage.KeyCode).@"enum".field_names.len) = .empty,
 
 pub fn isDown(self: @This(), key: sdl_usage.KeyCode) bool {
-    return self.keys.isSet(@intFromEnum(key));
+    return self.keys.isSet(@backingInt(key));
 }
 
 pub fn update(self: *@This(), event: sdl.Event) void {
@@ -27,11 +27,11 @@ pub fn update(self: *@This(), event: sdl.Event) void {
         },
         .KeyDown => {
             const key = sdl_usage.KeyCode.from(event.key.key) catch return;
-            self.keys.set(@intFromEnum(key));
+            self.keys.set(@backingInt(key));
         },
         .KeyUp => {
             const key = sdl_usage.KeyCode.from(event.key.key) catch return;
-            self.keys.unset(@intFromEnum(key));
+            self.keys.unset(@backingInt(key));
         },
         .MouseMotion => {
             self.mouse_delta.x += event.motion.xrel;

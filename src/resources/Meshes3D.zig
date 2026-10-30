@@ -210,7 +210,7 @@ pub const AllocatedData = struct {
             write.* = .{
                 .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = self.descriptor_set,
-                .dstBinding = @intFromEnum(binding),
+                .dstBinding = @backingInt(binding),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -273,7 +273,7 @@ pub fn appendMesh(
     const idx = self.ranges.items.len;
     try self.mesh_indices.put(a, name, idx);
 
-    const zname = try a.dupeZ(u8, name);
+    const zname = try a.dupeSentinel(u8, name, 0);
     try self.mesh_names_reverse_lookup.put(a, idx, zname);
 
     const mesh_range = MeshRanges{
@@ -300,31 +300,31 @@ pub fn createDescriptorSetLayout(
 ) void {
     const layout_bindings = [_]vk.DescriptorSetLayoutBinding{
         .{
-            .binding = @intFromEnum(Bindings.position),
+            .binding = @backingInt(Bindings.position),
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
         .{
-            .binding = @intFromEnum(Bindings.uv),
+            .binding = @backingInt(Bindings.uv),
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
         .{
-            .binding = @intFromEnum(Bindings.normal),
+            .binding = @backingInt(Bindings.normal),
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
         .{
-            .binding = @intFromEnum(Bindings.albedo),
+            .binding = @backingInt(Bindings.albedo),
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,
         },
         .{
-            .binding = @intFromEnum(Bindings.index),
+            .binding = @backingInt(Bindings.index),
             .descriptorType = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1,
             .stageFlags = vk.SHADER_STAGE_VERTEX_BIT,

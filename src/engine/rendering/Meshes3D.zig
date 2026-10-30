@@ -13,10 +13,10 @@ const Mesh = mesh_mod.Mesh3D;
 const Meshes3D = core.resources.Meshes3D;
 
 const Instance = extern struct {
-    position: core.lib.math.Vec3, // 12 bytes
-    mesh_idx: u32, // 4 bytes — fills the vec3's alignment gap exactly
-    rotation: core.lib.math.Vec4, // 16 bytes, quat as vec4 — naturally aligned, no gap before it
-    scale: core.lib.math.Vec3, // 12 bytes
+    position: core.lib.math.Vec3,
+    mesh_idx: u32,
+    rotation: core.lib.math.Vec4,
+    scale: core.lib.math.Vec3,
     material_idx: u32,
 };
 
@@ -301,7 +301,7 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
 
         for (self.instances.items[start..end]) |inst| {
             var buf: [64]u8 = undefined;
-            const zbuf = std.fmt.bufPrintZ(&buf, "instance: {d}", .{inst.entity_id}) catch @panic("Buffer couldnt print??");
+            const zbuf = std.fmt.bufPrintSentinel(&buf, "instance: {d}", .{inst.entity_id}, 0) catch @panic("Buffer couldnt print??");
             if (imgui.TreeNode(zbuf.ptr)) {
                 defer imgui.TreePop();
                 const mtl_name = ctx.resources.materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");

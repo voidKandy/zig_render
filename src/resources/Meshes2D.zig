@@ -117,7 +117,7 @@ pub fn appendMesh(
     const idx = self.ranges.items.len;
     try self.mesh_indices.put(a, name, idx);
 
-    const zname = try a.dupeZ(u8, name);
+    const zname = try a.dupeSentinel(u8, name, 0);
     try self.mesh_names_reverse_lookup.put(a, idx, zname);
     const mesh_range = MeshRanges{
         .vertex = .{

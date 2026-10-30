@@ -15,7 +15,7 @@ const Vec4 = math_mod.Vec4;
 pub const Vertex3D = extern struct {
     position: Vec4,
     normal: Vec4,
-    color: Vec4,
+    color: Vec4 = .make(1.0, 1.0, 1.0, 1.0),
     uv: Vec2,
     _: Vec2 = .ZERO,
 };
@@ -63,7 +63,6 @@ pub const Mesh3D = struct {
         const hx = size_x / 2.0;
         const hy = size_y / 2.0;
         const hz = size_z / 2.0;
-        const white = Vec4.make(1, 1, 1, 1);
 
         const vertices = try a.alloc(Vertex3D, 24);
 
@@ -132,7 +131,6 @@ pub const Mesh3D = struct {
                 vertices[f * 4 + k] = .{
                     .position = Vec4.make(p.x, p.y, p.z, 1.0),
                     .normal = face.normal,
-                    .color = white,
                     .uv = uvs[k],
                 };
             }
@@ -195,7 +193,6 @@ pub const Mesh3D = struct {
                         .position = Vec4.make(pos[0], pos[1], pos[2], 0.0),
                         .uv = Vec2.ZERO,
                         .normal = Vec4.ZERO,
-                        .color = Vec4.ZERO,
                     };
                     const entry = try uniques.getOrPut(vertex);
                     if (!entry.found_existing) {
@@ -223,7 +220,6 @@ pub const Mesh3D = struct {
                             .position = Vec4.make(pos[0], pos[1], pos[2], 0.0),
                             .uv = uv,
                             .normal = Vec4.make(norm[0], norm[1], norm[2], 0.0),
-                            .color = Vec4.ZERO,
                         };
                         const entry = try uniques.getOrPut(vertex);
                         if (!entry.found_existing) {

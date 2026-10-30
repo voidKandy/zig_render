@@ -212,9 +212,7 @@ pub fn recordComputeCommands(
 
 pub const ComputePipeline = struct {
     const Description = core.engine.pipelines.Description(.{
-        .DescriptorSets = enum {
-            texture_buffer,
-        },
+        .DescriptorSets = enum { texture_buffer },
         .push_constants = .{
             PushConstants, vk.SHADER_STAGE_COMPUTE_BIT,
         },
@@ -269,7 +267,7 @@ pub const ComputePipeline = struct {
     };
 
     effects: std.EnumMap(Effect, EffectData) = undefined,
-    current_effect: Effect = @enumFromInt(0),
+    current_effect: Effect = @fromBackingInt(@intCast(0)),
 
     layout: vk.PipelineLayout = undefined,
 

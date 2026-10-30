@@ -71,7 +71,7 @@ pub fn parseFile(a: Allocator, io: std.Io, filepath: []const u8) !MtlFile {
     defer file.close(io);
 
     const last_slash_idx = if (std.mem.lastIndexOfScalar(u8, filepath, '/')) |i| i + 1 else 0;
-    const obj_idx = std.ascii.indexOfIgnoreCase(filepath, ".mtl").?;
+    const obj_idx = std.ascii.findIgnoreCase(filepath, ".mtl").?;
     const name = try a.dupe(u8, filepath[last_slash_idx..obj_idx]);
 
     var arena_state = std.heap.ArenaAllocator.init(a);

@@ -275,7 +275,7 @@ pub fn appendMtlLibrary(self: *@This(), a: std.mem.Allocator, file: core.loaders
     for (lib.material_names, 0..) |name, i| {
         const full_name = try std.fmt.allocPrint(a, "{s}.{s}", .{ lib.library_name, name });
         try self.material_indices.put(a, full_name, i + offset);
-        const zname = try a.dupeZ(u8, full_name);
+        const zname = try a.dupeSentinel(u8, full_name, 0);
         try self.material_names_reverse_lookup.put(a, i + offset, zname);
 
         const data = lib.getMaterialData(name) orelse std.debug.panic(
@@ -292,7 +292,7 @@ pub fn appendWritableTexture(self: *@This(), a: std.mem.Allocator, name: []const
     const idx = self.material_indices.count();
     std.debug.assert(self.material_names_reverse_lookup.count() == idx);
     try self.material_indices.put(a, name, idx);
-    const zname = try a.dupeZ(u8, name);
+    const zname = try a.dupeSentinel(u8, name, 0);
     try self.material_names_reverse_lookup.put(a, idx, zname);
     try self.creates.append(a, .{ .writable = cr_tx });
     // try self.textures.put(a, name, cr_tx);
@@ -310,6 +310,7 @@ pub const Bindings = struct {
     sampler: u32,
     texture: u32,
 };
+
 /// only call once all materials have been added
 pub fn createDescriptorSetLayout(
     self: *Self,
@@ -656,38 +657,6 @@ pub const AllocatedData = struct {
         );
     }
 
-    pub fn createSamplerDescriptorSetLayout(
-        self: *Self,
-        sampler: *const vk.Sampler,
-        device: vk.Device,
-        alloc_cbs: ?*vk.AllocationCallbacks,
-    ) void {
-        const sampler_bind = vk.DescriptorSetLayoutBinding{
-            .binding = 0,
-            .descriptorType = vk.DESCRIPTOR_TYPE_SAMPLER,
-            .descriptorCount = 0,
-            .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
-            .pImmutableSamplers = sampler,
-        };
-
-        const bindings = [_]vk.DescriptorSetLayoutBinding{sampler_bind};
-
-        const layout_ci = vk.DescriptorSetLayoutCreateInfo{
-            .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .pNext = null,
-            .flags = 0,
-            .pBindings = &bindings,
-            .bindingCount = bindings.len,
-        };
-
-        checkVk(vk.CreateDescriptorSetLayout(
-            device,
-            &layout_ci,
-            alloc_cbs,
-            &self.sampler_descriptor_set_layout,
-        )) catch @panic("Failed to create sampler descriptor set layout");
-    }
-
     pub fn updateWritableTextureSet(
         self: @This(),
         device: vk.Device,
@@ -790,7 +759,7 @@ pub const MaterialLibrary = struct {
                 // This is just to make the API more zig friendly. Convert to C 0-term string
                 // on the stack.
                 var buffer: [512]u8 = undefined;
-                const filepathz = try std.fmt.bufPrintZ(buffer[0..], ASSETS_PATH ++ "{s}", .{basename});
+                const filepathz = try std.fmt.bufPrintSentinel(buffer[0..], ASSETS_PATH ++ "{s}", .{basename}, 0);
 
                 log.info("Attempting to load image from: {s}", .{filepathz});
 
@@ -816,7 +785,7 @@ pub const MaterialLibrary = struct {
 
                 try materials.appendSlice(a, image_data[0..byte_count]);
                 try metadatas.put(a, mat.name, .{ metadatas.size, md });
-                try material_names.append(a, try a.dupeZ(u8, mat.name));
+                try material_names.append(a, try a.dupeSentinel(u8, mat.name, 0));
             } else if (mat.Kd) |kd| {
                 const pixel = [4]u8{
                     @intFromFloat(kd[0] * 255.0),
@@ -833,7 +802,7 @@ pub const MaterialLibrary = struct {
                 };
                 try materials.appendSlice(a, &pixel);
                 try metadatas.put(a, mat.name, .{ metadatas.size, md });
-                try material_names.append(a, try a.dupeZ(u8, mat.name));
+                try material_names.append(a, try a.dupeSentinel(u8, mat.name, 0));
             }
         }
 

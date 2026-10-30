@@ -126,6 +126,7 @@ pub fn initPipeline(
             .layouts = layouts,
             .common = common,
             .vertex_shader = vert_shader,
+            .subpass_idx = 0,
             .fragment_shader = frag_shader,
         }, alloc_cbs);
 }
@@ -176,7 +177,7 @@ pub fn drawImgui(_: *@This(), ctx: core.engine.systems.manager.DrawImguiContext)
             };
 
             var label_buf: [64]u8 = undefined;
-            const label = std.fmt.bufPrintZ(&label_buf, "Position##{d}", .{ent.identifier.*}) catch "Position";
+            const label = std.fmt.bufPrintSentinel(&label_buf, "Position##{d}", .{ent.identifier.*}, 0) catch "Position";
 
             if (imgui.SliderFloat3(label.ptr, &arr, 0.0, 20.0)) {
                 trans.position.x = arr[0];
@@ -339,7 +340,7 @@ const GraphicsPipeline = struct {
             .pColorBlendState = &blend_ci,
             .layout = self.layout,
             .renderPass = pd.common.render_pass,
-            .subpass = 0,
+            .subpass = 1,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };

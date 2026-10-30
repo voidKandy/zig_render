@@ -36,7 +36,7 @@ pub fn fromHeightmap(
     var channels: c_int = undefined;
 
     var path_buf: [512]u8 = undefined;
-    const pathz = std.fmt.bufPrintZ(&path_buf, "{s}", .{image_path}) catch @panic("Failed to buf print");
+    const pathz = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{image_path}, 0) catch @panic("Failed to buf print");
 
     const pixels = core.clibs.stbi.load(pathz.ptr, &width, &height, &channels, 1) // force grayscale
         orelse @panic("failed to load heightmap");
@@ -63,7 +63,6 @@ pub fn fromHeightmap(
             try vertices.append(a, Vertex3D{
                 .position = Vec4.make(x, y, z, 0.0),
                 .normal = Vec4.make(0, 1, 0, 0), // flat normal for now
-                .color = Vec4.ZERO,
                 .uv = Vec2.make(u, v),
             });
         }

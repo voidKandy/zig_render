@@ -29,22 +29,12 @@ const FrameBufferAttachment = struct {
 };
 
 pub const Attachments = struct {
-    const Tags = enum {
+    pub const Tags = enum {
         final,
         depth,
-        // position,
-        // normal,
-        // albedo,
-
-        fn layout(self: *const @This()) vk.ImageLayout {
-            return switch (self.*) {
-                .final => vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                .depth => vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                // .position => vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                // .normal => vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                // .albedo => vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            };
-        }
+        position,
+        normal,
+        albedo,
     };
 
     /// Holds all attachments other than 'final'
@@ -53,58 +43,48 @@ pub const Attachments = struct {
         @Struct(
             .auto,
             null,
-            std.meta.fieldNames(Tags)[1..],
+            @typeInfo(Tags).@"enum".field_names[1..],
             &@splat(FrameBufferAttachment),
             &@splat(.{}),
         );
 
     plexe: Plexe,
 
+    pub const FIELD_NAMES = @typeInfo(Tags).@"enum".field_names;
     pub fn deinit(
         self: *@This(),
         vma_a: vma.Allocator,
         device: vk.Device,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) void {
-        self.plexe.depth.image.deinit(vma_a, device, alloc_cbs);
-        // self.plexe.position.image.deinit(vma_a, device, alloc_cbs);
-        // self.plexe.normal.image.deinit(vma_a, device, alloc_cbs);
-        // self.plexe.albedo.image.deinit(vma_a, device, alloc_cbs);
+        inline for (FIELD_NAMES) |enfld| {
+            const tag = comptime std.meta.stringToEnum(Tags, enfld).?;
+            if (tag != .final)
+                @field(self.plexe, @tagName(tag)).image.deinit(vma_a, device, alloc_cbs);
+        }
     }
 
     /// final image is passed from swapchain
-    fn imageViews(self: *const @This(), final_image: vk.ImageView) [std.meta.fields(Tags).len]vk.ImageView {
-        var views: [std.meta.fields(Tags).len]vk.ImageView = undefined;
-        inline for (&views, std.meta.fields(Tags)) |*v, enfld| {
-            const tag = comptime std.meta.stringToEnum(Tags, enfld.name).?;
-            if (tag == .final)
-                v.* = final_image
+    fn imageViews(self: *const @This(), final_image: vk.ImageView) [FIELD_NAMES.len]vk.ImageView {
+        var views: [FIELD_NAMES.len]vk.ImageView = undefined;
+        inline for (&views, FIELD_NAMES) |*v, enfld| {
+            const tag = comptime std.meta.stringToEnum(Tags, enfld).?;
+            v.* = if (tag == .final)
+                final_image
             else
-                v.* = @field(self.plexe, enfld.name).image.view;
+                @field(self.plexe, @tagName(tag)).image.view;
         }
         return views;
     }
 
-    pub fn attachmentReferences() std.EnumArray(Tags, vk.AttachmentReference) {
-        var refs = std.EnumArray(Tags, vk.AttachmentReference).initUndefined();
-        inline for (std.meta.fields(Tags)) |enfld| {
-            const tag = comptime std.meta.stringToEnum(Tags, enfld.name).?;
-            refs.set(tag, vk.AttachmentReference{
-                .attachment = @intFromEnum(tag),
-                .layout = tag.layout(),
-            });
-        }
-        return refs;
-    }
-
     pub fn attachmentDescriptions(self: *const @This()) std.EnumArray(Tags, vk.AttachmentDescription) {
         var descs = std.EnumArray(Tags, vk.AttachmentDescription).initUndefined();
-        inline for (std.meta.fields(Tags)) |enfld| {
-            const tag = comptime std.meta.stringToEnum(Tags, enfld.name).?;
+        inline for (FIELD_NAMES) |enfld| {
+            const tag = comptime std.meta.stringToEnum(Tags, enfld).?;
             const format = if (tag == .final)
                 core.engine.Renderer.MAIN_RENDER_PASS_IMAGE_FORMAT
             else
-                @field(self.plexe, enfld.name).format;
+                @field(self.plexe, @tagName(tag)).format;
 
             const desc: vk.AttachmentDescription =
                 switch (tag) {
@@ -122,49 +102,68 @@ pub const Attachments = struct {
                     .depth => .{
                         .format = format,
                         .samples = vk.SAMPLE_COUNT_1_BIT,
-                        .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
+                        .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
                         .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
                         .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
                         .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
                         .initialLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                         .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                     },
-                    // .position => .{
-                    //     .format = format,
-                    //     .samples = vk.SAMPLE_COUNT_1_BIT,
-                    //     .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
-                    //     .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-                    //     .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-                    //     .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-                    //     .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
-                    //     .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                    // },
-                    // .normal => .{
-                    //     .format = format,
-                    //     .samples = vk.SAMPLE_COUNT_1_BIT,
-                    //     .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
-                    //     .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-                    //     .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-                    //     .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-                    //     .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
-                    //     .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                    // },
-                    // .albedo => .{
-                    //     .format = format,
-                    //     .samples = vk.SAMPLE_COUNT_1_BIT,
-                    //     .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
-                    //     .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-                    //     .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
-                    //     .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
-                    //     .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
-                    //     .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                    // },
+                    .position => .{
+                        .format = format,
+                        .samples = vk.SAMPLE_COUNT_1_BIT,
+                        .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                        .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                        .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    },
+                    .normal => .{
+                        .format = format,
+                        .samples = vk.SAMPLE_COUNT_1_BIT,
+                        .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                        .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                        .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    },
+                    .albedo => .{
+                        .format = format,
+                        .samples = vk.SAMPLE_COUNT_1_BIT,
+                        .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                        .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                        .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                        .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    },
                 };
 
             descs.set(tag, desc);
         }
 
         return descs;
+    }
+
+    pub fn clearValues() std.EnumArray(Tags, vk.ClearValue) {
+        var vals = std.EnumArray(Tags, vk.ClearValue).initUndefined();
+        inline for (FIELD_NAMES) |enfld| {
+            const tag = comptime std.meta.stringToEnum(Tags, enfld).?;
+            const clear_color = vk.ClearValue{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } };
+            const clear_depth = vk.ClearValue{ .depthStencil = .{ .depth = 1.0, .stencil = 0 } };
+
+            const clear =
+                switch (tag) {
+                    .depth => clear_depth,
+                    else => clear_color,
+                };
+
+            vals.set(tag, clear);
+        }
+
+        return vals;
     }
 
     fn findDepthFormat(device: vki.PhysicalDevice) vk.Format {
@@ -289,39 +288,39 @@ pub const Attachments = struct {
             vk_alloc_cbs,
         );
 
-        // const position = createAttachment(
-        //     vma_a,
-        //     logical_device,
-        //     swapchain_extent,
-        //     vk.FORMAT_R16G16B16A16_SFLOAT,
-        //     vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        //     vk_alloc_cbs,
-        // );
+        const position = createAttachment(
+            vma_a,
+            logical_device,
+            swapchain_extent,
+            vk.FORMAT_R16G16B16A16_SFLOAT,
+            vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            vk_alloc_cbs,
+        );
 
-        // const normal = createAttachment(
-        //     vma_a,
-        //     logical_device,
-        //     swapchain_extent,
-        //     vk.FORMAT_R16G16B16A16_SFLOAT,
-        //     vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        //     vk_alloc_cbs,
-        // );
+        const normal = createAttachment(
+            vma_a,
+            logical_device,
+            swapchain_extent,
+            vk.FORMAT_R16G16B16A16_SFLOAT,
+            vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            vk_alloc_cbs,
+        );
 
-        // const color = createAttachment(
-        //     vma_a,
-        //     logical_device,
-        //     swapchain_extent,
-        //     vk.FORMAT_R8G8B8A8_UNORM,
-        //     vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        //     vk_alloc_cbs,
-        // );
+        const albedo = createAttachment(
+            vma_a,
+            logical_device,
+            swapchain_extent,
+            vk.FORMAT_R8G8B8A8_UNORM,
+            vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            vk_alloc_cbs,
+        );
 
         return .{
             .plexe = .{
                 .depth = depth,
-                // .position = position,
-                // .normal = normal,
-                // .color = color,
+                .position = position,
+                .normal = normal,
+                .albedo = albedo,
             },
         };
     }

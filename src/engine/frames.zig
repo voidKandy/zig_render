@@ -12,7 +12,7 @@ const checkVk = vki.checkVk;
 
 pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
     return struct {
-        all: [MAX_FRAMES_IN_FLIGHT]FrameData = .{FrameData{}} ** MAX_FRAMES_IN_FLIGHT,
+        all: [MAX_FRAMES_IN_FLIGHT]FrameData = @splat(FrameData{}),
         current_idx: u32 = 0,
         frame_count: u64 = 0,
 

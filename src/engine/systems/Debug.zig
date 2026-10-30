@@ -71,7 +71,7 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
     var iter = self.materials_textures_sets.iterator();
     while (iter.next()) |entry| {
         var buf: [64]u8 = undefined;
-        const zbuf = std.fmt.bufPrintZ(&buf, "{s}", .{entry.key_ptr.*}) catch @panic("Buffer couldnt print??");
+        const zbuf = std.fmt.bufPrintSentinel(&buf, "{s}", .{entry.key_ptr.*}, 0) catch @panic("Buffer couldnt print??");
         imgui.Text(zbuf);
         imgui.Image(entry.value_ptr.*, imgui.ImVec2{ .x = 400, .y = 400 });
     }

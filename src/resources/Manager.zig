@@ -36,6 +36,8 @@ meshes2D: Meshes2D,
 meshes3D: Meshes3D,
 mapped_buffers: MappedBuffers,
 
+subpass_input_attachments: SubpassInputAttachments = .{},
+
 pub fn deinit(
     self: *@This(),
     a: std.mem.Allocator,
@@ -46,6 +48,7 @@ pub fn deinit(
     self.meshes3D.deinit(a, device, alloc_cbs);
     self.meshes2D.deinit(a);
     self.mapped_buffers.deinit(a, device, alloc_cbs);
+    self.subpass_input_attachments.deinit(device, alloc_cbs);
 }
 
 pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
@@ -109,13 +112,143 @@ pub fn createSamplersAndDescriptorSetLayouts(self: *@This(), device: vk.Device, 
         device,
         alloc_cbs,
     );
+
+    self.subpass_input_attachments.createDescriptorSetLayoutBindings(device, alloc_cbs);
 }
+
+const SubpassInputAttachments = struct {
+    final: vk.DescriptorSetLayout = undefined,
+
+    const AllocatedData = struct {
+        final: vk.DescriptorSet,
+
+        pub fn updateDescriptorSet(
+            self: @This(),
+            swapchain: *const core.engine.Renderer.Swapchain,
+            device: vk.Device,
+        ) void {
+            const count = core.engine.Renderer.Swapchain.Attachments.FIELD_NAMES.len - DESCRIPTOR_OFFSET;
+
+            var writes: [count]vk.WriteDescriptorSet = undefined;
+            var infos: [count]vk.DescriptorImageInfo = undefined;
+
+            inline for (
+                &writes,
+                &infos,
+                core.engine.Renderer.Swapchain.Attachments.FIELD_NAMES[DESCRIPTOR_OFFSET..],
+            ) |*write, *info, tag_name| {
+                const image = @field(swapchain.attachments.plexe, tag_name).image;
+                const tag = comptime std.meta.stringToEnum(
+                    core.engine.Renderer.Swapchain.Attachments.Tags,
+                    tag_name,
+                ).?;
+
+                info.* = .{
+                    .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    .sampler = null,
+                    .imageView = image.view,
+                };
+
+                write.* = .{
+                    .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = self.final,
+                    .dstBinding = @backingInt(tag) - DESCRIPTOR_OFFSET,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+                    .pImageInfo = info,
+                };
+            }
+
+            vk.UpdateDescriptorSets(
+                device,
+                @intCast(writes.len),
+                &writes,
+                0,
+                null,
+            );
+        }
+    };
+
+    pub fn deinit(
+        self: *@This(),
+        device: vk.Device,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) void {
+        vk.DestroyDescriptorSetLayout(device, self.final, alloc_cbs);
+    }
+
+    /// since final and depth aren't used as input attachments
+    const DESCRIPTOR_OFFSET = @backingInt(core.engine.Renderer.Swapchain.Attachments.Tags.position);
+
+    fn createDescriptorSetLayoutBindings(
+        self: *@This(),
+        device: vk.Device,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) void {
+        const layout_bindings = [_]vk.DescriptorSetLayoutBinding{
+            .{
+                .binding = @backingInt(core.engine.Renderer.Swapchain.Attachments.Tags.position) - DESCRIPTOR_OFFSET,
+                .descriptorType = vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+                .descriptorCount = 1,
+                .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
+            },
+            .{
+                .binding = @backingInt(core.engine.Renderer.Swapchain.Attachments.Tags.normal) - DESCRIPTOR_OFFSET,
+                .descriptorType = vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+                .descriptorCount = 1,
+                .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
+            },
+            .{
+                .binding = @backingInt(core.engine.Renderer.Swapchain.Attachments.Tags.albedo) - DESCRIPTOR_OFFSET,
+                .descriptorType = vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+                .descriptorCount = 1,
+                .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+        const ci = vk.DescriptorSetLayoutCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .flags = 0,
+            .bindingCount = @as(u32, @intCast(layout_bindings.len)),
+            .pBindings = &layout_bindings,
+        };
+
+        checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &self.final)) catch
+            @panic("failed to create descriptor set layout");
+    }
+
+    fn upload(
+        self: *@This(),
+        pool: vk.DescriptorPool,
+        device: vk.Device,
+    ) @This().AllocatedData {
+        var set: vk.DescriptorSet = undefined;
+        const ai = vk.DescriptorSetAllocateInfo{
+            .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .pNext = null,
+            .descriptorPool = pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &self.final,
+        };
+
+        checkVk(vk.AllocateDescriptorSets(device, &ai, &set)) catch |e| {
+            log.err(
+                \\failed to allocate texture descriptor set: {s}
+            , .{@errorName(e)});
+            @panic("failed to allocate texture descriptor set");
+        };
+
+        return .{ .final = set };
+    }
+};
 
 pub const AllocatedData = struct {
     materials: Materials.AllocatedData,
     meshes3D: Meshes3D.AllocatedData,
     meshes2D: Meshes2D.AllocatedData,
     mapped_buffers: MappedBuffers.AllocatedData,
+
+    subpass_input_attachments: SubpassInputAttachments.AllocatedData,
 
     descriptor_pool: core.clibs.vk.DescriptorPool,
 
@@ -150,21 +283,21 @@ fn createDescriptorPool(
         .{
             .type = vk.DESCRIPTOR_TYPE_SAMPLER,
             .descriptorCount = 1,
-            // .descriptorCount = self.materials.textures.size,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_IMAGE,
             .descriptorCount = 8,
-            // .descriptorCount = self.materials.textures.size,
+        },
+        .{
+            .type = vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+            .descriptorCount = 8,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            // .descriptorCount = self.mapped_buffers.size * 2,
             .descriptorCount = 8,
         },
         .{
             .type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            // .descriptorCount = self.mapped_buffers.size * 2,
             .descriptorCount = 4,
         },
         .{
@@ -218,7 +351,16 @@ pub fn upload(
         alloc_cbs,
     );
 
-    const mapped_buffers = try self.mapped_buffers.upload(allocs, pool, logical_device.handle);
+    const mapped_buffers = try self.mapped_buffers.upload(
+        allocs,
+        pool,
+        logical_device.handle,
+    );
+
+    const input_attachments = self.subpass_input_attachments.upload(
+        pool,
+        logical_device.handle,
+    );
 
     return .{
         .meshes3D = meshes3D,
@@ -226,5 +368,6 @@ pub fn upload(
         .materials = materials,
         .mapped_buffers = mapped_buffers,
         .descriptor_pool = pool,
+        .subpass_input_attachments = input_attachments,
     };
 }

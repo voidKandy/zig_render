@@ -7,74 +7,6 @@ const vk = c.vk;
 const log = std.log.scoped(.vulkan_init);
 const Mat4 = core.lib.math.Mat4;
 
-pub fn defaultColorBlendAttachmentState() vk.PipelineColorBlendAttachmentState {
-    return .{
-        .colorWriteMask = vk.COLOR_COMPONENT_R_BIT | vk.COLOR_COMPONENT_G_BIT |
-            vk.COLOR_COMPONENT_B_BIT | vk.COLOR_COMPONENT_A_BIT,
-        .blendEnable = vk.FALSE,
-    };
-}
-
-pub fn pipelineLayoutCreateInfo() vk.PipelineLayoutCreateInfo {
-    return .{
-        .sType = vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .pNext = null,
-
-        .flags = 0,
-        .setLayoutCount = 0,
-        .pSetLayouts = null,
-        .pushConstantRangeCount = 0,
-        .pPushConstantRanges = null,
-    };
-}
-
-pub fn renderingInfo(render_extent: vk.Extent2D, color_attachment: ?vk.RenderingAttachmentInfo, depth_attachment: ?vk.RenderingAttachmentInfo) vk.RenderingInfo {
-    return .{
-        .sType = vk.STRUCTURE_TYPE_RENDERING_INFO,
-        .pNext = null,
-
-        .renderArea = vk.Rect2D{
-            .offset = vk.Offset2D{
-                .x = 0,
-                .y = 0,
-            },
-            .extent = render_extent,
-        },
-        .layerCount = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = if (color_attachment) |a| &a else &std.mem.zeroes(vk.RenderingAttachmentInfo),
-        .pDepthAttachment = if (depth_attachment) |a| &a else &std.mem.zeroes(vk.RenderingAttachmentInfo),
-        .pStencilAttachment = null,
-    };
-}
-
-pub fn colorAttachmentInfo(view: vk.ImageView, clear: ?vk.ClearValue, layout: vk.ImageLayout) vk.RenderingAttachmentInfo {
-    return .{
-        .sType = vk.STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .pNext = null,
-
-        .imageView = view,
-        .imageLayout = layout,
-        .loadOp = if (clear) |_| vk.ATTACHMENT_LOAD_OP_CLEAR else vk.ATTACHMENT_LOAD_OP_LOAD,
-        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
-        .clearValue = if (clear) |cl| cl else std.mem.zeroes(vk.ClearValue),
-    };
-}
-
-pub fn depthAttachmentInfo(view: vk.ImageView, layout: vk.ImageLayout) vk.RenderingAttachmentInfo {
-    return .{
-        .sType = vk.STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .pNext = null,
-
-        .imageView = view,
-        .imageLayout = layout,
-        .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
-        .clearValue = .{ .depthStencil = .{
-            .depth = 0.0,
-        } },
-    };
-}
 pub fn imageSubresourceRange(aspect_mask: vk.ImageAspectFlags) vk.ImageSubresourceRange {
     return .{
         .aspectMask = aspect_mask,
@@ -200,15 +132,15 @@ pub const UploadContext = struct {
                 @compileError("Context submit method should be a function");
             }
 
-            if (submit_fn_info.@"fn".params.len != 2) {
+            if (submit_fn_info.@"fn".param_attrs.len != 2) {
                 @compileError("Context submit method should have two parameters");
             }
 
-            if (submit_fn_info.@"fn".params[0].type != Context) {
+            if (submit_fn_info.@"fn".param_types[0] != Context) {
                 @compileError("Context submit method first parameter should be of type: " ++ @typeName(Context) ++ " instead got: " ++ @typeName(submit_fn_info.@"fn".params[0].type.?));
             }
 
-            if (submit_fn_info.@"fn".params[1].type != c.vk.CommandBuffer) {
+            if (submit_fn_info.@"fn".param_types[1] != c.vk.CommandBuffer) {
                 @compileError("Context submit method second parameter should be of type: " ++ @typeName(c.vk.CommandBuffer));
             }
         }

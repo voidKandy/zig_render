@@ -7,25 +7,29 @@ pub const Debug = @import("./Debug.zig");
 pub const Camera = @import("./Camera.zig");
 pub const DrawBackground = @import("./DrawBackground.zig");
 
-inline fn fnEql(a: std.builtin.Type.Fn, b: std.builtin.Type.Fn) bool {
-    if (!std.meta.eql(a.calling_convention, b.calling_convention)) return false;
+inline fn fnEql(a: std.lang.Type.Fn, b: std.lang.Type.Fn) bool {
+    if (!std.meta.eql(a.attrs.@"callconv", b.attrs.@"callconv")) return false;
     if (a.is_generic != b.is_generic) return false;
-    if (a.is_var_args != b.is_var_args) return false;
+    if (a.attrs.varargs != b.attrs.varargs) return false;
     if (a.return_type != b.return_type) return false;
-    if (a.params.len != b.params.len) return false;
+    if (a.param_attrs.len != b.param_attrs.len) return false;
+    if (a.param_types.len != b.param_types.len) return false;
+    if (a.is_generic != b.is_generic) return false;
 
-    for (a.params, b.params) |pa, pb| {
-        if (pa.type != pb.type) return false;
-        if (pa.is_generic != pb.is_generic) return false;
-        if (pa.is_noalias != pb.is_noalias) return false;
+    for (a.param_attrs, b.param_attrs) |pa, pb| {
+        if (pa.@"noalias" != pb.@"noalias") return false;
+    }
+
+    for (a.param_types, b.param_types) |at, bt| {
+        if (at != bt) return false;
     }
     return true;
 }
 
-fn formatFnSig(comptime fn_info: std.builtin.Type.Fn) []const u8 {
+fn formatFnSig(comptime fn_info: std.lang.Type.Fn) []const u8 {
     comptime var params_str: []const u8 = "";
-    inline for (fn_info.params, 0..) |param, i| {
-        const type_name = if (param.type) |T| @typeName(T) else "anytype";
+    inline for (fn_info.param_types, 0..) |ptype, i| {
+        const type_name = if (ptype) |T| @typeName(T) else "anytype";
         params_str = params_str ++ (if (i == 0) "" else ", ") ++ type_name;
     }
 
@@ -42,29 +46,31 @@ fn shortTypeName(comptime full: []const u8) []const u8 {
 /// Replaces params[0] (the `self` receiver) with an `anytype`-shaped
 /// param, so signatures from different concrete system types can be
 /// compared for equality without the receiver type getting in the way.
-inline fn normalizeSelf(fn_info: std.builtin.Type.Fn) std.builtin.Type.Fn {
+inline fn normalizeSelf(fn_info: std.lang.Type.Fn) std.lang.Type.Fn {
     var info = fn_info;
-    if (info.params.len == 0) return info;
+    if (info.param_attrs.len == 0) return info;
 
-    const normalized_first: std.builtin.Type.Fn.Param = .{
-        .type = null,
-        .is_generic = true,
-        .is_noalias = info.params[0].is_noalias,
+    const normalized_first: std.lang.Type.Fn.ParamAttributes = .{
+        .@"noalias" = info.param_attrs[0].@"noalias",
     };
 
-    const new_params = [_]std.builtin.Type.Fn.Param{normalized_first} ++ info.params[1..];
-    info.params = new_params;
+    const new_params = [_]std.lang.Type.Fn.ParamAttributes{normalized_first} ++ info.param_attrs[1..];
+    const new_types = [_]?type{null} ++ info.param_types[1..];
+    info.param_attrs = new_params;
+    info.param_types = new_types;
+    info.is_generic = true;
     return info;
 }
 
 /// completely removes the `self` argument from function type
 /// this is for the register and update sets functions which don't actually
 /// need access to self for each system, but does need access to self in the manager
-inline fn removeSelf(fn_info: std.builtin.Type.Fn) std.builtin.Type.Fn {
+inline fn removeSelf(fn_info: std.lang.Type.Fn) std.lang.Type.Fn {
     var info = fn_info;
-    if (info.params.len == 0) return info;
+    if (info.param_attrs.len == 0) return info;
 
-    info.params = info.params[1..];
+    info.param_attrs = info.param_attrs[1..];
+    info.param_types = info.param_types[1..];
     return info;
 }
 
@@ -97,7 +103,7 @@ pub fn SystemManager(
         initComputePipelines,
         recordComputeCommands,
 
-        const Signatures = std.EnumMap(@This(), std.builtin.Type.Fn);
+        const Signatures = std.EnumMap(@This(), std.lang.Type.Fn);
 
         inline fn getSignatures(T: type, is_root_type: bool) Signatures {
             var sigs = Signatures.init(.{});
@@ -153,8 +159,8 @@ pub fn SystemManager(
 
         inline fn defaultPlexe() SystemPlexe {
             var self: SystemPlexe = undefined;
-            for (std.meta.fields(SystemPlexe)) |f| {
-                @field(self, f.name) = null;
+            for (@typeInfo(SystemPlexe).@"struct".field_names) |f| {
+                @field(self, f) = null;
             }
             return self;
         }
@@ -162,7 +168,7 @@ pub fn SystemManager(
         const SYSTEM_TYPES: std.EnumArray(SystemTag, type) = blk: {
             var arr: std.EnumArray(SystemType.tag, type) = undefined;
             for (Systems, 0..) |T, i| {
-                arr.set(@enumFromInt(i), T);
+                arr.set(@fromBackingInt(@intCast(i)), T);
             }
             break :blk arr;
         };
@@ -231,8 +237,8 @@ pub fn SystemManager(
             device: vk.Device,
             allocated_resources: *core.resources.Manager.AllocatedData,
         ) void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name)) {
                     if (@field(self.plexe, @tagName(tag)) != null)
                         SYSTEM_TYPES.get(tag).updateSets(device, allocated_resources);
@@ -247,8 +253,8 @@ pub fn SystemManager(
             resources: *core.resources.Manager,
             alloc_cbs: ?*vk.AllocationCallbacks,
         ) std.mem.Allocator.Error!void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag)) != null)
                         try SYSTEM_TYPES.get(tag).registerSets(a, device, resources, alloc_cbs);
@@ -261,8 +267,8 @@ pub fn SystemManager(
             device: vk.Device,
             alloc_cbs: ?*vk.AllocationCallbacks,
         ) void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag))) |*f| f.deinit(allocs, device, alloc_cbs);
             }
@@ -273,8 +279,8 @@ pub fn SystemManager(
             world: *core.engine.world.GameWorld,
             resources: *const core.resources.Manager,
         ) std.mem.Allocator.Error!void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag))) |*f| try f.initEntities(world, resources);
             }
@@ -286,16 +292,16 @@ pub fn SystemManager(
             input: core.engine.Input,
             world: *core.engine.world.GameWorld,
         ) void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag))) |*f| f.update(dt, input, world);
             }
         }
 
         pub fn drawImgui(self: *@This(), ctx: DrawImguiContext) void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag))) |*f| f.drawImgui(ctx);
             }
@@ -305,8 +311,8 @@ pub fn SystemManager(
             self: *@This(),
             allocated_resources: core.resources.Manager.AllocatedData,
         ) void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag))) |*f| f.syncResources(allocated_resources);
             }
@@ -324,8 +330,8 @@ pub fn SystemManager(
             a: std.mem.Allocator,
             world: *core.engine.world.GameWorld,
         ) std.mem.Allocator.Error!void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag))) |*f| try f.syncWorld(a, world);
             }
@@ -337,8 +343,8 @@ pub fn SystemManager(
             resources: core.resources.Manager,
             alloc_cbs: ?*vk.AllocationCallbacks,
         ) void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag))) |*f| f.initComputePipelines(device, resources, alloc_cbs);
             }
@@ -351,8 +357,8 @@ pub fn SystemManager(
             cmd: vk.CommandBuffer,
             framebuffer_idx: u32,
         ) void {
-            inline for (0..@typeInfo(SystemTag).@"enum".fields.len) |i| {
-                const tag: SystemTag = @enumFromInt(i);
+            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+                const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
                     if (@field(self.plexe, @tagName(tag))) |*f| f.recordComputeCommands(
                         allocated_resources,

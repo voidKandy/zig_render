@@ -17,8 +17,8 @@ inline fn edgeKey(a: VertexId, b: VertexId) u64 {
 }
 
 const Cell = struct {
-    vertices: [4]VertexId = .{-1} ** 4,
-    cells: [4]CellId = .{shared.NO_CELL} ** 4,
+    vertices: [4]VertexId = @splat(-1),
+    cells: [4]CellId = @splat(shared.NO_CELL),
     alive: bool = false,
 };
 
@@ -50,7 +50,7 @@ fn newCell(self: *@This(), a: Allocator) Allocator.Error!CellId {
     }
     self.cells.items[@intCast(id)].alive = true;
 
-    self.cells.items[@intCast(id)].cells = .{shared.NO_CELL} ** 4;
+    self.cells.items[@intCast(id)].cells = @splat(shared.NO_CELL);
     self.live_cell_count += 1;
     return id;
 }
@@ -166,7 +166,7 @@ pub fn init(
     }
     const c0: CellId = try self.newCell(a);
     self.cells.items[@intCast(c0)].vertices = v;
-    self.cells.items[@intCast(c0)].cells = .{shared.NO_CELL} ** 4;
+    self.cells.items[@intCast(c0)].cells = @splat(shared.NO_CELL);
     self.last_cell = c0;
 
     return self;

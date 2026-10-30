@@ -78,7 +78,7 @@ pub fn init(
     self.initWindow();
 
     self.renderer = core.engine.Renderer.init(.{
-        .meshes2D = true,
+        .meshes2D = false,
         .meshes3D = true,
         .physics_debug = self.physics.debug_ctx,
     }) catch @panic("OOM");
@@ -270,7 +270,7 @@ fn initVulkan(self: *Self) void {
         .alloc_cb = self.alloc_cbs,
     }) catch @panic("failed to create swapchain");
 
-    self.renderer.createMainRenderPassNew(&self.swapchain, self.logical_device.handle, self.alloc_cbs);
+    self.renderer.createMainRenderPass(&self.swapchain, self.logical_device.handle, self.alloc_cbs);
 
     self.swapchain.createFramebuffers(
         self.allocs.std,
@@ -321,6 +321,12 @@ pub fn allocateResources(self: *Self) void {
         core.resources.Materials.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
+    self.allocated_resources.subpass_input_attachments.updateDescriptorSet(
+        &self.swapchain,
+        self.logical_device.handle,
+    );
+
+    // definately BAD!
     self.renderer.updateSets(self.logical_device.handle, &self.allocated_resources);
     // BAD??
     self.system_manager.plexe.Debug.?.bind(self.allocs.std, self.resources, self.allocated_resources) catch
@@ -428,6 +434,8 @@ fn drawFrame(self: *Self) void {
                 self.renderer.main_render_pass,
                 self.alloc_cbs,
             );
+
+            self.allocated_resources.subpass_input_attachments.updateDescriptorSet(&self.swapchain, self.logical_device.handle);
             self.framebuffer_resized = false;
         } else {
             @panic("failed to present swapchain image");
@@ -456,17 +464,24 @@ fn recordCommandBuffer(
         image_idx,
     );
 
+    const swapchain_clear_values = core.engine.Renderer.Swapchain.Attachments.clearValues().values;
+
     var render_pass_info = vk.RenderPassBeginInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = self.renderer.main_render_pass,
         .framebuffer = self.swapchain.framebuffers[image_idx],
-        .renderArea = .{ .offset = .{
-            .x = 0,
-            .y = 0,
-        }, .extent = vk.Extent2D{
-            .height = self.swapchain.extent.height,
-            .width = self.swapchain.extent.width,
-        } },
+        .renderArea = .{
+            .offset = .{
+                .x = 0,
+                .y = 0,
+            },
+            .extent = vk.Extent2D{
+                .height = self.swapchain.extent.height,
+                .width = self.swapchain.extent.width,
+            },
+        },
+        .clearValueCount = swapchain_clear_values.len,
+        .pClearValues = &swapchain_clear_values,
     };
 
     // BAD move this into Swapchain or Renderer module
@@ -475,7 +490,11 @@ fn recordCommandBuffer(
         self.swapchain.attachments.plexe.depth,
     );
 
-    vk.CmdBeginRenderPass(frame.main_command_buffer, &render_pass_info, vk.SUBPASS_CONTENTS_INLINE);
+    vk.CmdBeginRenderPass(
+        frame.main_command_buffer,
+        &render_pass_info,
+        vk.SUBPASS_CONTENTS_INLINE,
+    );
     defer vk.CmdEndRenderPass(frame.main_command_buffer);
 
     const viewport = vk.Viewport{
@@ -569,6 +588,7 @@ fn initImgui(self: *Self) void {
         .MinImageCount = MAX_FRAMES_IN_FLIGHT,
         .ImageCount = MAX_FRAMES_IN_FLIGHT,
         .MSAASamples = vk.SAMPLE_COUNT_1_BIT,
+        .Subpass = 1,
     };
 
     _ = c.imgui.impl_vulkan.Init(&init_info, self.renderer.main_render_pass);

@@ -1,21 +1,19 @@
-#version 460
-#extension GL_EXT_nonuniform_qualifier : require
+#version 450
 
-layout(location = 0) in vec2 texCoord;
-layout(location = 1) flat in uint MaterialIndex;
+layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput gPosition;
+layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput gNormal;
+layout(input_attachment_index = 2, set = 0, binding = 2) uniform subpassInput gAlbedo;
 
-layout(location = 0) out vec4 out_Color;
-
-layout(set = 1, binding = 0) uniform sampler TextureSampler;
-layout(set = 2, binding = 0) uniform texture2D Textures[];
-
-vec4 TextureBindless2D(uint MaterialIndex, vec2 uv)
-{
-     return texture(sampler2D(Textures[nonuniformEXT(MaterialIndex)], TextureSampler), uv);
-}
-
+layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    out_Color = TextureBindless2D(MaterialIndex, texCoord);
+    vec3 normal = normalize(subpassLoad(gNormal).xyz);
+    vec3 position = subpassLoad(gPosition).xyz;
+    vec4 albedo = subpassLoad(gAlbedo);
+
+    // Temporary output until lighting is implemented
+    outColor = albedo;
+    // outColor = vec4(subpassLoad(gPosition).xyz, 1.0);
+    // outColor = vec4(subpassLoad(gNormal).xyz * 0.5 + 0.5, 1.0);
 }

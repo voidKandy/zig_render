@@ -429,14 +429,6 @@ pub const vk = struct {
     pub const PolygonMode = c.VkPolygonMode;
     pub const CompareOp = c.VkCompareOp;
 
-    /// A union of either:
-    ///    **VkClearColorValue:**
-    ///    The four array elements of the clear color map to R, G, B, and A components of image formats, in order.
-    ///    ---
-    ///    **VkClearDepthStencilValue:**
-    ///    **depth** is the clear value for the depth aspect of the depth/stencil attachment. It is a floating-point value which is automatically converted to the attachment’s format.
-    ///    **stencil** is the clear value for the stencil aspect of the depth/stencil attachment. It is a 32-bit integer value which is converted to the attachment’s format by taking the appropriate number of LSBs.
-    ///    ---
     pub const ClearValue = c.VkClearValue;
     pub const ClearColorValue = c.VkClearColorValue;
     /// **flags:**
@@ -444,16 +436,6 @@ pub const vk = struct {
     /// + VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT specifies that a secondary command buffer is considered to be entirely inside a render pass. If this is a primary command buffer, then this bit is ignored.
     /// + VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT specifies that a command buffer can be resubmitted to any queue of the same queue family while it is in the pending state, and recorded into multiple primary command buffers.
     pub const CommandBufferBeginInfo = c.VkCommandBufferBeginInfo;
-    /// flags: VkSubpassDescriptionFlags
-    /// pipelineBindPoint: VkPipelineBindPoint
-    /// inputAttachmentCount: uint32_t
-    /// pInputAttachments: const VkAttachmentReference*
-    /// colorAttachmentCount: uint32_t
-    /// pColorAttachments: const VkAttachmentReference*
-    /// pResolveAttachments: const VkAttachmentReference*
-    /// pDepthStencilAttachment: const VkAttachmentReference*
-    /// preserveAttachmentCount: uint32_t
-    /// pPreserveAttachments: const uint32_t*
     pub const SubpassDescription = c.VkSubpassDescription;
     pub const SubpassDependency = c.VkSubpassDependency;
     pub const RenderPassCreateInfo = c.VkRenderPassCreateInfo;
@@ -491,13 +473,6 @@ pub const vk = struct {
     pub const WriteDescriptorSet = c.VkWriteDescriptorSet;
     pub const PipelineBindPoint = c.VkPipelineBindPoint;
     pub const BufferCreateInfo = c.VkBufferCreateInfo;
-    /// sType: VkStructureType
-    /// pNext: const void*
-    /// renderPass: VkRenderPass
-    /// framebuffer: VkFramebuffer
-    /// renderArea: VkRect2D
-    /// clearValueCount: uint32_t
-    /// pClearValues: const VkClearValue*
     pub const RenderPassBeginInfo = c.VkRenderPassBeginInfo;
     pub const RenderingAttachmentInfo = c.VkRenderingAttachmentInfo;
     pub const SubmitInfo = c.VkSubmitInfo;
@@ -511,36 +486,8 @@ pub const vk = struct {
     pub const PushConstantRange = c.VkPushConstantRange;
     pub const Extent2D = c.VkExtent2D;
     pub const Extent3D = c.VkExtent3D;
-    /// sType: VkStructureType
-    /// pNext: const void*
-    /// flags: VkImageCreateFlags
-    /// imageType: VkImageType
-    /// format: VkFormat
-    /// extent: VkExtent3D
-    /// mipLevels: uint32_t
-    /// arrayLayers: uint32_t
-    /// samples: VkSampleCountFlagBits
-    /// tiling: VkImageTiling
-    /// usage: VkImageUsageFlags
-    /// sharingMode: VkSharingMode
-    /// queueFamilyIndexCount: uint32_t
-    /// pQueueFamilyIndices: const uint32_t*
-    /// initialLayout: VkImageLayout
     pub const ImageCreateInfo = c.VkImageCreateInfo;
-    /// sType: VkStructureType
-    /// pNext: const void*
-    /// flags: VkImageViewCreateFlags
-    /// image: VkImage
-    /// viewType: VkImageViewType
-    /// format: VkFormat
-    /// components: VkComponentMapping
-    /// subresourceRange: VkImageSubresourceRange
     pub const ImageViewCreateInfo = c.VkImageViewCreateInfo;
-    /// aspectMask: VkImageAspectFlags
-    /// baseMipLevel: uint32_t
-    /// levelCount: uint32_t
-    /// baseArrayLayer: uint32_t
-    /// layerCount: uint32_t
     pub const ImageSubresourceRange = c.VkImageSubresourceRange;
     pub const ImageMemoryBarrier = c.VkImageMemoryBarrier;
     pub const ImageMemoryBarrier2 = c.VkImageMemoryBarrier2;
@@ -780,6 +727,7 @@ pub const vk = struct {
     pub const IMAGE_USAGE_SAMPLED_BIT = c.VK_IMAGE_USAGE_SAMPLED_BIT;
     pub const IMAGE_USAGE_COLOR_ATTACHMENT_BIT = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     pub const IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    pub const IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     pub const IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT = c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     pub const IMAGE_USAGE_INPUT_ATTACHMENT_BIT = c.VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
@@ -934,6 +882,7 @@ pub const vk = struct {
     pub const CmdDrawIndexed = c.vkCmdDrawIndexed;
     pub const CmdCopyBuffer = c.vkCmdCopyBuffer;
     pub const CmdBindDescriptorSets = c.vkCmdBindDescriptorSets;
+    pub const CmdNextSubpass = c.vkCmdNextSubpass;
     pub const CmdPushConstants = c.vkCmdPushConstants;
     pub const CmdPipelineBarrier = c.vkCmdPipelineBarrier;
     pub const CmdPipelineBarrier2 = c.vkCmdPipelineBarrier2;
