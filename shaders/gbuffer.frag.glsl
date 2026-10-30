@@ -27,10 +27,4 @@ void main()
 	outAlbedo = sampleAlbedo(inMaterialIndex, inUV) * inVertexColor;
     outPosition = vec4(inWorldPos, gl_FragCoord.z);
     outNormal = vec4(normalize(inNormal), 1.0);
-    // outAlbedo = inVertexColor;
-
-    // outPosition = vec4(0.0);
-    // outNormal = vec4(0.0);
-    // outAlbedo = vec4(0.0, 1.0, 0.0, 1.0);
-    // outPosition = vec4(1.0, 0.0, 0.0, 1.0);
 }

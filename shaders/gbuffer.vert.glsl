@@ -89,5 +89,4 @@ void main()
     outUV = uv;
     outVertexColor = albedo;
     outMaterialIndex = instance.materialIndex;
-    // outVertexColor = vec4(1, 0, 0, 1);
 }

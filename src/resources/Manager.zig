@@ -144,7 +144,7 @@ const SubpassInputAttachments = struct {
                 ).?;
 
                 info.* = .{
-                    .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    .imageLayout = if (tag == .depth) vk.IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL else vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     .sampler = null,
                     .imageView = image.view,
                 };
@@ -178,8 +178,8 @@ const SubpassInputAttachments = struct {
         vk.DestroyDescriptorSetLayout(device, self.final, alloc_cbs);
     }
 
-    /// since final and depth aren't used as input attachments
-    const DESCRIPTOR_OFFSET = @backingInt(core.engine.Renderer.Swapchain.Attachments.Tags.position);
+    /// since final isn't used as input attachments
+    const DESCRIPTOR_OFFSET = @backingInt(core.engine.Renderer.Swapchain.Attachments.Tags.depth);
 
     fn createDescriptorSetLayoutBindings(
         self: *@This(),
@@ -187,6 +187,12 @@ const SubpassInputAttachments = struct {
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) void {
         const layout_bindings = [_]vk.DescriptorSetLayoutBinding{
+            .{
+                .binding = @backingInt(core.engine.Renderer.Swapchain.Attachments.Tags.depth) - DESCRIPTOR_OFFSET,
+                .descriptorType = vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+                .descriptorCount = 1,
+                .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
+            },
             .{
                 .binding = @backingInt(core.engine.Renderer.Swapchain.Attachments.Tags.position) - DESCRIPTOR_OFFSET,
                 .descriptorType = vk.DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
