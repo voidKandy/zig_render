@@ -9,14 +9,25 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    vec4 depth = subpassLoad(gDepth);
-    // this allows us to passthrough the background image thats drawn to the final image before any graphics passes
-    if (depth.x == 1.0) {
+    float depth = subpassLoad(gDepth).x;
+
+    // Preserve the background image.
+    if (depth >= 1.0) {
         discard;
     }
+
     vec3 normal = normalize(subpassLoad(gNormal).xyz);
     vec3 position = subpassLoad(gPosition).xyz;
-    vec4 albedo = subpassLoad(gAlbedo);
+    vec3 albedo = subpassLoad(gAlbedo).rgb;
+    vec3 lightDirection = normalize(vec3(-1.0, -1.0, 2.0));
+    vec3 lightColor = vec3(1.0, 0.95, 0.85);
 
-    outColor = albedo;
+    float ambientStrength = 0.4;
+    vec3 ambient = ambientStrength * albedo;
+
+    float diffuseStrength = max(dot(normal, lightDirection), 0.0);
+    vec3 diffuse = diffuseStrength * lightColor * albedo * 1.5;
+
+    outColor = vec4(ambient + diffuse, 1.0);
+    
 }
