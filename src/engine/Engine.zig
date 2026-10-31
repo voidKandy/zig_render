@@ -191,8 +191,7 @@ fn initVulkan(self: *Self) void {
         .application_version = vk.MAKE_VERSION(0, 1, 0),
         .engine_name = "VkGuide",
         .engine_version = vk.MAKE_VERSION(0, 1, 0),
-        // A minimum of Vulkan 1.2 is required for dynamic indexing
-        .api_version = vk.MAKE_VERSION(1, 2, 0),
+        .api_version = vk.MAKE_VERSION(1, 3, 0),
         .debug = true,
         .required_extensions = sdl_extension_slice,
     }) catch |err| {

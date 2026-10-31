@@ -39,8 +39,8 @@ pub fn build(b: *std.Build) !void {
         },
     });
     if (env_map.get("VK_SDK_PATH")) |path| {
-        core_lib.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/lib", .{path}) catch @panic("OOM") });
-        core_lib.addIncludePath(.{ .cwd_relative = std.fmt.allocPrint(b.allocator, "{s}/include", .{path}) catch @panic("OOM") });
+        core_lib.addLibraryPath(.{ .cwd_relative = b.allocator.print("{s}/lib", .{path}) catch @panic("OOM") });
+        core_lib.addIncludePath(.{ .cwd_relative = b.allocator.print("{s}/include", .{path}) catch @panic("OOM") });
     }
 
     core_lib.linkSystemLibrary("SDL3", .{});
@@ -53,7 +53,8 @@ pub fn build(b: *std.Build) !void {
     core_lib.addIncludePath(b.path("libs/predicates/"));
     core_lib.addCSourceFile(.{ .file = b.path("src/clibs/stb_image.c"), .flags = &.{""} });
 
-    addAllShaders(b, io, core_lib);
+    addAllGLSLShaders(b, io, core_lib);
+    addAllSlangShaders(b, io, core_lib);
 
     const imgui_lib = buildImgui(b, target, optimize);
     core_lib.linkLibrary(imgui_lib);
@@ -255,7 +256,7 @@ fn buildBinaries(
             break :name split.next() orelse @panic("malformed test file name");
         };
 
-        const fullpath = std.fmt.allocPrint(fba.allocator(), "{s}/{s}", .{ BINARIES_PATH, f.name }) catch |e| std.debug.panic("Failed to get full path: {}\n", .{e});
+        const fullpath = fba.allocator().print("{s}/{s}", .{ BINARIES_PATH, f.name }) catch |e| std.debug.panic("Failed to get full path: {}\n", .{e});
         const exe = b.addExecutable(.{
             .name = name,
             .root_module = b.createModule(.{
@@ -280,7 +281,7 @@ fn buildBinaries(
 
 const SHADERS_PATH = "shaders";
 
-fn addAllShaders(
+fn addAllGLSLShaders(
     b: *std.Build,
     io: std.Io,
     lib: *std.Build.Module,
@@ -291,16 +292,15 @@ fn addAllShaders(
 
     var file_it = shaders_dir.iterate();
     while (file_it.next(io) catch @panic("Failed to iterate shader directory")) |entry| {
-        if (entry.kind == .file) {
-            if (entry.name[0] == '.') continue;
-            const ext = std.fs.path.extension(entry.name);
-            if (std.mem.eql(u8, ext, ".glsl")) {
-                const basename = std.fs.path.basename(entry.name);
-                const name = basename[0 .. basename.len - ext.len];
+        if (entry.kind != .file or entry.name[0] == '.') continue;
 
-                std.debug.print("Found shader file to compile: {s}. Compiling with name: {s}\n", .{ entry.name, name });
-                addShader(b, lib, name);
-            }
+        const ext = std.fs.path.extension(entry.name);
+        const basename = std.fs.path.basename(entry.name);
+        const name = basename[0 .. basename.len - ext.len];
+
+        if (std.mem.eql(u8, ext, ".glsl")) {
+            std.debug.print("Found GLSL shader: {s}\n", .{entry.name});
+            addShader(b, lib, name);
         }
     }
 }
@@ -310,8 +310,8 @@ fn addShader(
     lib: *std.Build.Module,
     name: []const u8,
 ) void {
-    const source = std.fmt.allocPrint(b.allocator, SHADERS_PATH ++ "/{s}.glsl", .{name}) catch @panic("OOM");
-    const outpath = std.fmt.allocPrint(b.allocator, SHADERS_PATH ++ "/{s}.spv", .{name}) catch @panic("OOM");
+    const source = b.allocator.print(SHADERS_PATH ++ "/{s}.glsl", .{name}) catch @panic("OOM");
+    const outpath = b.allocator.print(SHADERS_PATH ++ "/{s}.spv", .{name}) catch @panic("OOM");
 
     const shader_compilation = b.addSystemCommand(&.{"glslangValidator"});
     // this allows shader compilation errors to be printed to stdout
@@ -320,6 +320,95 @@ fn addShader(
     shader_compilation.addArg("-o");
     const output = shader_compilation.addOutputFileArg(outpath);
     shader_compilation.addFileArg(b.path(source));
+
+    lib.addAnonymousImport(name, .{ .root_source_file = output });
+}
+
+// SLANG MIGRATION NOTES
+// https://docs.shader-slang.org/en/latest/external/slang/docs/user-guide/08-compiling.html#modules
+//
+// The `shaders` folder should have subfolders, each of which correspond with a single
+// translation unit. Any .slang files that are direct children of `shaders` will be their own
+// independant translation unit other unit's names will be whatever their corresponding directory is named.
+//
+//
+// Because a single shader can now contain vertex, compute and fragments shaders,
+// the way the library uses it's shaders is going to change
+//
+// when shaders are referenced in a pipeline via vk.PipelineShaderStageCreateInfo
+// the pName should be either of the above Main functions.
+// The module will be the same for both vertex and fragment shaders
+//
+// make sure to use [shader()] attributes so the slangc compiler can infer the shader stages
+
+/// Walks `shaders/` and creates one SPIR-V module per Slang translation unit.
+/// shaders/foo.slang   -> unit "foo"
+/// shaders/bar/*.slang -> unit "bar" (all files compiled together)
+/// Files starting with '_' are treated as library modules (imported by others,
+/// never compiled on their own).
+fn addAllSlangShaders(b: *std.Build, io: std.Io, lib: *std.Build.Module) void {
+    const shaders_dir = b.root.openDir(io, SHADERS_PATH, .{ .iterate = true }) catch
+        @panic("Failed to open shaders directory");
+
+    var it = shaders_dir.iterate();
+    while (it.next(io) catch @panic("Failed to iterate shaders directory")) |entry| {
+        if (entry.name[0] == '.' or entry.name[0] == '_') continue;
+
+        switch (entry.kind) {
+            .file => {
+                if (!std.mem.eql(u8, std.fs.path.extension(entry.name), ".slang")) continue;
+                const stem = entry.name[0 .. entry.name.len - ".slang".len];
+                const path = b.allocator.print(SHADERS_PATH ++ "/{s}", .{entry.name}) catch @panic("OOM");
+                addSlangUnit(b, lib, stem, &.{path});
+            },
+
+            .directory => {
+                var sub = shaders_dir.openDir(io, entry.name, .{ .iterate = true }) catch
+                    @panic("Failed to open shader subdirectory");
+                var sub_it = sub.iterate();
+                while (sub_it.next(io) catch @panic("Failed to iterate shader subdirectory")) |f| {
+                    if (f.kind != .file or f.name[0] == '.' or f.name[0] == '_') continue;
+                    if (!std.mem.eql(u8, std.fs.path.extension(f.name), ".slang")) continue;
+
+                    const stem = f.name[0 .. f.name.len - ".slang".len];
+                    const unit = b.allocator.print("{s}_{s}", .{ entry.name, stem }) catch @panic("OOM");
+                    const path = b.allocator.print(SHADERS_PATH ++ "/{s}/{s}", .{ entry.name, f.name }) catch @panic("OOM");
+                    addSlangUnit(b, lib, unit, &.{path});
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+fn addSlangUnit(
+    b: *std.Build,
+    lib: *std.Build.Module,
+    name: []const u8,
+    sources: []const []const u8,
+) void {
+    const out_name = b.allocator.print("{s}.spv", .{name}) catch @panic("OOM");
+    const dep_name = b.allocator.print("{s}.d", .{name}) catch @panic("OOM");
+
+    const cmd = b.addSystemCommand(&.{"slangc"});
+    cmd.setName(b.allocator.print("slangc {s}", .{name}) catch @panic("OOM"));
+    cmd.stdio = .inherit; // show compile errors
+
+    for (sources) |s| cmd.addFileArg(b.path(s));
+
+    // No -entry/-stage: slangc discovers every [shader("...")] entry point
+    // and puts them all in one module.
+    cmd.addArgs(&.{ "-target", "spirv", "-fvk-use-entrypoint-name" });
+
+    // Let `import foo;` resolve against shaders/.
+    cmd.addArg("-I");
+    cmd.addDirectoryArg(b.path(SHADERS_PATH));
+
+    // Rebuild when an imported module changes.
+    cmd.addArg("-depfile");
+    _ = cmd.addDepFileOutputArg(dep_name);
+    cmd.addArg("-o");
+    const output = cmd.addOutputFileArg(out_name);
 
     lib.addAnonymousImport(name, .{ .root_source_file = output });
 }

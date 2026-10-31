@@ -112,28 +112,28 @@ pub fn initPipeline(
     resources: *const core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    const fin_vert_shader = core.engine.shaders.createShaderModule(
-        "mesh3D.vert",
+    const fin_shader = core.engine.shaders.createShaderModule(
+        "deferred_final",
         common.device,
         alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(
         common.device,
-        fin_vert_shader,
+        fin_shader,
         alloc_cbs,
     );
 
-    const fin_frag_shader = core.engine.shaders.createShaderModule(
-        "mesh3D.frag",
-        common.device,
-        alloc_cbs,
-    ) orelse @panic("failed to create frag shader module");
+    // const fin_frag_shader = core.engine.shaders.createShaderModule(
+    //     "mesh3D.frag",
+    //     common.device,
+    //     alloc_cbs,
+    // ) orelse @panic("failed to create frag shader module");
 
-    defer vk.DestroyShaderModule(
-        common.device,
-        fin_frag_shader,
-        alloc_cbs,
-    );
+    // defer vk.DestroyShaderModule(
+    //     common.device,
+    //     fin_frag_shader,
+    //     alloc_cbs,
+    // );
 
     const final_layouts = GraphicsPipelines.FinalDescription.Layouts.init(.{
         .input_attachments = resources.subpass_input_attachments.final,
@@ -183,8 +183,8 @@ pub fn initPipeline(
                 .layouts = final_layouts,
                 .common = common,
                 .subpass_idx = 1,
-                .vertex_shader = fin_vert_shader,
-                .fragment_shader = fin_frag_shader,
+                .vertex_shader = fin_shader,
+                .fragment_shader = fin_shader,
             },
             alloc_cbs,
         );
@@ -509,12 +509,12 @@ const GraphicsPipelines = struct {
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_VERTEX_BIT,
             .module = pd.vertex_shader,
-            .pName = "main",
+            .pName = "vertexMain",
         }, .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
-            .module = pd.fragment_shader,
-            .pName = "main",
+            .module = pd.vertex_shader,
+            .pName = "fragmentMain",
         } };
 
         const final_solid_pipeline_ci = vk.GraphicsPipelineCreateInfo{
