@@ -10,7 +10,7 @@ struct Instance {
     float4 rotation;
     float3 scale;
     uint materialIndex;
-    
+    float4x4 inverseModelMatrix;
 }
 
 struct VertexData {
@@ -32,16 +32,22 @@ struct InstanceMeshOffsets {
 ConstantBuffer<InstanceMeshOffsets> instanceOffsets;
 
 [[vk::binding(0,0)]]
-ConstantBuffer<CameraUniform> cameraA;
+ConstantBuffer<CameraUniform> Camera;
 
 [[vk::binding(0, 1)]]
-StructuredBuffer<int> inIndices;
+StructuredBuffer<int> Indices;
 
 [[vk::binding(1, 1)]]
-StructuredBuffer<VertexData> inVertices;
+StructuredBuffer<VertexData> Vertices;
 
 [[vk::binding(0, 2)]]
 StructuredBuffer<Instance> InstanceBuf;
+
+[[vk::binding(0, 3)]]
+SamplerState Sampler;
+
+[[vk::binding(0, 4)]]
+Texture2D Textures[];
 
 struct VertOut {
     float4 position    : SV_Position;
@@ -66,11 +72,11 @@ VertOut vertexMain(
     VertOut output;
 
     Instance instance = InstanceBuf[instanceID];
-    int index = inIndices[vertexID];
+    int index = Indices[vertexID];
 
     uint vertexDataIdx = uint(index) + instanceOffsets.vertex;
 
-    VertexData vtx = inVertices[vertexDataIdx];
+    VertexData vtx = Vertices[vertexDataIdx];
 
     float4x4 model = buildModelMatrix(
         instance.position,
@@ -79,21 +85,13 @@ VertOut vertexMain(
     );
 
     float4 worldPos = mul(model, float4(vtx.position.xyz, 1.0));
-    float3x3 rotation = (float3x3)buildModelMatrix(
-        float3(0.0),
-        instance.rotation,
-        float3(1.0)
-    );
 
-    // float3x3 normalMatrix = transpose(inverse((float3x3)model));
 
-    output.position = mul(cameraA.proj, mul(cameraA.view, worldPos));
+    float3x3 normalMatrix = transpose(float3x3(instance.inverseModelMatrix));
+
+    output.position = mul(Camera.proj, mul(Camera.view, worldPos));
     output.worldPos = worldPos.xyz;
-    output.normal = normalize(mul(
-        rotation,
-        vtx.normal.xyz / instance.scale
-    ));
-    // output.normal = normalize(mul(normalMatrix, vtx.normal.xyz));
+    output.normal = normalize(mul(normalMatrix, vtx.normal.xyz));
     output.uv = vtx.uv;
     output.vertexColor = vtx.color;
     output.materialIdx = instance.materialIndex;
@@ -109,11 +107,19 @@ FragOut fragmentMain(VertOut input) {
 
     output.position = float4(input.worldPos, 1.0);
     output.normal = float4(normalize(input.normal), 1.0);
-    output.albedo = input.vertexColor;
+    
+    output.albedo = sampleAlbedo(input.materialIdx, input.uv) *  input.vertexColor;
 
     return output;
 }
 
+
+float4 sampleAlbedo(uint materialIndex, float2 uv) {
+    return Textures[NonUniformResourceIndex(materialIndex)].Sample(
+       Sampler,
+       uv
+    );
+}
 
 float4x4 buildModelMatrix(float3 pos, float4 rot, float3 scale) {
     float x = rot.x, y = rot.y, z = rot.z, w = rot.w;

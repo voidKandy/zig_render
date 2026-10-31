@@ -18,6 +18,7 @@ const Instance = extern struct {
     rotation: core.lib.math.Vec4,
     scale: core.lib.math.Vec3,
     material_idx: u32,
+    inverse_model_matrix: core.lib.math.Mat4,
 };
 
 const InstanceEntry = struct {
@@ -103,6 +104,7 @@ pub fn syncResources(self: *const @This(), alloc_resources: *const core.resource
             .position = entry.world_transform.position,
             .rotation = entry.world_transform.rotation,
             .scale = entry.world_transform.scale,
+            .inverse_model_matrix = entry.world_transform.inverseModelMatrix(),
         };
 }
 
@@ -139,26 +141,14 @@ pub fn initPipeline(
         .input_attachments = resources.subpass_input_attachments.final,
     });
 
-    const gbuf_vert_shader = core.engine.shaders.createShaderModule(
-        "gbuffer.vert",
+    const gbuf_shader = core.engine.shaders.createShaderModule(
+        "deferred_gbuffer",
         common.device,
         alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(
         common.device,
-        gbuf_vert_shader,
-        alloc_cbs,
-    );
-
-    const gbuf_frag_shader = core.engine.shaders.createShaderModule(
-        "gbuffer.frag",
-        common.device,
-        alloc_cbs,
-    ) orelse @panic("failed to create frag shader module");
-
-    defer vk.DestroyShaderModule(
-        common.device,
-        gbuf_frag_shader,
+        gbuf_shader,
         alloc_cbs,
     );
 
@@ -176,8 +166,8 @@ pub fn initPipeline(
                 .layouts = gbuffer_layouts,
                 .common = common,
                 .subpass_idx = 0,
-                .vertex_shader = gbuf_vert_shader,
-                .fragment_shader = gbuf_frag_shader,
+                .vertex_shader = gbuf_shader,
+                .fragment_shader = gbuf_shader,
             },
             .{
                 .layouts = final_layouts,
@@ -223,18 +213,22 @@ pub fn recordCommands(
     var i: u32 = 0;
     for (resources.meshes3D.ranges.items) |m3d_rg| {
         defer i += 1;
+
+        // const instance_model_matrix =
+
         vk.CmdPushConstants(
             cmd,
             self.pipelines.gbuffer_layout,
             vk.SHADER_STAGE_VERTEX_BIT,
             0,
-            @sizeOf(GraphicsPipelines.PushConstants),
+            @sizeOf(GraphicsPipelines.MeshInstanceConstants),
             &.{
                 .vertex_offset = m3d_rg.vertex.offset,
                 .index_offset = m3d_rg.index.offset,
             },
         );
         const instances_range = self.ranges.get(i) orelse continue;
+
         vk.CmdDraw(
             cmd,
             @as(u32, @intCast(m3d_rg.index.range)),
@@ -280,7 +274,7 @@ pub fn getInstances(self: *@This(), a: std.mem.Allocator, world: *core.engine.wo
     while (iter.next()) |*entity| {
         const mesh =
             (entity.accessComponentPtr(.mesh3D) catch @panic("NO MESH?")).mesh3D;
-        const transform =
+        const transform: *core.engine.world.WorldTransform =
             (entity.accessComponentPtr(.world_transform) catch @panic("NO TRANSFORM?")).world_transform;
 
         const result = try buckets.getOrPut(mesh.mesh_index);
@@ -369,7 +363,7 @@ const GraphicsPipelines = struct {
     pub const GBufferDescription = core.engine.pipelines.Description(.{
         .DescriptorSets = enum { camera, meshes, instances, samplers, texture },
         .push_constants = .{
-            PushConstants, vk.SHADER_STAGE_VERTEX_BIT,
+            MeshInstanceConstants, vk.SHADER_STAGE_VERTEX_BIT,
         },
     });
 
@@ -378,7 +372,8 @@ const GraphicsPipelines = struct {
         line,
     };
 
-    pub const PushConstants = struct {
+    pub const MeshInstanceConstants = struct {
+        model_matrix: core.lib.math.Mat4,
         vertex_offset: usize,
         index_offset: usize,
     };
@@ -673,12 +668,12 @@ const GraphicsPipelines = struct {
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_VERTEX_BIT,
             .module = pd.vertex_shader,
-            .pName = "main",
+            .pName = "vertexMain",
         }, .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
             .module = pd.fragment_shader,
-            .pName = "main",
+            .pName = "fragmentMain",
         } };
 
         const ci = vk.GraphicsPipelineCreateInfo{

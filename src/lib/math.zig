@@ -105,6 +105,10 @@ pub const Vec3 = extern struct {
         return make(self.x * val, self.y * val, self.z * val);
     }
 
+    pub inline fn mulScalar(self: Self, val: f32) Self {
+        return make(self.x * val, self.y * val, self.z * val);
+    }
+
     pub inline fn div(self: Self, other: f32) Self {
         return make(self.x / other, self.y / other, self.z / other);
     }
@@ -199,6 +203,9 @@ pub const Vec4 = extern struct {
             if (self.w > 0 or other.w > 0) 1.0 else 0.0,
         );
     }
+    pub fn sub(self: Self, other: Self) Self {
+        return self.add(other.mulScalar(-1.0));
+    }
 
     pub fn lookAt(position: Vec3, target: Vec3) Vec4 {
         const direction = target.sub(position).normalized();
@@ -262,6 +269,23 @@ pub const Vec4 = extern struct {
             .z = self.w * other.z + self.x * other.y - self.y * other.x + self.z * other.w,
             .w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z,
         };
+    }
+
+    pub inline fn div(self: Self, other: Self) Self {
+        return make(
+            self.w / other.w,
+            self.x / other.x,
+            self.y / other.y,
+            self.z / other.z,
+        );
+    }
+    pub inline fn divScalar(self: Self, val: f32) Self {
+        return make(
+            self.w / val,
+            self.x / val,
+            self.y / val,
+            self.z / val,
+        );
     }
 
     pub fn nomalized(self: Self) Self {
@@ -333,6 +357,54 @@ pub const Mat4 = extern struct {
         return .{ .i = i, .j = j, .k = k, .t = t };
     }
 
+    pub fn scaleMatrix(sc: Vec3) Mat4 {
+        return Mat4.make(
+            Vec4.make(sc.x, 0.0, 0.0, 0.0),
+            Vec4.make(0.0, sc.y, 0.0, 0.0),
+            Vec4.make(0.0, 0.0, sc.z, 0.0),
+            Vec4.make(0.0, 0.0, 0.0, 1.0),
+        );
+    }
+
+    pub fn rotationMatrix(rotation: Vec4) Mat4 {
+        const x = rotation.x;
+        const y = rotation.y;
+        const z = rotation.z;
+        const w = rotation.w;
+
+        const xx = x * x;
+        const yy = y * y;
+        const zz = z * z;
+        const xy = x * y;
+        const xz = x * z;
+        const yz = y * z;
+        const wx = w * x;
+        const wy = w * y;
+        const wz = w * z;
+
+        return Mat4.make(
+            Vec4.make(
+                1.0 - 2.0 * (yy + zz),
+                2.0 * (xy + wz),
+                2.0 * (xz - wy),
+                0.0,
+            ),
+            Vec4.make(
+                2.0 * (xy - wz),
+                1.0 - 2.0 * (xx + zz),
+                2.0 * (yz + wx),
+                0.0,
+            ),
+            Vec4.make(
+                2.0 * (xz + wy),
+                2.0 * (yz - wx),
+                1.0 - 2.0 * (xx + yy),
+                0.0,
+            ),
+            Vec4.make(0.0, 0.0, 0.0, 1.0),
+        );
+    }
+
     pub fn transposed(self: Self) Self {
         return make(
             Vec4.make(self.i.x, self.j.x, self.k.x, self.t.x),
@@ -351,8 +423,17 @@ pub const Mat4 = extern struct {
         );
     }
 
+    pub inline fn mulScalar(self: Self, val: f32) Self {
+        return make(
+            self.i.mulScalar(val),
+            self.j.mulScalar(val),
+            self.k.mulScalar(val),
+            self.t.mulScalar(val),
+        );
+    }
+
     /// Create a translation matrix
-    pub fn translation(v: Vec3) Mat4 {
+    pub fn translationMatrix(v: Vec3) Mat4 {
         return make(
             Vec4.make(1.0, 0.0, 0.0, 0.0),
             Vec4.make(0.0, 1.0, 0.0, 0.0),

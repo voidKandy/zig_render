@@ -17,6 +17,7 @@ const Instance = extern struct {
     mesh_idx: u32,
     rotation: core.lib.math.Vec4,
     scale: core.lib.math.Vec3,
+    inverse_model_matrix: core.lib.math.Mat4,
     material_idx: u32,
 };
 
@@ -103,6 +104,7 @@ pub fn syncResources(self: *const @This(), alloc_resources: *const core.resource
             .position = entry.world_transform.position,
             .rotation = entry.world_transform.rotation,
             .scale = entry.world_transform.scale,
+            .inverse_model_matrix = entry.world_transform.modelMatrix().invert(),
         };
 }
 
