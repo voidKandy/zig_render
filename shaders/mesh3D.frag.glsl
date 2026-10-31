@@ -19,6 +19,7 @@ void main()
     vec3 normal = normalize(subpassLoad(gNormal).xyz);
     vec3 position = subpassLoad(gPosition).xyz;
     vec3 albedo = subpassLoad(gAlbedo).rgb;
+
     vec3 lightDirection = normalize(vec3(-1.0, -1.0, 2.0));
     vec3 lightColor = vec3(1.0, 0.95, 0.85);
 

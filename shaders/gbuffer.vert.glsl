@@ -11,6 +11,15 @@ struct Instance {
     
 };
 
+struct VertexData {
+    vec4 position;
+    vec4 normal;
+    vec4 color;
+    vec2 uv;
+    vec2 _;
+};
+
+
 layout(push_constant) uniform PushConstants {
     uint VertexOffset;
     uint IndexOffset;
@@ -23,11 +32,7 @@ layout (set = 0, binding = 0) readonly uniform CameraData {
 
 
 layout (set = 1, binding = 0) readonly buffer Indices { int i[]; } in_Indices;
-layout (std430, set = 1, binding = 1) readonly buffer Positions { vec4 data[]; } in_Positions;
-layout (std430, set = 1, binding = 2) readonly buffer Uvs { vec2 data[]; } in_Uvs;
-layout (std430, set = 1, binding = 3) readonly buffer Normals { vec4 data[]; } in_Normals;
-layout (std430, set = 1, binding = 4) readonly buffer Albedo { vec4 data[]; } in_Albedo;
-
+layout (std430, set = 1, binding = 1) readonly buffer Vertices { VertexData v[]; } in_Vertices;
 layout(std430, set = 2, binding = 0) readonly buffer InstanceSSBO { Instance instances[]; } InstanceBuf;
 
 
@@ -73,20 +78,16 @@ void main()
     int Index = in_Indices.i[gl_VertexIndex];
     uint vertexDataIdx = Index + pc.VertexOffset;
 
-    vec4 pos = in_Positions.data[vertexDataIdx];
-    vec2 uv = in_Uvs.data[vertexDataIdx];
-    vec4 normal = in_Normals.data[vertexDataIdx];
-    vec4 albedo = in_Albedo.data[vertexDataIdx];
-
-        
+    VertexData vtx = in_Vertices.v[vertexDataIdx];
+       
     mat4 modelTransform = buildModelMatrix(instance.position, instance.rotation, instance.scale);
-	vec4 worldPos = modelTransform * vec4(pos.xyz, 1.0);
+	vec4 worldPos = modelTransform * vec4(vtx.position.xyz, 1.0);
     mat3 normalMatrix = transpose(inverse(mat3(modelTransform)));
 
     gl_Position = camera_Ubo.proj * camera_Ubo.view * worldPos;
     outWorldPos = worldPos.xyz;
-    outNormal = normalize(normalMatrix * normal.xyz);
-    outUV = uv;
-    outVertexColor = albedo;
+    outNormal = normalize(normalMatrix * vtx.normal.xyz);
+    outUV = vtx.uv;
+    outVertexColor = vtx.color;
     outMaterialIndex = instance.materialIndex;
 }
