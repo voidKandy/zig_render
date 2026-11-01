@@ -9,7 +9,7 @@ const Meshes3DResource = core.resources.Meshes3D;
 const Allocator = std.mem.Allocator;
 
 pub const Swapchain = @import("./Swapchain.zig");
-pub const Meshes3D = @import("./Meshes3DNew.zig");
+pub const Meshes3D = @import("./Meshes3D.zig");
 pub const Meshes2D = @import("./Meshes2D.zig");
 pub const PhysicsDebug = @import("./PhysicsDebug.zig");
 

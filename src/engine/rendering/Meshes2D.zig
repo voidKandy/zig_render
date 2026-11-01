@@ -111,26 +111,14 @@ pub fn initPipeline(
     resources: *const core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    const vert_shader = core.engine.shaders.createShaderModule(
-        "mesh2D.vert",
+    const shader = core.engine.shaders.createShaderModule(
+        "mesh2D",
         common.device,
         alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(
         common.device,
-        vert_shader,
-        alloc_cbs,
-    );
-
-    const frag_shader = core.engine.shaders.createShaderModule(
-        "mesh2D.frag",
-        common.device,
-        alloc_cbs,
-    ) orelse @panic("failed to create frag shader module");
-
-    defer vk.DestroyShaderModule(
-        common.device,
-        frag_shader,
+        shader,
         alloc_cbs,
     );
 
@@ -145,8 +133,8 @@ pub fn initPipeline(
             .layouts = layouts,
             .common = common,
             .subpass_idx = 0,
-            .vertex_shader = vert_shader,
-            .fragment_shader = frag_shader,
+            .vertex_shader = shader,
+            .fragment_shader = shader,
         }, alloc_cbs);
 }
 
@@ -366,13 +354,13 @@ const GraphicsPipeline = struct {
                 .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = vk.SHADER_STAGE_VERTEX_BIT,
                 .module = pd.vertex_shader,
-                .pName = "main",
+                .pName = "vertexMain",
             },
             .{
                 .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
-                .module = pd.fragment_shader,
-                .pName = "main",
+                .module = pd.vertex_shader,
+                .pName = "fragmentMain",
             },
         };
 
@@ -485,7 +473,7 @@ const GraphicsPipeline = struct {
             .pDynamicState = &dynamic_state_ci,
             .layout = self.layout,
             .renderPass = pd.common.render_pass,
-            .subpass = 0,
+            .subpass = 1,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };

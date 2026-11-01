@@ -78,7 +78,7 @@ pub fn init(
     self.initWindow();
 
     self.renderer = core.engine.Renderer.init(.{
-        .meshes2D = false,
+        .meshes2D = true,
         .meshes3D = true,
         .physics_debug = self.physics.debug_ctx,
     }) catch @panic("OOM");
