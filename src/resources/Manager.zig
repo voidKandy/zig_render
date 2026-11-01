@@ -127,7 +127,7 @@ const SubpassInputAttachments = struct {
             swapchain: *const core.engine.Renderer.Swapchain,
             device: vk.Device,
         ) void {
-            const count = core.engine.Renderer.Swapchain.Attachments.FIELD_NAMES.len - DESCRIPTOR_OFFSET;
+            const count = core.engine.Renderer.Swapchain.Attachments.ALL_TAGS.len - DESCRIPTOR_OFFSET;
 
             var writes: [count]vk.WriteDescriptorSet = undefined;
             var infos: [count]vk.DescriptorImageInfo = undefined;
@@ -135,13 +135,9 @@ const SubpassInputAttachments = struct {
             inline for (
                 &writes,
                 &infos,
-                core.engine.Renderer.Swapchain.Attachments.FIELD_NAMES[DESCRIPTOR_OFFSET..],
-            ) |*write, *info, tag_name| {
-                const image = @field(swapchain.attachments.plexe, tag_name).image;
-                const tag = comptime std.meta.stringToEnum(
-                    core.engine.Renderer.Swapchain.Attachments.Tags,
-                    tag_name,
-                ).?;
+                core.engine.Renderer.Swapchain.Attachments.ALL_TAGS[DESCRIPTOR_OFFSET..],
+            ) |*write, *info, tag| {
+                const image = @field(swapchain.attachments.plexe, @tagName(tag)).image;
 
                 info.* = .{
                     .imageLayout = if (tag == .depth) vk.IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL else vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,

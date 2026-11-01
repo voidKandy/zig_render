@@ -103,10 +103,10 @@ pub fn SystemManager(
         initComputePipelines,
         recordComputeCommands,
 
-        const Signatures = std.EnumMap(@This(), std.lang.Type.Fn);
+        const Signatures = std.EnumMap(@This(), ?std.lang.Type.Fn);
 
         inline fn getSignatures(T: type, is_root_type: bool) Signatures {
-            var sigs = Signatures.init(.{});
+            var sigs = Signatures.initFull(null);
             for (std.meta.tags(@This())) |t| {
                 if (@hasDecl(T, @tagName(t))) {
                     const Fn = @TypeOf(@field(T, @tagName(t)));
@@ -127,6 +127,7 @@ pub fn SystemManager(
                     }
                 }
             }
+
             return sigs;
         }
     };
@@ -209,25 +210,40 @@ pub fn SystemManager(
 
                 var iter = sigs.iterator();
                 while (iter.next()) |v| {
-                    const myFunc = SIGNATURES.get(v.key).?;
-                    if (!fnEql(myFunc, v.value.*)) @compileError(
-                        std.fmt.comptimePrint(
-                            \\ type '{s}' has an incorrect '{s}' function declaration.
-                            \\ expected: {s}
-                            \\ got:      {s}
-                        , .{
-                            @typeName(T),
-                            @tagName(v.key),
-                            formatFnSig(myFunc),
-                            formatFnSig(v.value.*),
-                        }),
-                    );
+                    if (SIGNATURES.get(v.key).?) |myFunc| {
+                        if (v.value.* != null and !fnEql(myFunc, v.value.*.?)) @compileError(
+                            std.fmt.comptimePrint(
+                                \\ type '{s}' has an incorrect '{s}' function declaration.
+                                \\ expected: {s}
+                                \\ got:      {s}
+                            , .{
+                                @typeName(T),
+                                @tagName(v.key),
+                                formatFnSig(myFunc),
+                                formatFnSig(v.value.*),
+                            }),
+                        );
+                    }
                 }
             }
         }
 
         pub fn addSystem(self: *@This(), comptime which: SystemTag, sys: SYSTEM_TYPES.get(which)) void {
             @field(self.plexe, @tagName(which)) = sys;
+        }
+
+        pub fn initSystemEntities(
+            self: *@This(),
+            comptime which: SystemTag,
+            world: *core.engine.world.GameWorld,
+            resources: *const core.resources.Manager,
+        ) std.mem.Allocator.Error!void {
+            const T = SYSTEM_TYPES.get(which);
+            if (@hasDecl(T, "initEntities")) {
+                try @as(*T, &@field(self.plexe, @tagName(which)).?).initEntities(world, resources);
+            } else log.warn(
+                \\ Tried to initEntities on a system which lacks the declaration: '{s}'
+            , .{@typeName(T)});
         }
 
         plexe: SystemPlexe = defaultPlexe(),
@@ -274,17 +290,17 @@ pub fn SystemManager(
             }
         }
 
-        pub fn initEntities(
-            self: *@This(),
-            world: *core.engine.world.GameWorld,
-            resources: *const core.resources.Manager,
-        ) std.mem.Allocator.Error!void {
-            inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
-                const tag: SystemTag = @fromBackingInt(@intCast(i));
-                if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-                    if (@field(self.plexe, @tagName(tag))) |*f| try f.initEntities(world, resources);
-            }
-        }
+        // pub fn initEntities(
+        //     self: *@This(),
+        //     world: *core.engine.world.GameWorld,
+        //     resources: *const core.resources.Manager,
+        // ) std.mem.Allocator.Error!void {
+        //     inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
+        //         const tag: SystemTag = @fromBackingInt(@intCast(i));
+        //         if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
+        //             if (@field(self.plexe, @tagName(tag))) |*f| try f.initEntities(world, resources);
+        //     }
+        // }
 
         pub fn update(
             self: *@This(),

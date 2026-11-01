@@ -7,6 +7,7 @@ const imgui = core.clibs.imgui;
 const Debug = @This();
 
 materials_textures_sets: std.StringHashMapUnmanaged(vk.DescriptorSet) = .empty,
+attachment_sets: std.StringHashMapUnmanaged(vk.DescriptorSet) = .empty,
 
 pub fn deinit(
     self: *@This(),
@@ -15,13 +16,14 @@ pub fn deinit(
     _: ?*vk.AllocationCallbacks,
 ) void {
     self.materials_textures_sets.deinit(allocs.std);
+    self.attachment_sets.deinit(allocs.std);
 }
 
 pub fn bind(
     self: *@This(),
     a: std.mem.Allocator,
-    resources: core.resources.Manager,
-    alloc_resources: core.resources.Manager.AllocatedData,
+    resources: *const core.resources.Manager,
+    alloc_resources: *const core.resources.Manager.AllocatedData,
 ) std.mem.Allocator.Error!void {
     for (0..resources.materials.material_indices.size) |i| {
         const name = resources.materials.material_names_reverse_lookup.get(i).?;
@@ -46,16 +48,30 @@ pub fn bind(
     }
 }
 
-// pub fn update(
-//     self: *@This(),
-// ) void {}
-
-// pub fn trySyncResources(
-//     self: *@This(),
-//     resources: core.resources.Manager,
-//     alloc_resources: core.resources.Manager.AllocatedData,
-//     world: *core.engine.world.GameWorld,
-// ) void {}
+pub fn bindAttachments(
+    self: *@This(),
+    a: std.mem.Allocator,
+    swapchain: *const core.engine.Renderer.Swapchain,
+    alloc_resources: *const core.resources.Manager.AllocatedData,
+) std.mem.Allocator.Error!void {
+    self.attachment_sets.clearRetainingCapacity();
+    const Attachments = core.engine.Renderer.Swapchain.Attachments;
+    inline for (Attachments.ALL_TAGS) |tag| {
+        if (tag != .final) {
+            const att = @field(swapchain.attachments.plexe, @tagName(tag));
+            const layout = if (tag == .depth)
+                vk.IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+            else
+                vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            const set = imgui.impl_vulkan.AddTexture(
+                alloc_resources.materials.sampler,
+                att.image.view,
+                layout,
+            );
+            try self.attachment_sets.put(a, @tagName(tag), set);
+        }
+    }
+}
 
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
     var open = true;
@@ -69,6 +85,14 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
     imgui.Text("Press escape to toggle mouse mode");
 
     var iter = self.materials_textures_sets.iterator();
+    while (iter.next()) |entry| {
+        var buf: [64]u8 = undefined;
+        const zbuf = std.fmt.bufPrintSentinel(&buf, "{s}", .{entry.key_ptr.*}, 0) catch @panic("Buffer couldnt print??");
+        imgui.Text(zbuf);
+        imgui.Image(entry.value_ptr.*, imgui.ImVec2{ .x = 400, .y = 400 });
+    }
+
+    iter = self.attachment_sets.iterator();
     while (iter.next()) |entry| {
         var buf: [64]u8 = undefined;
         const zbuf = std.fmt.bufPrintSentinel(&buf, "{s}", .{entry.key_ptr.*}, 0) catch @panic("Buffer couldnt print??");

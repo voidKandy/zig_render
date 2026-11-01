@@ -341,18 +341,13 @@ fn addShader(
 //
 // make sure to use [shader()] attributes so the slangc compiler can infer the shader stages
 
-/// Walks `shaders/` and creates one SPIR-V module per Slang translation unit.
-/// shaders/foo.slang   -> unit "foo"
-/// shaders/bar/*.slang -> unit "bar" (all files compiled together)
-/// Files starting with '_' are treated as library modules (imported by others,
-/// never compiled on their own).
 fn addAllSlangShaders(b: *std.Build, io: std.Io, lib: *std.Build.Module) void {
     const shaders_dir = b.root.openDir(io, SHADERS_PATH, .{ .iterate = true }) catch
         @panic("Failed to open shaders directory");
 
     var it = shaders_dir.iterate();
     while (it.next(io) catch @panic("Failed to iterate shaders directory")) |entry| {
-        if (entry.name[0] == '.' or entry.name[0] == '_') continue;
+        if (entry.name[0] == '.') continue;
 
         switch (entry.kind) {
             .file => {
@@ -367,7 +362,7 @@ fn addAllSlangShaders(b: *std.Build, io: std.Io, lib: *std.Build.Module) void {
                     @panic("Failed to open shader subdirectory");
                 var sub_it = sub.iterate();
                 while (sub_it.next(io) catch @panic("Failed to iterate shader subdirectory")) |f| {
-                    if (f.kind != .file or f.name[0] == '.' or f.name[0] == '_') continue;
+                    if (f.kind != .file or f.name[0] == '.') continue;
                     if (!std.mem.eql(u8, std.fs.path.extension(f.name), ".slang")) continue;
 
                     const stem = f.name[0 .. f.name.len - ".slang".len];

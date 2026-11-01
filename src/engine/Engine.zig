@@ -328,12 +328,19 @@ pub fn allocateResources(self: *Self) void {
     // definately BAD!
     self.renderer.updateSets(self.logical_device.handle, &self.allocated_resources);
     // BAD??
-    self.system_manager.plexe.Debug.?.bind(self.allocs.std, self.resources, self.allocated_resources) catch
+    self.system_manager.plexe.Debug.?.bind(
+        self.allocs.std,
+        &self.resources,
+        &self.allocated_resources,
+    ) catch
+        @panic("OOM");
+    self.system_manager.plexe.Debug.?.bindAttachments(
+        self.allocs.std,
+        &self.swapchain,
+        &self.allocated_resources,
+    ) catch
         @panic("OOM");
     self.system_manager.updateSets(self.logical_device.handle, &self.allocated_resources);
-
-    self.system_manager.initEntities(&self.world, &self.resources) catch
-        @panic("OOM");
 }
 
 pub fn initPipelines(
@@ -435,6 +442,14 @@ fn drawFrame(self: *Self) void {
             );
 
             self.allocated_resources.subpass_input_attachments.updateDescriptorSet(&self.swapchain, self.logical_device.handle);
+
+            self.system_manager.plexe.Debug.?.bindAttachments(
+                self.allocs.std,
+                &self.swapchain,
+                &self.allocated_resources,
+            ) catch
+                @panic("OOM");
+
             self.framebuffer_resized = false;
         } else {
             @panic("failed to present swapchain image");

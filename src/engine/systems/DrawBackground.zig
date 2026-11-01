@@ -230,13 +230,6 @@ pub const ComputePipeline = struct {
         gradient,
         stars,
 
-        /// in order to load shader modules the variants of this enum
-        /// needs to be iterated at comptime
-        pub const ALL_VARIANTS: [std.meta.tags(@This()).len]@This() = .{
-            .gradient,
-            .stars,
-        };
-
         fn defaultPushConstants(self: @This()) PushConstants {
             return switch (self) {
                 .gradient => PushConstants{
@@ -248,16 +241,6 @@ pub const ComputePipeline = struct {
                     .data1 = math_mod.Vec4.make(0.1, 0.2, 0.4, 0.97),
                 },
             };
-        }
-
-        /// MUST be deinitialized after calling this
-        /// `defer vk.DestroyShaderModule(device, shader, alloc_cbs);`
-        inline fn shaderModule(comptime self: @This(), device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) vk.ShaderModule {
-            return core.engine.shaders.createShaderModule(
-                @tagName(self) ++ ".comp",
-                device,
-                alloc_cbs,
-            ) orelse @panic("failed to create compute shader module");
         }
     };
 
@@ -288,11 +271,17 @@ pub const ComputePipeline = struct {
 
         self.layout = Description.createPipelineLayout(layouts, device, alloc_cbs);
         self.effects = std.EnumMap(Effect, EffectData).initFull(.{});
-        inline for (Effect.ALL_VARIANTS) |eff| {
+        inline for (comptime std.enums.values(Effect)) |eff| {
             defer log.warn(
                 \\ added effect: '{s}'
             , .{@tagName(eff)});
-            const shader = Effect.shaderModule(eff, device, alloc_cbs);
+
+            const shader = core.engine.shaders.createShaderModule(
+                "background",
+                device,
+                alloc_cbs,
+            ) orelse @panic("failed to create maze compute shader module");
+
             defer vk.DestroyShaderModule(device, shader, alloc_cbs);
 
             var entry = self.effects.getPtr(eff).?;
@@ -302,7 +291,7 @@ pub const ComputePipeline = struct {
                 .pNext = null,
                 .stage = vk.SHADER_STAGE_COMPUTE_BIT,
                 .module = shader,
-                .pName = "main",
+                .pName = @tagName(eff) ++ "Main",
             };
 
             var ci = vk.ComputePipelineCreateInfo{

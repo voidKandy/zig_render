@@ -1,4 +1,3 @@
-
 struct CameraUniform {
   float4x4 view;
   float4x4 proj;
@@ -29,7 +28,7 @@ struct InstanceMeshOffsets {
 
 
 [[vk::push_constant]]
-ConstantBuffer<InstanceMeshOffsets> instanceOffsets;
+ConstantBuffer<InstanceMeshOffsets> InstanceOffsets;
 
 [[vk::binding(0,0)]]
 ConstantBuffer<CameraUniform> Camera;
@@ -74,7 +73,7 @@ VertOut vertexMain(
     Instance instance = InstanceBuf[instanceID];
     int index = Indices[vertexID];
 
-    uint vertexDataIdx = uint(index) + instanceOffsets.vertex;
+    uint vertexDataIdx = uint(index) + InstanceOffsets.vertex;
 
     VertexData vtx = Vertices[vertexDataIdx];
 

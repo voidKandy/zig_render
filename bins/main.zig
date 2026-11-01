@@ -110,7 +110,16 @@ pub fn main(init: std.process.Init) void {
     );
     defer engine.deinit();
 
+    const camera = core.engine.systems.Camera.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM");
+    engine.system_manager.addSystem(.Camera, camera);
+    engine.system_manager.initSystemEntities(.Camera, &engine.world, &engine.resources) catch @panic("OOM");
+
+    const draw_background = core.engine.systems.DrawBackground.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM");
+    engine.system_manager.addSystem(.DrawBackground, draw_background);
+    engine.system_manager.initSystemEntities(.DrawBackground, &engine.world, &engine.resources) catch @panic("OOM");
+
     const maze_system_ci = core.engine.systems.Maze.CreateInfo{
+        .main_camera_entity = engine.system_manager.plexe.Camera.?.main_camera_entity.?,
         .push_constants = core.engine.systems.Maze.PushConstants{
             .width = 10,
             .height = 10,
@@ -140,16 +149,13 @@ pub fn main(init: std.process.Init) void {
         },
     };
 
-    // engine.initSystems(.{
     const maze = core.engine.systems.Maze.init(a, &engine.resources, maze_system_ci) catch @panic("OOM");
-    const debug = core.engine.systems.Debug{};
-    const camera = core.engine.systems.Camera.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM");
-    const draw_background = core.engine.systems.DrawBackground.init(a, &engine.resources, engine.swapchain.extent) catch @panic("OOM");
-
     engine.system_manager.addSystem(.Maze, maze);
+    engine.system_manager.initSystemEntities(.Maze, &engine.world, &engine.resources) catch @panic("OOM");
+
+    const debug = core.engine.systems.Debug{};
     engine.system_manager.addSystem(.Debug, debug);
-    engine.system_manager.addSystem(.Camera, camera);
-    engine.system_manager.addSystem(.DrawBackground, draw_background);
+    engine.system_manager.initSystemEntities(.Debug, &engine.world, &engine.resources) catch @panic("OOM");
 
     // BAD
     // consumer shouldnt facilitate this

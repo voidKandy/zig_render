@@ -43,6 +43,8 @@ FragOut fragmentMain() {
     float3 diffuse = diffuseStrength * lightColor * albedo * 1.5;
 
     output.color = float4(ambient + diffuse, 1.0);
+    // output.color = float4(normal, 0.0);
+    // output.color = float4(albedo, 0.0);
     return output;
 }
 

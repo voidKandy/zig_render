@@ -50,37 +50,34 @@ pub const Attachments = struct {
 
     plexe: Plexe,
 
-    pub const FIELD_NAMES = @typeInfo(Tags).@"enum".field_names;
+    pub const ALL_TAGS = std.enums.values(Tags);
     pub fn deinit(
         self: *@This(),
         vma_a: vma.Allocator,
         device: vk.Device,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) void {
-        inline for (FIELD_NAMES) |enfld| {
-            const tag = comptime std.meta.stringToEnum(Tags, enfld).?;
+        inline for (ALL_TAGS) |tag| {
             if (tag != .final)
                 @field(self.plexe, @tagName(tag)).image.deinit(vma_a, device, alloc_cbs);
         }
     }
 
     /// final image is passed from swapchain
-    fn imageViews(self: *const @This(), final_image: vk.ImageView) [FIELD_NAMES.len]vk.ImageView {
-        var views: [FIELD_NAMES.len]vk.ImageView = undefined;
-        inline for (&views, FIELD_NAMES) |*v, enfld| {
-            const tag = comptime std.meta.stringToEnum(Tags, enfld).?;
-            v.* = if (tag == .final)
+    pub fn imageViews(self: *const @This(), final_image: vk.ImageView) std.EnumArray(Tags, vk.ImageView) {
+        var views = std.EnumArray(Tags, vk.ImageView).initUndefined();
+        inline for (ALL_TAGS) |tag| {
+            views.set(tag, if (tag == .final)
                 final_image
             else
-                @field(self.plexe, @tagName(tag)).image.view;
+                @field(self.plexe, @tagName(tag)).image.view);
         }
         return views;
     }
 
     pub fn attachmentDescriptions(self: *const @This()) std.EnumArray(Tags, vk.AttachmentDescription) {
         var descs = std.EnumArray(Tags, vk.AttachmentDescription).initUndefined();
-        inline for (FIELD_NAMES) |enfld| {
-            const tag = comptime std.meta.stringToEnum(Tags, enfld).?;
+        inline for (ALL_TAGS) |tag| {
             const format = if (tag == .final)
                 core.engine.Renderer.MAIN_RENDER_PASS_IMAGE_FORMAT
             else
@@ -149,8 +146,7 @@ pub const Attachments = struct {
 
     pub fn clearValues() std.EnumArray(Tags, vk.ClearValue) {
         var vals = std.EnumArray(Tags, vk.ClearValue).initUndefined();
-        inline for (FIELD_NAMES) |enfld| {
-            const tag = comptime std.meta.stringToEnum(Tags, enfld).?;
+        inline for (ALL_TAGS) |tag| {
             const clear_color = vk.ClearValue{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } };
             const clear_depth = vk.ClearValue{ .depthStencil = .{ .depth = 1.0, .stencil = 0 } };
 
@@ -218,7 +214,9 @@ pub const Attachments = struct {
             .arrayLayers = 1,
             .samples = vk.SAMPLE_COUNT_1_BIT,
             .tiling = vk.IMAGE_TILING_OPTIMAL,
-            .usage = usage | vk.IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+            .usage = usage | vk.IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+                // for the debug view
+                vk.IMAGE_USAGE_SAMPLED_BIT,
             .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
             .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
         };
@@ -498,8 +496,8 @@ pub fn createFramebuffers(
         const ci = vk.FramebufferCreateInfo{
             .sType = vk.STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass = render_pass,
-            .attachmentCount = @as(u32, @intCast(attachments.len)),
-            .pAttachments = &attachments,
+            .attachmentCount = @as(u32, @intCast(attachments.values.len)),
+            .pAttachments = &attachments.values,
             .width = self.extent.width,
             .height = self.extent.height,
             .layers = 1,

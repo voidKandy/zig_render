@@ -5,6 +5,8 @@ const imgui = core.clibs.imgui;
 const vk = core.clibs.vk;
 const checkVk = core.bindings.vulkan_init.checkVk;
 
+/// the shader needs the camera position
+main_camera_entity: u32,
 maze: core.lib.Maze,
 maze_gpu_cells: []GPUMazeCell,
 push_constants: PushConstants,
@@ -29,6 +31,8 @@ pub const PushConstants = extern struct {
     maze_origin: core.lib.math.Vec3,
     seed: u32,
     threshold: usize,
+    cam_world_position: core.lib.math.Vec3 = undefined,
+    _: f32 = 0.0,
 };
 
 pub const GPUMazeCell = extern struct {
@@ -63,6 +67,7 @@ pub const GPUMazeCell = extern struct {
 
 pub const CreateInfo = struct {
     push_constants: PushConstants,
+    main_camera_entity: u32,
     mesh_options: core.lib.Maze.MeshOptions,
 };
 
@@ -163,6 +168,7 @@ pub fn init(
         .maze = maze,
         .maze_gpu_cells = cells,
         .push_constants = ci.push_constants,
+        .main_camera_entity = ci.main_camera_entity,
         // .mesh3D_id = mesh3d_entity.identifier.*,
         // .mesh2D_id = mesh2d_entity.identifier.*,
     };
@@ -284,8 +290,14 @@ pub fn update(
     self: *@This(),
     _: f32,
     _: core.engine.Input,
-    _: *core.engine.world.GameWorld,
+    world: *core.engine.world.GameWorld,
 ) void {
+    var camera_ent = world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
+    const trans: *core.engine.world.WorldTransform =
+        (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
+
+    self.push_constants.cam_world_position = trans.position;
+
     if (self.maze_update) {
         for (self.maze.cells) |*c|
             c.walls = .{};
@@ -420,7 +432,7 @@ const ComputePipeline = struct {
     ) @This() {
         var self = @This(){};
         const maze_shader = core.engine.shaders.createShaderModule(
-            "maze.comp",
+            "maze",
             device,
             alloc_cbs,
         ) orelse @panic("failed to create maze compute shader module");
@@ -432,7 +444,7 @@ const ComputePipeline = struct {
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_COMPUTE_BIT,
             .module = maze_shader,
-            .pName = "main",
+            .pName = "mazeMain",
         };
         const ci = vk.ComputePipelineCreateInfo{
             .sType = vk.STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,

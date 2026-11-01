@@ -93,28 +93,28 @@ pub fn initPipeline(
     resources: *const core.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    const vert_shader = core.engine.shaders.createShaderModule(
-        "box3D_debug.vert",
+    const shader = core.engine.shaders.createShaderModule(
+        "box3d_debug",
         common.device,
         alloc_cbs,
     ) orelse @panic("failed to create vert shader module");
     defer vk.DestroyShaderModule(
         common.device,
-        vert_shader,
+        shader,
         alloc_cbs,
     );
 
-    const frag_shader = core.engine.shaders.createShaderModule(
-        "box3D_debug.frag",
-        common.device,
-        alloc_cbs,
-    ) orelse @panic("failed to create frag shader module");
+    // const frag_shader = core.engine.shaders.createShaderModule(
+    //     "box3D_debug.frag",
+    //     common.device,
+    //     alloc_cbs,
+    // ) orelse @panic("failed to create frag shader module");
 
-    defer vk.DestroyShaderModule(
-        common.device,
-        frag_shader,
-        alloc_cbs,
-    );
+    // defer vk.DestroyShaderModule(
+    //     common.device,
+    //     frag_shader,
+    //     alloc_cbs,
+    // );
 
     const layouts = GraphicsPipeline.Description.Layouts.init(.{
         .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
@@ -125,9 +125,9 @@ pub fn initPipeline(
         GraphicsPipeline.init(.{
             .layouts = layouts,
             .common = common,
-            .vertex_shader = vert_shader,
+            .vertex_shader = shader,
             .subpass_idx = 0,
-            .fragment_shader = frag_shader,
+            .fragment_shader = shader,
         }, alloc_cbs);
 }
 
@@ -227,13 +227,13 @@ const GraphicsPipeline = struct {
                 .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = vk.SHADER_STAGE_VERTEX_BIT,
                 .module = pd.vertex_shader,
-                .pName = "main",
+                .pName = "vertexMain",
             },
             .{
                 .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
                 .module = pd.fragment_shader,
-                .pName = "main",
+                .pName = "fragmentMain",
             },
         };
 
