@@ -166,15 +166,13 @@ pub fn initPipeline(
                 .layouts = gbuffer_layouts,
                 .common = common,
                 .subpass_idx = 0,
-                .vertex_shader = gbuf_shader,
-                .fragment_shader = gbuf_shader,
+                .shader = gbuf_shader,
             },
             .{
                 .layouts = final_layouts,
                 .common = common,
                 .subpass_idx = 1,
-                .vertex_shader = fin_shader,
-                .fragment_shader = fin_shader,
+                .shader = fin_shader,
             },
             alloc_cbs,
         );
@@ -503,12 +501,12 @@ const GraphicsPipelines = struct {
         const final_shader_stage_ci = [_]vk.PipelineShaderStageCreateInfo{ .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_VERTEX_BIT,
-            .module = pd.vertex_shader,
+            .module = pd.shader,
             .pName = "vertexMain",
         }, .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
-            .module = pd.vertex_shader,
+            .module = pd.shader,
             .pName = "fragmentMain",
         } };
 
@@ -667,12 +665,12 @@ const GraphicsPipelines = struct {
         const gbuffer_shader_stage_ci = [_]vk.PipelineShaderStageCreateInfo{ .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_VERTEX_BIT,
-            .module = pd.vertex_shader,
+            .module = pd.shader,
             .pName = "vertexMain",
         }, .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
-            .module = pd.fragment_shader,
+            .module = pd.shader,
             .pName = "fragmentMain",
         } };
 

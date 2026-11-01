@@ -125,9 +125,8 @@ pub fn initPipeline(
         GraphicsPipeline.init(.{
             .layouts = layouts,
             .common = common,
-            .vertex_shader = shader,
-            .subpass_idx = 0,
-            .fragment_shader = shader,
+            .subpass_idx = 1,
+            .shader = shader,
         }, alloc_cbs);
 }
 
@@ -226,13 +225,13 @@ const GraphicsPipeline = struct {
             .{
                 .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = vk.SHADER_STAGE_VERTEX_BIT,
-                .module = pd.vertex_shader,
+                .module = pd.shader,
                 .pName = "vertexMain",
             },
             .{
                 .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
-                .module = pd.fragment_shader,
+                .module = pd.shader,
                 .pName = "fragmentMain",
             },
         };
@@ -340,7 +339,7 @@ const GraphicsPipeline = struct {
             .pColorBlendState = &blend_ci,
             .layout = self.layout,
             .renderPass = pd.common.render_pass,
-            .subpass = 1,
+            .subpass = pd.subpass_idx,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };
