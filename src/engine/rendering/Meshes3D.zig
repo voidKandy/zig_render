@@ -125,18 +125,6 @@ pub fn initPipeline(
         alloc_cbs,
     );
 
-    // const fin_frag_shader = core.engine.shaders.createShaderModule(
-    //     "mesh3D.frag",
-    //     common.device,
-    //     alloc_cbs,
-    // ) orelse @panic("failed to create frag shader module");
-
-    // defer vk.DestroyShaderModule(
-    //     common.device,
-    //     fin_frag_shader,
-    //     alloc_cbs,
-    // );
-
     const final_layouts = GraphicsPipelines.FinalDescription.Layouts.init(.{
         .input_attachments = resources.subpass_input_attachments.final,
     });
@@ -155,9 +143,25 @@ pub fn initPipeline(
     const gbuffer_layouts = GraphicsPipelines.GBufferDescription.Layouts.init(.{
         .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
         .samplers = resources.materials.samplers_descriptor_set_layout,
-        .texture = resources.materials.all_textures_descriptor_set_layout,
+        .textures = resources.materials.all_textures_descriptor_set_layout,
         .meshes = resources.meshes3D.descriptor_set_layout,
         .instances = resources.mapped_buffers.buffer_set_layouts.get(INSTANCE_SET_NAME).?.layout,
+    });
+
+    const ssao_shader = core.engine.shaders.createShaderModule(
+        "deferred_ssao",
+        common.device,
+        alloc_cbs,
+    ) orelse @panic("failed to create vert shader module");
+    defer vk.DestroyShaderModule(
+        common.device,
+        ssao_shader,
+        alloc_cbs,
+    );
+
+    const ssao_layouts = GraphicsPipelines.SSAODescription.Layouts.init(.{
+        .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+        .input_attachments = resources.subpass_input_attachments.ssao,
     });
 
     self.pipelines =
@@ -171,8 +175,14 @@ pub fn initPipeline(
             .{
                 .layouts = final_layouts,
                 .common = common,
-                .subpass_idx = 1,
+                .subpass_idx = 2,
                 .shader = fin_shader,
+            },
+            .{
+                .layouts = ssao_layouts,
+                .common = common,
+                .subpass_idx = 1,
+                .shader = ssao_shader,
             },
             alloc_cbs,
         );
@@ -189,11 +199,16 @@ pub fn recordCommands(
         .samplers = allocated_resources.materials.sampler_set,
         .meshes = allocated_resources.meshes3D.descriptor_set,
         .instances = allocated_resources.mapped_buffers.buffer_sets.get(INSTANCE_SET_NAME).?.set,
-        .texture = allocated_resources.materials.all_textures_descriptor_set,
+        .textures = allocated_resources.materials.all_textures_descriptor_set,
     });
 
     const final_sets = GraphicsPipelines.FinalDescription.Sets.init(.{
         .input_attachments = allocated_resources.subpass_input_attachments.final,
+    });
+
+    const ssao_sets = GraphicsPipelines.SSAODescription.Sets.init(.{
+        .camera = allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        .input_attachments = allocated_resources.subpass_input_attachments.ssao,
     });
 
     self.pipelines.bindGbuffer(cmd);
@@ -211,8 +226,6 @@ pub fn recordCommands(
     var i: u32 = 0;
     for (resources.meshes3D.ranges.items) |m3d_rg| {
         defer i += 1;
-
-        // const instance_model_matrix =
 
         vk.CmdPushConstants(
             cmd,
@@ -237,7 +250,21 @@ pub fn recordCommands(
     }
 
     vk.CmdNextSubpass(cmd, vk.SUBPASS_CONTENTS_INLINE);
+    self.pipelines.bindSSAO(cmd);
 
+    vk.CmdBindDescriptorSets(
+        cmd,
+        vk.PIPELINE_BIND_POINT_GRAPHICS,
+        self.pipelines.ssao_layout,
+        0,
+        ssao_sets.values.len,
+        &ssao_sets.values,
+        0,
+        null,
+    );
+    vk.CmdDraw(cmd, 3, 1, 0, 0);
+
+    vk.CmdNextSubpass(cmd, vk.SUBPASS_CONTENTS_INLINE);
     self.pipelines.bindFinal(cmd);
     vk.CmdBindDescriptorSets(
         cmd,
@@ -248,6 +275,14 @@ pub fn recordCommands(
         &final_sets.values,
         0,
         null,
+    );
+    vk.CmdPushConstants(
+        cmd,
+        self.pipelines.final_layout,
+        vk.SHADER_STAGE_FRAGMENT_BIT,
+        0,
+        @sizeOf(GraphicsPipelines.DitherParams),
+        &self.pipelines.dither_params,
     );
     vk.CmdDraw(cmd, 3, 1, 0, 0);
 }
@@ -355,44 +390,101 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
             }
         }
     }
+
+    imgui.Separator();
+    imgui.Text("Dithering");
+
+    _ = imgui.SliderFloat(
+        "Grid Size",
+        &self.pipelines.dither_params.grid_size,
+        1.0,
+        25.0,
+    );
+
+    _ = imgui.SliderFloat(
+        "Pixel Size Ratio",
+        &self.pipelines.dither_params.pixel_size_ratio,
+        0.5,
+        25.0,
+    );
+
+    var grayscale = self.pipelines.dither_params.grayscale_only != 0;
+    if (imgui.Checkbox("Grayscale", &grayscale)) {
+        self.pipelines.dither_params.grayscale_only = @intFromBool(grayscale);
+    }
+
+    var invert = self.pipelines.dither_params.invert_color != 0;
+    if (imgui.Checkbox("Invert Color", &invert)) {
+        self.pipelines.dither_params.invert_color = @intFromBool(invert);
+    }
 }
 
 const GraphicsPipelines = struct {
-    pub const GBufferDescription = core.engine.pipelines.Description(.{
-        .DescriptorSets = enum { camera, meshes, instances, samplers, texture },
-        .push_constants = .{
-            MeshInstanceConstants, vk.SHADER_STAGE_VERTEX_BIT,
-        },
-    });
-
-    pub const FinalPipelineOptions = enum {
-        solid,
-        line,
-    };
-
     pub const MeshInstanceConstants = struct {
         model_matrix: core.lib.math.Mat4,
         vertex_offset: usize,
         index_offset: usize,
     };
 
+    pub const GBufferDescription = core.engine.pipelines.Description(.{
+        .DescriptorSets = enum { camera, meshes, instances, samplers, textures },
+        .push_constants = .{
+            MeshInstanceConstants, vk.SHADER_STAGE_VERTEX_BIT,
+        },
+    });
+
+    pub const SSAODescription = core.engine.pipelines.Description(.{
+        .DescriptorSets = enum { camera, input_attachments },
+    });
+
+    const DitherParams = extern struct {
+        resolution: core.lib.math.Vec2,
+        grid_size: f32,
+        pixel_size_ratio: f32,
+        invert_color: u32,
+        grayscale_only: u32,
+    };
+
+    pub const FinalPipelineOptions = enum {
+        solid,
+        line,
+    };
     pub const FinalDescription = core.engine.pipelines.Description(.{
         .DescriptorSets = enum { input_attachments },
+        .push_constants = .{
+            DitherParams, vk.SHADER_STAGE_FRAGMENT_BIT,
+        },
     });
 
     gbuffer_pipeline: vk.Pipeline = undefined,
     gbuffer_layout: vk.PipelineLayout = undefined,
+
+    ssao_pipeline: vk.Pipeline = undefined,
+    ssao_layout: vk.PipelineLayout = undefined,
 
     current_pipeline: FinalPipelineOptions = .solid,
     final_pipeline_solid: vk.Pipeline = undefined,
     final_pipeline_line: vk.Pipeline = undefined,
     final_layout: vk.PipelineLayout = undefined,
 
+    dither_params: DitherParams = .{
+        .resolution = core.lib.math.Vec2{
+            .x = 1920,
+            .y = 1080,
+        },
+        .grid_size = 5.0,
+        .pixel_size_ratio = 5.0,
+        .invert_color = 0,
+        .grayscale_only = 0,
+    },
+
     const Self = @This();
 
     pub fn deinit(self: *Self, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
         vk.DestroyPipeline(device, self.gbuffer_pipeline, alloc_cbs);
         vk.DestroyPipelineLayout(device, self.gbuffer_layout, alloc_cbs);
+        vk.DestroyPipeline(device, self.ssao_pipeline, alloc_cbs);
+        vk.DestroyPipelineLayout(device, self.ssao_layout, alloc_cbs);
         vk.DestroyPipeline(device, self.final_pipeline_solid, alloc_cbs);
         vk.DestroyPipeline(device, self.final_pipeline_line, alloc_cbs);
         vk.DestroyPipelineLayout(device, self.final_layout, alloc_cbs);
@@ -632,8 +724,8 @@ const GraphicsPipelines = struct {
         // BAD
         // maybe attachment information should be added to PipelineDescription
         // that way this number can be derived
-        const amt_gbuf_blend_attachments = 3;
-        const gbuf_blend_attachment_states: [amt_gbuf_blend_attachments]vk.PipelineColorBlendAttachmentState = @splat(
+        const amt_blend_attachments = 3;
+        const blend_attachment_states: [amt_blend_attachments]vk.PipelineColorBlendAttachmentState = @splat(
             vk.PipelineColorBlendAttachmentState{
                 .blendEnable = vk.FALSE,
                 .colorWriteMask = vk.COLOR_COMPONENT_R_BIT |
@@ -643,12 +735,12 @@ const GraphicsPipelines = struct {
             },
         );
 
-        const gbuf_blend_ci = vk.PipelineColorBlendStateCreateInfo{
+        const blend_ci = vk.PipelineColorBlendStateCreateInfo{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .logicOpEnable = vk.FALSE,
             .logicOp = vk.LOGIC_OP_COPY,
-            .attachmentCount = gbuf_blend_attachment_states.len,
-            .pAttachments = &gbuf_blend_attachment_states,
+            .attachmentCount = blend_attachment_states.len,
+            .pAttachments = &blend_attachment_states,
         };
 
         const dynamic_states = [_]vk.DynamicState{
@@ -662,7 +754,7 @@ const GraphicsPipelines = struct {
             .pDynamicStates = &dynamic_states,
         };
 
-        const gbuffer_shader_stage_ci = [_]vk.PipelineShaderStageCreateInfo{ .{
+        const shader_stage_ci = [_]vk.PipelineShaderStageCreateInfo{ .{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = vk.SHADER_STAGE_VERTEX_BIT,
             .module = pd.shader,
@@ -678,15 +770,15 @@ const GraphicsPipelines = struct {
             .sType = vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .pNext = null,
             .pDynamicState = &dynamic_state_ci,
-            .stageCount = gbuffer_shader_stage_ci.len,
-            .pStages = &gbuffer_shader_stage_ci,
+            .stageCount = shader_stage_ci.len,
+            .pStages = &shader_stage_ci,
             .pVertexInputState = &vertex_input_ci,
             .pInputAssemblyState = &input_assembly_ci,
             .pViewportState = &viewport_ci,
             .pRasterizationState = &solid_rasterization_ci,
             .pMultisampleState = &multisample_ci,
             .pDepthStencilState = &depth_stencil_ci,
-            .pColorBlendState = &gbuf_blend_ci,
+            .pColorBlendState = &blend_ci,
             .layout = self.gbuffer_layout,
             .renderPass = pd.common.render_pass,
             .subpass = pd.subpass_idx,
@@ -704,14 +796,165 @@ const GraphicsPipelines = struct {
         )) catch @panic("failed to create graphics pipeline");
     }
 
+    fn createSSAOPipeline(
+        self: *@This(),
+        pd: SSAODescription,
+        alloc_cbs: ?*vk.AllocationCallbacks,
+    ) void {
+        self.ssao_layout = SSAODescription.createPipelineLayout(
+            pd.layouts,
+            pd.common.device,
+            alloc_cbs,
+        );
+
+        const vertex_input_ci = vk.PipelineVertexInputStateCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            .vertexBindingDescriptionCount = 0,
+            .pVertexBindingDescriptions = null,
+            .vertexAttributeDescriptionCount = 0,
+            .pVertexAttributeDescriptions = null,
+        };
+
+        const input_assembly_ci = vk.PipelineInputAssemblyStateCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .topology = vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+            .primitiveRestartEnable = vk.FALSE,
+        };
+
+        const viewport = vk.Viewport{
+            .x = 0.0,
+            .y = 0.0,
+            .width = @as(f32, (@floatFromInt(pd.common.window_extent.width))),
+            .height = @as(f32, (@floatFromInt(pd.common.window_extent.height))),
+            .minDepth = 0.0,
+            .maxDepth = 1.0,
+        };
+        const scissor = vk.Rect2D{
+            .offset = .{
+                .x = 0,
+                .y = 0,
+            },
+            .extent = pd.common.window_extent,
+        };
+
+        const viewport_ci = vk.PipelineViewportStateCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .viewportCount = 1,
+            .pViewports = &viewport,
+            .scissorCount = 1,
+            .pScissors = &scissor,
+        };
+
+        const solid_rasterization_ci = vk.PipelineRasterizationStateCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .polygonMode = vk.POLYGON_MODE_FILL,
+            .cullMode = vk.CULL_MODE_BACK_BIT,
+            .frontFace = vk.FRONT_FACE_COUNTER_CLOCKWISE,
+            .lineWidth = 1.0,
+        };
+
+        const multisample_ci = vk.PipelineMultisampleStateCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .rasterizationSamples = vk.SAMPLE_COUNT_1_BIT,
+            .sampleShadingEnable = vk.FALSE,
+            .minSampleShading = 1.0,
+        };
+
+        const depth_stencil_ci = vk.PipelineDepthStencilStateCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            .depthTestEnable = vk.TRUE,
+            .depthWriteEnable = vk.TRUE,
+            .depthCompareOp = vk.COMPARE_OP_LESS,
+            .depthBoundsTestEnable = vk.FALSE,
+            .stencilTestEnable = vk.FALSE,
+            .minDepthBounds = 0.0,
+            .maxDepthBounds = 1.0,
+            .front = .{},
+            .back = .{},
+        };
+
+        const blend_attachment_state = [_]vk.PipelineColorBlendAttachmentState{
+            .{
+                .blendEnable = vk.FALSE,
+                .colorWriteMask = vk.COLOR_COMPONENT_R_BIT |
+                    vk.COLOR_COMPONENT_G_BIT |
+                    vk.COLOR_COMPONENT_B_BIT |
+                    vk.COLOR_COMPONENT_A_BIT,
+            },
+        };
+
+        const blend_ci = vk.PipelineColorBlendStateCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .logicOpEnable = vk.FALSE,
+            .logicOp = vk.LOGIC_OP_COPY,
+            .attachmentCount = blend_attachment_state.len,
+            .pAttachments = &blend_attachment_state,
+        };
+
+        const dynamic_states = [_]vk.DynamicState{
+            vk.DYNAMIC_STATE_VIEWPORT,
+            vk.DYNAMIC_STATE_SCISSOR,
+        };
+
+        const dynamic_state_ci = vk.PipelineDynamicStateCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            .dynamicStateCount = dynamic_states.len,
+            .pDynamicStates = &dynamic_states,
+        };
+
+        const ssao_shader_stage_ci = [_]vk.PipelineShaderStageCreateInfo{ .{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = vk.SHADER_STAGE_VERTEX_BIT,
+            .module = pd.shader,
+            .pName = "vertexMain",
+        }, .{
+            .sType = vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
+            .module = pd.shader,
+            .pName = "fragmentMain",
+        } };
+
+        const ci = vk.GraphicsPipelineCreateInfo{
+            .sType = vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .pNext = null,
+            .pDynamicState = &dynamic_state_ci,
+            .stageCount = ssao_shader_stage_ci.len,
+            .pStages = &ssao_shader_stage_ci,
+            .pVertexInputState = &vertex_input_ci,
+            .pInputAssemblyState = &input_assembly_ci,
+            .pViewportState = &viewport_ci,
+            .pRasterizationState = &solid_rasterization_ci,
+            .pMultisampleState = &multisample_ci,
+            .pDepthStencilState = &depth_stencil_ci,
+            .pColorBlendState = &blend_ci,
+            .layout = self.ssao_layout,
+            .renderPass = pd.common.render_pass,
+            .subpass = pd.subpass_idx,
+            .basePipelineHandle = null,
+            .basePipelineIndex = -1,
+        };
+
+        checkVk(vk.CreateGraphicsPipelines(
+            pd.common.device,
+            null,
+            1,
+            &ci,
+            null,
+            &self.ssao_pipeline,
+        )) catch @panic("failed to create graphics pipeline");
+    }
+
     pub fn init(
         gbuffer_pd: GBufferDescription,
         final_pd: FinalDescription,
+        ssao_pd: SSAODescription,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) Self {
         var self = Self{};
         self.createGBufferPipeline(gbuffer_pd, alloc_cbs);
+        self.createSSAOPipeline(ssao_pd, alloc_cbs);
         self.createFinalPipelines(final_pd, alloc_cbs);
+
         return self;
     }
 
@@ -720,6 +963,14 @@ const GraphicsPipelines = struct {
             cmd_buf,
             vk.PIPELINE_BIND_POINT_GRAPHICS,
             self.gbuffer_pipeline,
+        );
+    }
+
+    fn bindSSAO(self: Self, cmd_buf: vk.CommandBuffer) void {
+        vk.CmdBindPipeline(
+            cmd_buf,
+            vk.PIPELINE_BIND_POINT_GRAPHICS,
+            self.ssao_pipeline,
         );
     }
     fn bindFinal(self: Self, cmd_buf: vk.CommandBuffer) void {

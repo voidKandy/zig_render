@@ -132,7 +132,7 @@ pub fn initPipeline(
         GraphicsPipeline.init(.{
             .layouts = layouts,
             .common = common,
-            .subpass_idx = 1,
+            .subpass_idx = 2,
             .shader = shader,
         }, alloc_cbs);
 }

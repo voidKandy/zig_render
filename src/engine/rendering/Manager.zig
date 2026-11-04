@@ -7,6 +7,91 @@ const vki = core.bindings.vulkan_init;
 const checkVk = vki.checkVk;
 const Meshes3DResource = core.resources.Meshes3D;
 const Allocator = std.mem.Allocator;
+const attachments =
+    @import("./attachments.zig");
+
+pub const Attachments = attachments.CreateManager(&[_]attachments.ManagerInfo{
+    .{
+        "depth",
+        .{
+            .usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .description = .{
+                // depth format is calculated later so we don't pass it here
+                .samples = vk.SAMPLE_COUNT_1_BIT,
+                .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .initialLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                .finalLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            },
+        },
+    },
+    .{
+        "position",
+        .{
+            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .description = .{
+                .format = vk.FORMAT_R16G16B16A16_SFLOAT,
+                .samples = vk.SAMPLE_COUNT_1_BIT,
+                .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            },
+        },
+    },
+    .{
+        "normal",
+        .{
+            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .description = .{
+                .format = vk.FORMAT_R16G16B16A16_SFLOAT,
+                .samples = vk.SAMPLE_COUNT_1_BIT,
+                .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            },
+        },
+    },
+    .{
+        "albedo",
+        .{
+            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .description = .{
+                .format = vk.FORMAT_R8G8B8A8_UNORM,
+                .samples = vk.SAMPLE_COUNT_1_BIT,
+                .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            },
+        },
+    },
+    .{
+        "ssao",
+        .{
+            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .description = .{
+                .format = vk.FORMAT_R8G8B8A8_UNORM,
+                .samples = vk.SAMPLE_COUNT_1_BIT,
+                .loadOp = vk.ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+                .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+                .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            },
+        },
+    },
+});
 
 pub const Swapchain = @import("./Swapchain.zig");
 pub const Meshes3D = @import("./Meshes3D.zig");
@@ -123,23 +208,37 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
 
 pub fn createMainRenderPass(
     self: *@This(),
-    swapchain: *const Swapchain,
     log_device: vk.Device,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
-    const attachment_descriptions = swapchain.attachments.attachmentDescriptions();
+    const final_attachment_description = vk.AttachmentDescription{
+        .format = core.engine.Renderer.MAIN_RENDER_PASS_IMAGE_FORMAT,
+        .samples = vk.SAMPLE_COUNT_1_BIT,
+        .loadOp = vk.ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp = vk.ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = vk.ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .finalLayout = vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    };
+
+    const attachment_descriptions = Attachments.attachmentDescriptions();
+
+    var all_descriptions: [@typeInfo(Attachments.Tags).@"enum".field_names.len + 1]vk.AttachmentDescription = undefined;
+    all_descriptions[0] = final_attachment_description;
+    @memcpy(all_descriptions[1..], &attachment_descriptions.values);
 
     const gbuffer_color_attachments = [_]vk.AttachmentReference{
         .{
-            .attachment = @backingInt(Swapchain.Attachments.Tags.normal),
+            .attachment = Attachments.attachmentIdx(.position),
             .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         },
         .{
-            .attachment = @backingInt(Swapchain.Attachments.Tags.position),
+            .attachment = Attachments.attachmentIdx(.normal),
             .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         },
         .{
-            .attachment = @backingInt(Swapchain.Attachments.Tags.albedo),
+            .attachment = Attachments.attachmentIdx(.albedo),
             .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         },
     };
@@ -150,35 +249,54 @@ pub fn createMainRenderPass(
             .colorAttachmentCount = gbuffer_color_attachments.len,
             .pColorAttachments = &gbuffer_color_attachments,
             .pDepthStencilAttachment = &.{
-                .attachment = @backingInt(Swapchain.Attachments.Tags.depth),
+                .attachment = Attachments.attachmentIdx(.depth),
                 .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             },
         };
 
     const final_input_attachments = [_]vk.AttachmentReference{
         .{
-            .attachment = @backingInt(Swapchain.Attachments.Tags.depth),
+            .attachment = Attachments.attachmentIdx(.depth),
             .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
         },
         .{
-            .attachment = @backingInt(Swapchain.Attachments.Tags.normal),
+            .attachment = Attachments.attachmentIdx(.position),
             .layout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         },
         .{
-            .attachment = @backingInt(Swapchain.Attachments.Tags.position),
+            .attachment = Attachments.attachmentIdx(.normal),
             .layout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         },
         .{
-            .attachment = @backingInt(Swapchain.Attachments.Tags.albedo),
+            .attachment = Attachments.attachmentIdx(.albedo),
+            .layout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        },
+        .{
+            .attachment = Attachments.attachmentIdx(.ssao),
             .layout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         },
     };
+
+    const ssao_subpass =
+        vk.SubpassDescription{
+            .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &.{
+                .attachment = Attachments.attachmentIdx(.ssao),
+                .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            },
+            .inputAttachmentCount = 1,
+            .pInputAttachments = &.{
+                .attachment = Attachments.attachmentIdx(.depth),
+                .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            },
+        };
     const final_subpass =
         vk.SubpassDescription{
             .pipelineBindPoint = vk.PIPELINE_BIND_POINT_GRAPHICS,
             .colorAttachmentCount = 1,
             .pColorAttachments = &.{
-                .attachment = @backingInt(Swapchain.Attachments.Tags.final),
+                .attachment = 0,
                 .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             },
             .inputAttachmentCount = final_input_attachments.len,
@@ -187,28 +305,63 @@ pub fn createMainRenderPass(
 
     const subpass_descriptions = [_]vk.SubpassDescription{
         gbuffer_subpass,
+        ssao_subpass,
         final_subpass,
     };
 
-    const dependency = vk.SubpassDependency{
-        .srcSubpass = vk.SUBPASS_EXTERNAL,
-        .dstSubpass = 0,
-        .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-        .srcAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-        .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-        .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-            vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    // const dependency = vk.SubpassDependency{
+    //     .srcSubpass = vk.SUBPASS_EXTERNAL,
+    //     .dstSubpass = 0,
+    //     .srcStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+    //     .srcAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+    //         vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    //     .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+    //     .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+    //         vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    // };
+
+    const gbuffer_stages = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    const gbuffer_access = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT | vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    const dependencies = [_]vk.SubpassDependency{
+        .{
+            .srcSubpass = vk.SUBPASS_EXTERNAL,
+            .dstSubpass = 2,
+            .srcStageMask = gbuffer_stages,
+            .srcAccessMask = gbuffer_access,
+            .dstStageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstAccessMask = vk.ACCESS_COLOR_ATTACHMENT_READ_BIT | vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        },
+        // gbuffer -> ssao (reads depth)
+        .{
+            .srcSubpass = 0,
+            .dstSubpass = 1,
+            .srcStageMask = gbuffer_stages,
+            .srcAccessMask = gbuffer_access,
+            .dstStageMask = vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            .dstAccessMask = vk.ACCESS_INPUT_ATTACHMENT_READ_BIT,
+            .dependencyFlags = vk.DEPENDENCY_BY_REGION_BIT,
+        },
+        // gbuffer -> final (reads depth/position/normal/albedo)
+        .{
+            .srcSubpass = 0,
+            .dstSubpass = 2,
+            .srcStageMask = gbuffer_stages,
+            .srcAccessMask = gbuffer_access,
+            .dstStageMask = vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            .dstAccessMask = vk.ACCESS_INPUT_ATTACHMENT_READ_BIT,
+            .dependencyFlags = vk.DEPENDENCY_BY_REGION_BIT,
+        },
     };
 
     const ci = vk.RenderPassCreateInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = attachment_descriptions.values.len,
-        .pAttachments = &attachment_descriptions.values,
+        .attachmentCount = all_descriptions.len,
+        .pAttachments = &all_descriptions,
         .subpassCount = subpass_descriptions.len,
         .pSubpasses = &subpass_descriptions,
-        .dependencyCount = 1,
-        .pDependencies = &dependency,
+        .dependencyCount = dependencies.len,
+        .pDependencies = &dependencies,
     };
 
     checkVk(vk.CreateRenderPass(log_device, &ci, alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");

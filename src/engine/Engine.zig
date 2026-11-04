@@ -269,7 +269,7 @@ fn initVulkan(self: *Self) void {
         .alloc_cb = self.alloc_cbs,
     }) catch @panic("failed to create swapchain");
 
-    self.renderer.createMainRenderPass(&self.swapchain, self.logical_device.handle, self.alloc_cbs);
+    self.renderer.createMainRenderPass(self.logical_device.handle, self.alloc_cbs);
 
     self.swapchain.createFramebuffers(
         self.allocs.std,
@@ -424,6 +424,8 @@ fn drawFrame(self: *Self) void {
             e == VkError.SuboptimalKHR or
             self.framebuffer_resized)
         {
+
+            // this block might need to be moved to function
             self.swapchain.recreate(
                 self.allocs,
                 .{
@@ -449,7 +451,11 @@ fn drawFrame(self: *Self) void {
                 &self.allocated_resources,
             ) catch
                 @panic("OOM");
-
+            // BAD
+            self.renderer.meshes3D.?.pipelines.dither_params.resolution = core.lib.math.Vec2{
+                .x = @as(f32, @floatFromInt(self.swapchain.extent.width)),
+                .y = @as(f32, @floatFromInt(self.swapchain.extent.height)),
+            };
             self.framebuffer_resized = false;
         } else {
             @panic("failed to present swapchain image");
@@ -478,7 +484,14 @@ fn recordCommandBuffer(
         image_idx,
     );
 
-    const swapchain_clear_values = core.engine.Renderer.Swapchain.Attachments.clearValues().values;
+    const final_clear_value =
+        vk.ClearValue{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } };
+
+    const attachment_clear_values = core.engine.Renderer.Attachments.clearValues().values;
+
+    var all_clear_values: [@typeInfo(core.engine.Renderer.Attachments.Tags).@"enum".field_names.len + 1]vk.ClearValue = undefined;
+    all_clear_values[0] = final_clear_value;
+    @memcpy(all_clear_values[1..], &attachment_clear_values);
 
     var render_pass_info = vk.RenderPassBeginInfo{
         .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -494,14 +507,14 @@ fn recordCommandBuffer(
                 .width = self.swapchain.extent.width,
             },
         },
-        .clearValueCount = swapchain_clear_values.len,
-        .pClearValues = &swapchain_clear_values,
+        .clearValueCount = all_clear_values.len,
+        .pClearValues = &all_clear_values,
     };
 
     // BAD move this into Swapchain or Renderer module
-    core.engine.Renderer.Swapchain.Attachments.transitionDepth(
+    core.engine.Renderer.Attachments.transitionDepth(
         frame.main_command_buffer,
-        self.swapchain.attachments.plexe.depth,
+        self.swapchain.attachments.plexe.get(.depth),
     );
 
     vk.CmdBeginRenderPass(
@@ -602,7 +615,7 @@ fn initImgui(self: *Self) void {
         .MinImageCount = MAX_FRAMES_IN_FLIGHT,
         .ImageCount = MAX_FRAMES_IN_FLIGHT,
         .MSAASamples = vk.SAMPLE_COUNT_1_BIT,
-        .Subpass = 1,
+        .Subpass = 2,
     };
 
     _ = c.imgui.impl_vulkan.Init(&init_info, self.renderer.main_render_pass);
