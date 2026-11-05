@@ -13,7 +13,6 @@ pub const CreateInfo = struct {
 };
 
 creates: std.StringHashMapUnmanaged(CreateInfo) = .empty,
-
 buffer_set_layouts: std.StringHashMapUnmanaged(BufferSetLayout) = undefined,
 
 const BufferSetLayout = struct {
@@ -78,15 +77,10 @@ pub fn createAndRegisterBufferSetLayout(
     checkVk(vk.CreateDescriptorSetLayout(device, &ci, alloc_cbs, &layout)) catch
         @panic("failed to create descriptor set layout for buffers");
 
-    const get_or_put = try self.buffer_set_layouts.getOrPut(a, set_name);
-    if (get_or_put.found_existing) std.debug.panic(
-        \\ SET for '{s}' already exists!
-    , .{set_name});
-
-    get_or_put.value_ptr.* = .{
+    try self.buffer_set_layouts.putNoClobber(a, set_name, .{
         .layout = layout,
         .infos = buffer_infos,
-    };
+    });
 }
 
 pub fn upload(

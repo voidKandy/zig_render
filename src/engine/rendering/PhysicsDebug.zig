@@ -125,7 +125,6 @@ pub fn initPipeline(
         GraphicsPipeline.init(.{
             .layouts = layouts,
             .common = common,
-            .subpass_idx = 2,
             .shader = shader,
         }, alloc_cbs);
 }
@@ -213,6 +212,7 @@ const GraphicsPipeline = struct {
             camera,
             vertex_buffer,
         },
+        .subpass_idx = 2,
     });
 
     pub fn init(
@@ -339,7 +339,7 @@ const GraphicsPipeline = struct {
             .pColorBlendState = &blend_ci,
             .layout = self.layout,
             .renderPass = pd.common.render_pass,
-            .subpass = pd.subpass_idx,
+            .subpass = @TypeOf(pd).OPTIONS.subpass_idx.?,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };

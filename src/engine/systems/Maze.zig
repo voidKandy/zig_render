@@ -413,6 +413,7 @@ const ComputePipeline = struct {
                 maze_texture,
                 maze_buffer,
             },
+            .subpass_idx = null,
             .push_constants = .{
                 PushConstants,
                 vk.SHADER_STAGE_COMPUTE_BIT,

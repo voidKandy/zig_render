@@ -1,7 +1,7 @@
 const std = @import("std");
 const core = @import("../../root.zig");
 const math_mod = core.lib.math;
-const log = std.log.scoped(.Mesh3DRendering);
+const log = std.log.scoped(.Geometry);
 const imgui = core.clibs.imgui;
 const mesh_mod = core.lib.mesh;
 const vki = core.bindings.vulkan_init;
@@ -40,13 +40,29 @@ ranges: std.AutoHashMapUnmanaged(u32, core.lib.mesh.RangeDesc) = .empty,
 instances: std.ArrayList(InstanceEntry) = .empty,
 pipelines: GraphicsPipelines = undefined,
 
-pub fn updateSets(
+pub fn updateBufferSets(
     device: vk.Device,
     allocated_resources: *core.resources.Manager.AllocatedData,
 ) void {
     allocated_resources.mapped_buffers.updateBufferSet(
         device,
         INSTANCE_SET_NAME,
+    );
+}
+pub fn updateAttachmentSets(
+    device: vk.Device,
+    swapchain: *const core.engine.Renderer.Swapchain,
+    allocated_resources: *core.resources.Manager.AllocatedData,
+) void {
+    allocated_resources.subpass_input_attachments.updateSet(
+        GraphicsPipelines.FinalDescription.OPTIONS.input_attachments.?,
+        swapchain,
+        device,
+    );
+    allocated_resources.subpass_input_attachments.updateSet(
+        GraphicsPipelines.SSAODescription.OPTIONS.input_attachments.?,
+        swapchain,
+        device,
     );
 }
 
@@ -77,6 +93,21 @@ pub fn registerSetsAndBuffers(
                 .stage_flags = vk.SHADER_STAGE_VERTEX_BIT,
             },
         },
+        device,
+        alloc_cbs,
+    );
+
+    try resources.subpass_input_attachments.createAndRegisterAttachmentSetLayout(
+        a,
+        GraphicsPipelines.FinalDescription.OPTIONS.input_attachments.?,
+        vk.SHADER_STAGE_FRAGMENT_BIT,
+        device,
+        alloc_cbs,
+    );
+    try resources.subpass_input_attachments.createAndRegisterAttachmentSetLayout(
+        a,
+        GraphicsPipelines.SSAODescription.OPTIONS.input_attachments.?,
+        vk.SHADER_STAGE_FRAGMENT_BIT,
         device,
         alloc_cbs,
     );
@@ -126,7 +157,9 @@ pub fn initPipeline(
     );
 
     const final_layouts = GraphicsPipelines.FinalDescription.Layouts.init(.{
-        .input_attachments = resources.subpass_input_attachments.final,
+        .input_attachments = resources.subpass_input_attachments.set_layouts.get(
+            GraphicsPipelines.FinalDescription.OPTIONS.input_attachments.?,
+        ).?,
     });
 
     const gbuf_shader = core.engine.shaders.createShaderModule(
@@ -161,7 +194,9 @@ pub fn initPipeline(
 
     const ssao_layouts = GraphicsPipelines.SSAODescription.Layouts.init(.{
         .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
-        .input_attachments = resources.subpass_input_attachments.ssao,
+        .input_attachments = resources.subpass_input_attachments.set_layouts.get(
+            GraphicsPipelines.SSAODescription.OPTIONS.input_attachments.?,
+        ).?,
     });
 
     self.pipelines =
@@ -169,19 +204,16 @@ pub fn initPipeline(
             .{
                 .layouts = gbuffer_layouts,
                 .common = common,
-                .subpass_idx = 0,
                 .shader = gbuf_shader,
             },
             .{
                 .layouts = final_layouts,
                 .common = common,
-                .subpass_idx = 2,
                 .shader = fin_shader,
             },
             .{
                 .layouts = ssao_layouts,
                 .common = common,
-                .subpass_idx = 1,
                 .shader = ssao_shader,
             },
             alloc_cbs,
@@ -203,12 +235,16 @@ pub fn recordCommands(
     });
 
     const final_sets = GraphicsPipelines.FinalDescription.Sets.init(.{
-        .input_attachments = allocated_resources.subpass_input_attachments.final,
+        .input_attachments = allocated_resources.subpass_input_attachments.sets.get(
+            GraphicsPipelines.FinalDescription.OPTIONS.input_attachments.?,
+        ).?,
     });
 
     const ssao_sets = GraphicsPipelines.SSAODescription.Sets.init(.{
         .camera = allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-        .input_attachments = allocated_resources.subpass_input_attachments.ssao,
+        .input_attachments = allocated_resources.subpass_input_attachments.sets.get(
+            GraphicsPipelines.SSAODescription.OPTIONS.input_attachments.?,
+        ).?,
     });
 
     self.pipelines.bindGbuffer(cmd);
@@ -419,7 +455,7 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
     }
 }
 
-const GraphicsPipelines = struct {
+pub const GraphicsPipelines = struct {
     pub const MeshInstanceConstants = struct {
         model_matrix: core.lib.math.Mat4,
         vertex_offset: usize,
@@ -428,6 +464,9 @@ const GraphicsPipelines = struct {
 
     pub const GBufferDescription = core.engine.pipelines.Description(.{
         .DescriptorSets = enum { camera, meshes, instances, samplers, textures },
+        .color_attachments = .initMany(&.{ .position, .normal, .albedo }),
+        .depth_attachment = .depth,
+        .subpass_idx = 0,
         .push_constants = .{
             MeshInstanceConstants, vk.SHADER_STAGE_VERTEX_BIT,
         },
@@ -435,6 +474,9 @@ const GraphicsPipelines = struct {
 
     pub const SSAODescription = core.engine.pipelines.Description(.{
         .DescriptorSets = enum { camera, input_attachments },
+        .input_attachments = .initMany(&.{.depth}),
+        .color_attachments = .initOne(.ssao),
+        .subpass_idx = 1,
     });
 
     const DitherParams = extern struct {
@@ -449,8 +491,15 @@ const GraphicsPipelines = struct {
         solid,
         line,
     };
+
     pub const FinalDescription = core.engine.pipelines.Description(.{
         .DescriptorSets = enum { input_attachments },
+        .input_attachments = .initMany(&.{ .depth, .position, .normal, .albedo, .ssao }),
+        // potentiall BAD
+        // we do not pass a color attachment here because it is the final attachment
+        // so manager will pass it later
+        // .color_attachments =
+        .subpass_idx = 2,
         .push_constants = .{
             DitherParams, vk.SHADER_STAGE_FRAGMENT_BIT,
         },
@@ -561,7 +610,7 @@ const GraphicsPipelines = struct {
             .minSampleShading = 1.0,
         };
 
-        const blend_attachment_state = [_]vk.PipelineColorBlendAttachmentState{
+        const blend_attachment_states: [if (@TypeOf(pd).OPTIONS.color_attachments) |c| c.count() else 1]vk.PipelineColorBlendAttachmentState = @splat(
             .{
                 .blendEnable = vk.FALSE,
                 .colorWriteMask = vk.COLOR_COMPONENT_R_BIT |
@@ -569,14 +618,14 @@ const GraphicsPipelines = struct {
                     vk.COLOR_COMPONENT_B_BIT |
                     vk.COLOR_COMPONENT_A_BIT,
             },
-        };
+        );
 
         const blend_ci = vk.PipelineColorBlendStateCreateInfo{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .logicOpEnable = vk.FALSE,
             .logicOp = vk.LOGIC_OP_COPY,
-            .attachmentCount = blend_attachment_state.len,
-            .pAttachments = &blend_attachment_state,
+            .attachmentCount = blend_attachment_states.len,
+            .pAttachments = &blend_attachment_states,
         };
 
         const dynamic_states = [_]vk.DynamicState{
@@ -617,7 +666,7 @@ const GraphicsPipelines = struct {
             .pColorBlendState = &blend_ci,
             .layout = self.final_layout,
             .renderPass = pd.common.render_pass,
-            .subpass = pd.subpass_idx,
+            .subpass = @TypeOf(pd).OPTIONS.subpass_idx.?,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };
@@ -724,9 +773,8 @@ const GraphicsPipelines = struct {
         // BAD
         // maybe attachment information should be added to PipelineDescription
         // that way this number can be derived
-        const amt_blend_attachments = 3;
-        const blend_attachment_states: [amt_blend_attachments]vk.PipelineColorBlendAttachmentState = @splat(
-            vk.PipelineColorBlendAttachmentState{
+        const blend_attachment_states: [if (@TypeOf(pd).OPTIONS.color_attachments) |c| c.count() else 1]vk.PipelineColorBlendAttachmentState = @splat(
+            .{
                 .blendEnable = vk.FALSE,
                 .colorWriteMask = vk.COLOR_COMPONENT_R_BIT |
                     vk.COLOR_COMPONENT_G_BIT |
@@ -781,7 +829,7 @@ const GraphicsPipelines = struct {
             .pColorBlendState = &blend_ci,
             .layout = self.gbuffer_layout,
             .renderPass = pd.common.render_pass,
-            .subpass = pd.subpass_idx,
+            .subpass = @TypeOf(pd).OPTIONS.subpass_idx.?,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };
@@ -873,7 +921,7 @@ const GraphicsPipelines = struct {
             .back = .{},
         };
 
-        const blend_attachment_state = [_]vk.PipelineColorBlendAttachmentState{
+        const blend_attachment_states: [if (@TypeOf(pd).OPTIONS.color_attachments) |c| c.count() else 1]vk.PipelineColorBlendAttachmentState = @splat(
             .{
                 .blendEnable = vk.FALSE,
                 .colorWriteMask = vk.COLOR_COMPONENT_R_BIT |
@@ -881,14 +929,14 @@ const GraphicsPipelines = struct {
                     vk.COLOR_COMPONENT_B_BIT |
                     vk.COLOR_COMPONENT_A_BIT,
             },
-        };
+        );
 
         const blend_ci = vk.PipelineColorBlendStateCreateInfo{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .logicOpEnable = vk.FALSE,
             .logicOp = vk.LOGIC_OP_COPY,
-            .attachmentCount = blend_attachment_state.len,
-            .pAttachments = &blend_attachment_state,
+            .attachmentCount = blend_attachment_states.len,
+            .pAttachments = &blend_attachment_states,
         };
 
         const dynamic_states = [_]vk.DynamicState{
@@ -929,7 +977,7 @@ const GraphicsPipelines = struct {
             .pColorBlendState = &blend_ci,
             .layout = self.ssao_layout,
             .renderPass = pd.common.render_pass,
-            .subpass = pd.subpass_idx,
+            .subpass = @TypeOf(pd).OPTIONS.subpass_idx.?,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };

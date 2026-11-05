@@ -213,6 +213,7 @@ pub fn recordComputeCommands(
 pub const ComputePipeline = struct {
     const Description = core.engine.pipelines.Description(.{
         .DescriptorSets = enum { texture_buffer },
+        .subpass_idx = null,
         .push_constants = .{
             PushConstants, vk.SHADER_STAGE_COMPUTE_BIT,
         },

@@ -320,14 +320,8 @@ pub fn allocateResources(self: *Self) void {
         core.resources.Materials.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
-    self.allocated_resources.subpass_input_attachments.updateDescriptorSet(
-        &self.swapchain,
-        self.logical_device.handle,
-    );
-
-    // definately BAD!
-    self.renderer.updateSets(self.logical_device.handle, &self.allocated_resources);
     // BAD??
+    self.renderer.updateSets(&self.swapchain, self.logical_device.handle, &self.allocated_resources);
     self.system_manager.plexe.Debug.?.bind(
         self.allocs.std,
         &self.resources,
@@ -443,7 +437,7 @@ fn drawFrame(self: *Self) void {
                 self.alloc_cbs,
             );
 
-            self.allocated_resources.subpass_input_attachments.updateDescriptorSet(&self.swapchain, self.logical_device.handle);
+            core.engine.Renderer.Geometry.updateAttachmentSets(self.logical_device.handle, &self.swapchain, &self.allocated_resources);
 
             self.system_manager.plexe.Debug.?.bindAttachments(
                 self.allocs.std,
@@ -452,7 +446,7 @@ fn drawFrame(self: *Self) void {
             ) catch
                 @panic("OOM");
             // BAD
-            self.renderer.meshes3D.?.pipelines.dither_params.resolution = core.lib.math.Vec2{
+            self.renderer.geometry.?.pipelines.dither_params.resolution = core.lib.math.Vec2{
                 .x = @as(f32, @floatFromInt(self.swapchain.extent.width)),
                 .y = @as(f32, @floatFromInt(self.swapchain.extent.height)),
             };

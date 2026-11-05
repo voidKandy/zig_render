@@ -132,7 +132,6 @@ pub fn initPipeline(
         GraphicsPipeline.init(.{
             .layouts = layouts,
             .common = common,
-            .subpass_idx = 2,
             .shader = shader,
         }, alloc_cbs);
 }
@@ -325,6 +324,7 @@ const GraphicsPipeline = struct {
             texture,
             instances,
         },
+        .subpass_idx = 2,
         .push_constants = .{
             PushConstants,
             vk.SHADER_STAGE_VERTEX_BIT,
@@ -472,7 +472,7 @@ const GraphicsPipeline = struct {
             .pDynamicState = &dynamic_state_ci,
             .layout = self.layout,
             .renderPass = pd.common.render_pass,
-            .subpass = pd.subpass_idx,
+            .subpass = @TypeOf(pd).OPTIONS.subpass_idx.?,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };
