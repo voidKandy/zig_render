@@ -437,7 +437,11 @@ fn drawFrame(self: *Self) void {
                 self.alloc_cbs,
             );
 
-            core.engine.Renderer.Geometry.updateAttachmentSets(self.logical_device.handle, &self.swapchain, &self.allocated_resources);
+            core.engine.Renderer.Geometry.updateAttachmentSets(
+                self.logical_device.handle,
+                &self.swapchain,
+                &self.allocated_resources,
+            );
 
             self.system_manager.plexe.Debug.?.bindAttachments(
                 self.allocs.std,

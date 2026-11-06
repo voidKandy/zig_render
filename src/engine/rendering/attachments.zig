@@ -54,7 +54,7 @@ pub fn CreateManager(comptime INFOS: []const ManagerInfo) type {
 
         pub fn isDepthAttachment(tag: Tags) bool {
             const info = INFOS[@backingInt(tag)];
-            return info.@"1".usage == vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+            return (info.@"1".usage & vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0;
         }
 
         /// because attachment 0 is always FINAL color attachment
@@ -155,9 +155,7 @@ pub fn CreateManager(comptime INFOS: []const ManagerInfo) type {
                 .arrayLayers = 1,
                 .samples = vk.SAMPLE_COUNT_1_BIT,
                 .tiling = vk.IMAGE_TILING_OPTIMAL,
-                .usage = usage | vk.IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
-                    // for the debug view
-                    vk.IMAGE_USAGE_SAMPLED_BIT,
+                .usage = usage | vk.IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
                 .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
                 .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
             };
@@ -177,12 +175,10 @@ pub fn CreateManager(comptime INFOS: []const ManagerInfo) type {
             )) catch @panic("failed to create image");
 
             const aspect_mask: u32 =
-                switch (usage) {
-                    vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT => vk.IMAGE_ASPECT_COLOR_BIT,
-                    vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT => vk.IMAGE_ASPECT_DEPTH_BIT,
-                    // | vk.IMAGE_ASPECT_STENCIL_BIT,
-                    else => @panic("UNEXPECTED USAGE FLAG"),
-                };
+                if (ci.usage & vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT != 0)
+                    vk.IMAGE_ASPECT_DEPTH_BIT
+                else
+                    vk.IMAGE_ASPECT_COLOR_BIT;
 
             const imvi_ci = vk.ImageViewCreateInfo{
                 .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,

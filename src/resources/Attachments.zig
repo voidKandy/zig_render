@@ -8,6 +8,7 @@ const log = std.log.scoped(.AttachmentResource);
 const SetKey = std.EnumSet(Attachments.Tags);
 
 set_layouts: std.AutoHashMapUnmanaged(SetKey, vk.DescriptorSetLayout) = .empty,
+swapchain_attachment_images_set_layout: vk.DescriptorSetLayout = undefined,
 
 pub fn deinit(
     self: *@This(),
@@ -17,6 +18,37 @@ pub fn deinit(
     var iter = self.set_layouts.valueIterator();
     while (iter.next()) |layout|
         vk.DestroyDescriptorSetLayout(device, layout.*, alloc_cbs);
+
+    vk.DestroyDescriptorSetLayout(device, self.swapchain_attachment_images_set_layout, alloc_cbs);
+}
+
+pub fn createAndRegisterAttachmentImagesSetLayout(
+    self: *@This(),
+    binding: u32,
+    device: vk.Device,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) std.mem.Allocator.Error!void {
+    const bindings = [_]vk.DescriptorSetLayoutBinding{.{
+        .binding = binding,
+        .descriptorType = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .descriptorCount = @intCast(Attachments.ALL_TAGS.len),
+        .stageFlags = vk.SHADER_STAGE_FRAGMENT_BIT,
+        .pImmutableSamplers = null,
+    }};
+    const layout_ci = vk.DescriptorSetLayoutCreateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .pBindings = &bindings,
+        .bindingCount = bindings.len,
+    };
+
+    checkVk(vk.CreateDescriptorSetLayout(
+        device,
+        &layout_ci,
+        alloc_cbs,
+        &self.swapchain_attachment_images_set_layout,
+    )) catch @panic("Failed to create descriptor set layout");
 }
 
 pub fn createAndRegisterAttachmentSetLayout(
@@ -83,16 +115,88 @@ pub fn upload(
         try sets.put(a, entry.key_ptr.*, set);
     }
 
+    var img_set: vk.DescriptorSet = undefined;
+    const img_ai = vk.DescriptorSetAllocateInfo{
+        .sType = vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .pNext = null,
+        .descriptorPool = pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &self.swapchain_attachment_images_set_layout,
+    };
+
+    checkVk(vk.AllocateDescriptorSets(device, &img_ai, &img_set)) catch |e|
+        std.debug.panic(
+            \\failed to allocate texture descriptor set: {s}
+        , .{@errorName(e)});
+
     return .{
         .sets = sets,
+        .swapchain_attachment_images_set = img_set,
     };
 }
 
 pub const AllocatedData = struct {
     sets: std.AutoHashMapUnmanaged(SetKey, vk.DescriptorSet),
+    swapchain_attachment_images_set: vk.DescriptorSet,
+
+    pub fn deinit(
+        self: *@This(),
+        a: std.mem.Allocator,
+    ) void {
+        self.sets.deinit(a);
+    }
+
+    pub fn updateAttachmentImagesSet(
+        self: *const @This(),
+        /// must match the binding passed when the swapchain images layout was created
+        binding: u32,
+        /// passed from materials rn
+        /// maybe eventually this should have its own sampler
+        sampler: vk.Sampler,
+        swapchain: *const core.engine.Renderer.Swapchain,
+        device: vk.Device,
+    ) void {
+        const texture_count = comptime Attachments.ALL_TAGS.len;
+
+        var image_infos: [texture_count]vk.DescriptorImageInfo = undefined;
+
+        for (Attachments.ALL_TAGS, &image_infos) |tag, *info| {
+            const img = swapchain.attachments.plexe.get(tag).image;
+            info.* = .{
+                .sampler = sampler,
+                .imageView = img.view,
+                .imageLayout = vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+        }
+
+        const texture_write = vk.WriteDescriptorSet{
+            .sType = vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = null,
+            .dstSet = self.swapchain_attachment_images_set,
+            .dstBinding = binding,
+            .dstArrayElement = 0,
+            .descriptorCount = @intCast(texture_count),
+            .descriptorType = vk.DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            .pImageInfo = &image_infos,
+            .pBufferInfo = null,
+            .pTexelBufferView = null,
+        };
+
+        const write_sets = [_]vk.WriteDescriptorSet{
+            texture_write,
+        };
+
+        vk.UpdateDescriptorSets(
+            device,
+            write_sets.len,
+            &write_sets,
+            0,
+            null,
+        );
+    }
 
     pub fn updateSet(
-        self: @This(),
+        self: *const @This(),
         key: SetKey,
         swapchain: *const core.engine.Renderer.Swapchain,
         device: vk.Device,

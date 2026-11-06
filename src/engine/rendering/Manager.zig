@@ -14,7 +14,7 @@ pub const Attachments = attachments.CreateManager(&[_]attachments.ManagerInfo{
     .{
         "depth",
         .{
-            .usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
             .description = .{
                 // depth format is calculated later so we don't pass it here
                 .samples = vk.SAMPLE_COUNT_1_BIT,
@@ -30,7 +30,7 @@ pub const Attachments = attachments.CreateManager(&[_]attachments.ManagerInfo{
     .{
         "position",
         .{
-            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
             .description = .{
                 .format = vk.FORMAT_R16G16B16A16_SFLOAT,
                 .samples = vk.SAMPLE_COUNT_1_BIT,
@@ -46,7 +46,7 @@ pub const Attachments = attachments.CreateManager(&[_]attachments.ManagerInfo{
     .{
         "normal",
         .{
-            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
             .description = .{
                 .format = vk.FORMAT_R16G16B16A16_SFLOAT,
                 .samples = vk.SAMPLE_COUNT_1_BIT,
@@ -62,7 +62,7 @@ pub const Attachments = attachments.CreateManager(&[_]attachments.ManagerInfo{
     .{
         "albedo",
         .{
-            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
             .description = .{
                 .format = vk.FORMAT_R8G8B8A8_UNORM,
                 .samples = vk.SAMPLE_COUNT_1_BIT,
@@ -78,7 +78,7 @@ pub const Attachments = attachments.CreateManager(&[_]attachments.ManagerInfo{
     .{
         "ssao",
         .{
-            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .usage = vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
             .description = .{
                 .format = vk.FORMAT_R8G8B8A8_UNORM,
                 .samples = vk.SAMPLE_COUNT_1_BIT,

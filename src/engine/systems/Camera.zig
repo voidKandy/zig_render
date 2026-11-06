@@ -78,7 +78,7 @@ pub fn registerSets(
                 .name = CAMERA_RESOURCE_NAME,
                 .descriptor_type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                 .binding = 0,
-                .stage_flags = vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_COMPUTE_BIT,
+                .stage_flags = vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_COMPUTE_BIT | vk.SHADER_STAGE_FRAGMENT_BIT,
             },
         },
         device,

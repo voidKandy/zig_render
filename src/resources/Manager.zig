@@ -136,6 +136,7 @@ pub const AllocatedData = struct {
         self.meshes2D.deinit(allocs);
         self.mapped_buffers.deinit(allocs);
         vk.DestroyDescriptorPool(device, self.descriptor_pool, alloc_cbs);
+        self.subpass_input_attachments.deinit(allocs.std);
     }
 };
 

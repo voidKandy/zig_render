@@ -54,13 +54,14 @@ pub fn updateAttachmentSets(
     swapchain: *const core.engine.Renderer.Swapchain,
     allocated_resources: *core.resources.Manager.AllocatedData,
 ) void {
-    allocated_resources.subpass_input_attachments.updateSet(
-        GraphicsPipelines.FinalDescription.OPTIONS.input_attachments.?,
+    allocated_resources.subpass_input_attachments.updateAttachmentImagesSet(
+        0,
+        allocated_resources.materials.sampler,
         swapchain,
         device,
     );
     allocated_resources.subpass_input_attachments.updateSet(
-        GraphicsPipelines.SSAODescription.OPTIONS.input_attachments.?,
+        GraphicsPipelines.FinalDescription.OPTIONS.input_attachments.?,
         swapchain,
         device,
     );
@@ -97,16 +98,14 @@ pub fn registerSetsAndBuffers(
         alloc_cbs,
     );
 
-    try resources.subpass_input_attachments.createAndRegisterAttachmentSetLayout(
-        a,
-        GraphicsPipelines.FinalDescription.OPTIONS.input_attachments.?,
-        vk.SHADER_STAGE_FRAGMENT_BIT,
+    try resources.subpass_input_attachments.createAndRegisterAttachmentImagesSetLayout(
+        0,
         device,
         alloc_cbs,
     );
     try resources.subpass_input_attachments.createAndRegisterAttachmentSetLayout(
         a,
-        GraphicsPipelines.SSAODescription.OPTIONS.input_attachments.?,
+        GraphicsPipelines.FinalDescription.OPTIONS.input_attachments.?,
         vk.SHADER_STAGE_FRAGMENT_BIT,
         device,
         alloc_cbs,
@@ -194,9 +193,8 @@ pub fn initPipeline(
 
     const ssao_layouts = GraphicsPipelines.SSAODescription.Layouts.init(.{
         .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
-        .input_attachments = resources.subpass_input_attachments.set_layouts.get(
-            GraphicsPipelines.SSAODescription.OPTIONS.input_attachments.?,
-        ).?,
+        .samplers = resources.materials.samplers_descriptor_set_layout,
+        .textures = resources.subpass_input_attachments.swapchain_attachment_images_set_layout,
     });
 
     self.pipelines =
@@ -242,9 +240,8 @@ pub fn recordCommands(
 
     const ssao_sets = GraphicsPipelines.SSAODescription.Sets.init(.{
         .camera = allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
-        .input_attachments = allocated_resources.subpass_input_attachments.sets.get(
-            GraphicsPipelines.SSAODescription.OPTIONS.input_attachments.?,
-        ).?,
+        .textures = allocated_resources.subpass_input_attachments.swapchain_attachment_images_set,
+        .samplers = allocated_resources.materials.sampler_set,
     });
 
     self.pipelines.bindGbuffer(cmd);
@@ -473,8 +470,7 @@ pub const GraphicsPipelines = struct {
     });
 
     pub const SSAODescription = core.engine.pipelines.Description(.{
-        .DescriptorSets = enum { camera, input_attachments },
-        .input_attachments = .initMany(&.{.depth}),
+        .DescriptorSets = enum { camera, samplers, textures },
         .color_attachments = .initOne(.ssao),
         .subpass_idx = 1,
     });
@@ -910,8 +906,8 @@ pub const GraphicsPipelines = struct {
 
         const depth_stencil_ci = vk.PipelineDepthStencilStateCreateInfo{
             .sType = vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-            .depthTestEnable = vk.TRUE,
-            .depthWriteEnable = vk.TRUE,
+            .depthTestEnable = vk.FALSE,
+            .depthWriteEnable = vk.FALSE,
             .depthCompareOp = vk.COMPARE_OP_LESS,
             .depthBoundsTestEnable = vk.FALSE,
             .stencilTestEnable = vk.FALSE,
