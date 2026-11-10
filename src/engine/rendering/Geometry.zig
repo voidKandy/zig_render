@@ -313,7 +313,7 @@ pub fn recordCommands(
             },
         );
 
-        log.warn(
+        log.debug(
             "DRAW mesh={} firstVertex={} indexCount={} vertexOffset={} firstInstance={} instanceCount={}",
             .{
                 i,

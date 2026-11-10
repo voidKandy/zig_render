@@ -127,6 +127,15 @@ FragOut fragmentMain(VertOut input)
         ).xyz
     );
 
+    float3 fragViewPos = mul(
+        Camera.view,
+        float4(fragPos, 1.0)
+    ).xyz;
+
+    float3 normalView = normalize(
+        mul((float3x3)Camera.view, normal)
+    );
+
     float depth = sampleMaterial(DEPTH_TEXTURE_INDEX, input.uv).r;
     if (depth >= 0.999999)
     {
@@ -142,20 +151,33 @@ FragOut fragmentMain(VertOut input)
     float c = cos(angle);
 
     // Construct TBN in world space.
+    // float3 randomVec = float3(1.0, 0.0, 0.0);
+
+    // if (abs(dot(randomVec, normal)) > 0.99)
+    //     randomVec = float3(0.0, 1.0, 0.0);
+
+    // float3 tangent = normalize(
+    //     randomVec - normal * dot(randomVec, normal)
+    // );
+
+    // float3 bitangent = cross(normal, tangent);
+    // float3x3 TBN       = float3x3(tangent, bitangent, normal);
     float3 randomVec = float3(1.0, 0.0, 0.0);
 
-    if (abs(dot(randomVec, normal)) > 0.99)
+    if (abs(dot(randomVec, normalView)) > 0.99)
         randomVec = float3(0.0, 1.0, 0.0);
 
     float3 tangent = normalize(
-        randomVec - normal * dot(randomVec, normal)
+        randomVec - normalView * dot(randomVec, normalView)
     );
 
-    float3 bitangent = cross(normal, tangent);
-    float3x3 TBN       = float3x3(tangent, bitangent, normal);  
+    float3 bitangent = cross(normalView, tangent);
+
+    float3x3 TBN = float3x3(tangent, bitangent, normalView);
 
     
     float occlusion = 0.0;
+    float validSamples = 0.0;
 
     for (uint i = 0; i < KERNEL_SIZE; ++i)
     {
@@ -177,6 +199,7 @@ FragOut fragmentMain(VertOut input)
 
         float3 sampleWorldPos =
             fragPos + sampleOffset * radius;
+            
 
         // World space -> view space.
         float3 sampleViewPos = mul(
@@ -189,6 +212,7 @@ FragOut fragmentMain(VertOut input)
             Camera.proj,
             float4(sampleViewPos, 1.0)
         );
+        
 
         if (sampleClip.w <= 0.0)
             continue;
@@ -202,7 +226,16 @@ FragOut fragmentMain(VertOut input)
             continue;
 
         // Actual scene depth at projected sample location.
-        float sampledDepth = LinearizeDepth(sampleUV);
+        // float sampledDepth = LinearizeDepth(sampleUV);
+        float4 sp = sampleMaterial(POSITIONS_TEXTURE_INDEX, sampleUV);
+        if (sp.w < 0.5) continue; // no geometry (assumes the attachment is cleared to 0)
+        // float sampledDepth = -dot(Camera.view[2], float4(sp.xyz, 1.0));
+        float3 sampledViewPos = mul(
+            Camera.view,
+            float4(sp.xyz, 1.0)
+        ).xyz;
+
+        float sampledDepth = -sampledViewPos.z;
 
         // Expected sample depth.
         float expectedDepth = -sampleViewPos.z;
@@ -222,10 +255,10 @@ FragOut fragmentMain(VertOut input)
             sampledDepth
         );
         occlusion += occluded * rangeCheck;
-      
+        validSamples += 1.0;
     }
 
-    occlusion = 1.0 - occlusion / float(KERNEL_SIZE);
+    occlusion = 1.0 - occlusion / validSamples;
 
     output.color = float4(
         occlusion,

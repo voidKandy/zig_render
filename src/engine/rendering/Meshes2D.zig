@@ -255,7 +255,7 @@ pub fn getInstances(self: *@This(), a: std.mem.Allocator, world: *core.engine.wo
     while (bucket_iter.next()) |entry| {
         const mesh_idx = entry.key_ptr.*;
         const bucket = entry.value_ptr.*;
-        log.warn(
+        log.debug(
             \\ bucket size: {d}
         , .{bucket.items.len});
 
