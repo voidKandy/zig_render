@@ -47,13 +47,14 @@ struct FragOut {
 struct DitherParams {
     float2 resolution;
     float gridSize;
-    float pixelSizeRatio;
     uint invertColor;
     uint grayscaleOnly;
+    uint _;
 };
 
-bool getValue(float brightness, float2 pos) {
-    float gridSize = Dither.gridSize;
+bool getValue(float brightness, float ao, float2 pos) {
+    float gridSize = clamp(Dither.gridSize * max(ao, 0.1), 1.0, 20.0);
+    // float gridSize = Dither.gridSize;
 
     if (brightness > 16.0 / 17.0) return false;
     if (brightness < 1.0 / 17.0) return true;
@@ -102,29 +103,26 @@ FragOut fragmentMain(float4 fragCoord : SV_Position) {
     float3 normal = normalize(gNormal.SubpassLoad().xyz);
     float3 position = gPosition.SubpassLoad().xyz;
     float3 albedo = gAlbedo.SubpassLoad().rgb;
+    float ao = gSSAO.SubpassLoad().r;
 
-    float3 lightDirection = normalize(float3(-1.0, -1.0, 2.0));
-    float3 lightColor = float3(1.0, 0.95, 0.85);
+  
 
-    float ambientStrength = 0.4;
-    float3 ambient = ambientStrength * albedo;
+    float aoStrength = 1.0;
 
-    float diffuseStrength = max(dot(normal, lightDirection), 0.0);
-    float3 diffuse = diffuseStrength * lightColor * albedo * 1.5;
+    float3 baseColor = albedo * lerp(
+        1.0,
+        ao,
+        aoStrength
+    );
 
-    // Final lighting result
-    // float3 baseColor = ambient;
-    float3 baseColor = ambient + diffuse;
-
-    // Dithering
     float luminance = dot(baseColor, float3(1.0, 1.0, 1.0));
 
     if (Dither.grayscaleOnly > 0) {
         baseColor = float3(luminance);
     }
-    bool Dithered = getValue(luminance, fragCoord.xy);
-    // bool Dithered = getValue(dot(albedo.rgb, float3(0.2126, 0.7152, 0.0722)), fragCoord.xy);
-    baseColor = Dithered ? float3(0.0) : baseColor;
+
+    bool dithered = false;
+    baseColor = dithered ? float3(0.0) : baseColor;
 
     if (Dither.invertColor > 0) {
         baseColor = 1.0 - baseColor;

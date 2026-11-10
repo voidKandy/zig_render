@@ -106,13 +106,13 @@ FragOut fragmentMain(VertOut input) {
 
     output.position = float4(input.worldPos, 1.0);
     output.normal = float4(normalize(input.normal), 1.0);
-    output.albedo = sampleAlbedo(input.materialIdx, input.uv) *  input.vertexColor;
+    output.albedo = sampleMaterial(input.materialIdx, input.uv) *  input.vertexColor;
 
     return output;
 }
 
 
-float4 sampleAlbedo(uint materialIndex, float2 uv) {
+float4 sampleMaterial(uint materialIndex, float2 uv) {
     return Textures[NonUniformResourceIndex(materialIndex)].Sample(
        Sampler,
        uv

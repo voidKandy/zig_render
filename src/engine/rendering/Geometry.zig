@@ -434,13 +434,6 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
         25.0,
     );
 
-    _ = imgui.SliderFloat(
-        "Pixel Size Ratio",
-        &self.pipelines.dither_params.pixel_size_ratio,
-        0.5,
-        25.0,
-    );
-
     var grayscale = self.pipelines.dither_params.grayscale_only != 0;
     if (imgui.Checkbox("Grayscale", &grayscale)) {
         self.pipelines.dither_params.grayscale_only = @intFromBool(grayscale);
@@ -478,9 +471,9 @@ pub const GraphicsPipelines = struct {
     const DitherParams = extern struct {
         resolution: core.lib.math.Vec2,
         grid_size: f32,
-        pixel_size_ratio: f32,
         invert_color: u32,
         grayscale_only: u32,
+        _: u32 = 0,
     };
 
     pub const FinalPipelineOptions = enum {
@@ -517,8 +510,7 @@ pub const GraphicsPipelines = struct {
             .x = 1920,
             .y = 1080,
         },
-        .grid_size = 5.0,
-        .pixel_size_ratio = 5.0,
+        .grid_size = 1.0,
         .invert_color = 0,
         .grayscale_only = 0,
     },

@@ -183,6 +183,7 @@ fn createEntities(
             resources,
             .{
                 .mesh = "viking_room.obj",
+                // .material = "debug.gray",
                 .material = "globals.viking_room",
             },
         ));
@@ -230,45 +231,57 @@ fn createEntities(
         var shape_def = core.clibs.box3d.DefaultShapeDef();
         _ = core.clibs.box3d.CreateHullShape(body_id, &shape_def, &box.base);
     }
-    var ent = world.entities.register(null) catch @panic("OOM");
-    // ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
-    //     resources,
-    //     .{
-    //         .mesh = "large_flat_box",
-    //         .material = "debug.gray",
-    //     },
-    // ));
+    // {
+    //     var ent = world.entities.register(null) catch @panic("OOM");
+    //     ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
+    //         resources,
+    //         .{
+    //             .mesh = "monkey.obj",
+    //             .material = "debug.gray",
+    //         },
+    //     ));
 
-    var tx = core.engine.world.WorldTransform{};
-    tx.position = .{
-        .x = 2.0,
-        .y = 1.5,
-        .z = -1.5,
-    };
-    ent.addComponent(.world_transform, tx);
+    //     var tx = core.engine.world.WorldTransform{};
+    //     tx.position = .{
+    //         .x = 0.0,
+    //         .y = 0.0,
+    //         .z = 0.0,
+    //     };
+    //     ent.addComponent(.world_transform, tx);
+    // }
 
-    var body_def = core.clibs.box3d.DefaultBodyDef();
-    body_def.type = core.clibs.box3d.BODY_TYPE_STATIC;
-    body_def.position = .{
-        .x = 2.0,
-        .y = 1.5,
-        .z = -1.5,
-    };
-    body_def.userData = @ptrCast(@constCast(ent.identifier));
+    {
+        var ent = world.entities.register(null) catch @panic("OOM");
 
-    const body_id = core.clibs.box3d.CreateBody(physics.world, &body_def);
+        var tx = core.engine.world.WorldTransform{};
+        tx.position = .{
+            .x = 2.0,
+            .y = 1.5,
+            .z = -1.5,
+        };
+        ent.addComponent(.world_transform, tx);
 
-    ent.addComponent(.rigid_body, core.engine.world.RigidBody{
-        .id = body_id,
-    });
+        var body_def = core.clibs.box3d.DefaultBodyDef();
+        body_def.type = core.clibs.box3d.BODY_TYPE_STATIC;
+        body_def.position = .{
+            .x = 2.0,
+            .y = 1.5,
+            .z = -1.5,
+        };
+        body_def.userData = @ptrCast(@constCast(ent.identifier));
 
-    const mesh = physics.meshes.get("large_flat_box").?;
-    const scale = core.bindings.box3d_usage.fromCoreVec3(core.lib.math.Vec3.ONE);
-    var shape_def = core.clibs.box3d.DefaultShapeDef();
-    shape_def.density = 0.0;
-    _ = core.clibs.box3d.CreateMeshShape(body_id, &shape_def, mesh, scale);
+        const body_id = core.clibs.box3d.CreateBody(physics.world, &body_def);
 
-    // for (self.meshes2D.ranges.items) |ranges| {
+        ent.addComponent(.rigid_body, core.engine.world.RigidBody{
+            .id = body_id,
+        });
+
+        const mesh = physics.meshes.get("large_flat_box").?;
+        const scale = core.bindings.box3d_usage.fromCoreVec3(core.lib.math.Vec3.ONE);
+        var shape_def = core.clibs.box3d.DefaultShapeDef();
+        shape_def.density = 0.0;
+        _ = core.clibs.box3d.CreateMeshShape(body_id, &shape_def, mesh, scale);
+    } // for (self.meshes2D.ranges.items) |ranges| {
     //     var ent = world.entities.register(null) catch @panic("OOM");
     //     ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
     //         .ranges = ranges,
