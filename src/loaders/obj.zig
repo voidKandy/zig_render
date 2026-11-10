@@ -136,6 +136,9 @@ const FaceParsingState = enum {
 };
 
 pub fn parseFile(a: std.mem.Allocator, io: std.Io, filepath: []const u8) !ObjFile {
+    log.debug(
+        \\ parsing: {s}
+    , .{filepath});
     const file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
     defer file.close(io);
 

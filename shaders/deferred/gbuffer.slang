@@ -20,27 +20,29 @@ struct VertexData {
     float2 _;
 }
 
-struct InstanceMeshOffsets {
-  uint vertex;
-  uint index;
-  
+struct MeshInstanceConstants {
+  uint vertex_offset;
 }
 
 
 [[vk::push_constant]]
-ConstantBuffer<InstanceMeshOffsets> InstanceOffsets;
+ConstantBuffer<MeshInstanceConstants> InstanceConstants;
 
 [[vk::binding(0,0)]]
 ConstantBuffer<CameraUniform> Camera;
 
 [[vk::binding(0, 1)]]
-StructuredBuffer<int> Indices;
+StructuredBuffer<uint> VertexIndices;
 
 [[vk::binding(1, 1)]]
 StructuredBuffer<VertexData> Vertices;
 
 [[vk::binding(0, 2)]]
-StructuredBuffer<Instance> InstanceBuf;
+StructuredBuffer<uint> InstanceIndices;
+
+[[vk::binding(1, 2)]]
+StructuredBuffer<Instance> Instances;
+
 
 [[vk::binding(0, 3)]]
 SamplerState Sampler;
@@ -65,15 +67,15 @@ struct FragOut {
 
 [shader("vertex")]
 VertOut vertexMain(
-    uint vertexID : SV_VertexID,
-    uint instanceID : SV_InstanceID
+    uint vertexID : SV_VulkanVertexID,
+    uint instanceID : SV_VulkanInstanceID
 ) {
+
     VertOut output;
-
-    Instance instance = InstanceBuf[instanceID];
-    int index = Indices[vertexID];
-
-    uint vertexDataIdx = uint(index) + InstanceOffsets.vertex;
+    uint instanceIndex = InstanceIndices[instanceID];
+    Instance instance = Instances[instanceIndex];
+    uint index = VertexIndices[vertexID];
+    uint vertexDataIdx = index + InstanceConstants.vertex_offset;
 
     VertexData vtx = Vertices[vertexDataIdx];
 

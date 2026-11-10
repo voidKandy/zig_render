@@ -28,6 +28,7 @@ const InstanceEntry = struct {
     world_transform: *core.engine.world.WorldTransform,
 };
 
+pub const INSTANCE_INDICES_BUFFER_NAME = "instanceIndices3D";
 pub const INSTANCES_BUFFER_NAME = "instances3D";
 pub const INSTANCE_SET_NAME = "instance3D_set";
 const INSTANCE_SIGNATURE = core.engine.world.GameWorld.Signature.initMany(&.{
@@ -38,6 +39,11 @@ pub const MAX_INSTANCES = 64;
 
 ranges: std.AutoHashMapUnmanaged(u32, core.lib.mesh.RangeDesc) = .empty,
 instances: std.ArrayList(InstanceEntry) = .empty,
+instance_indices: std.ArrayListUnmanaged(u32) = .empty,
+/// Key: mesh index
+/// Value: index in `instances` array
+// mesh_instances: std.AutoHashMapUnmanaged(u32, std.ArrayListUnmanaged(u32)) = .empty,
+// mesh_ranges: []core.lib.mesh.RangeDesc = undefined,
 pipelines: GraphicsPipelines = undefined,
 
 pub fn updateBufferSets(
@@ -49,6 +55,7 @@ pub fn updateBufferSets(
         INSTANCE_SET_NAME,
     );
 }
+
 pub fn updateAttachmentSets(
     device: vk.Device,
     swapchain: *const core.engine.Renderer.Swapchain,
@@ -83,14 +90,30 @@ pub fn registerSetsAndBuffers(
             .flags = 0,
         },
     );
+    try resources.mapped_buffers.creates.put(
+        a,
+        INSTANCE_INDICES_BUFFER_NAME,
+        .{
+            .alloc_size = @sizeOf(u32) * MAX_INSTANCES,
+            .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .flags = 0,
+        },
+    );
     try resources.mapped_buffers.createAndRegisterBufferSetLayout(
         a,
         INSTANCE_SET_NAME,
         &[_]core.resources.MappedBuffers.CreateBufferInfo{
             .{
-                .name = INSTANCES_BUFFER_NAME,
+                .name = INSTANCE_INDICES_BUFFER_NAME,
                 .descriptor_type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .binding = 0,
+                .stage_flags = vk.SHADER_STAGE_VERTEX_BIT,
+            },
+            .{
+                .name = INSTANCES_BUFFER_NAME,
+                .descriptor_type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .binding = 1,
                 .stage_flags = vk.SHADER_STAGE_VERTEX_BIT,
             },
         },
@@ -120,14 +143,20 @@ pub fn deinit(
 ) void {
     self.ranges.deinit(allocs.std);
     self.instances.deinit(allocs.std);
+    self.instance_indices.deinit(allocs.std);
     self.pipelines.deinit(device, alloc_cbs);
 }
 
-pub fn syncResources(self: *const @This(), alloc_resources: *const core.resources.Manager.AllocatedData) void {
-    const aligned: [*]Instance = @ptrCast(
-        @alignCast(alloc_resources.mapped_buffers.buffers.get(INSTANCES_BUFFER_NAME).?.mapped),
-    );
-    for (self.instances.items, 0..) |entry, i|
+pub fn syncResources(
+    self: *const @This(),
+    alloc_resources: *const core.resources.Manager.AllocatedData,
+) void {
+    const instance_buffer = alloc_resources.mapped_buffers.buffers.get(INSTANCES_BUFFER_NAME).?;
+    const index_buffer = alloc_resources.mapped_buffers.buffers.get(INSTANCE_INDICES_BUFFER_NAME).?;
+
+    const aligned: [*]Instance = @ptrCast(@alignCast(instance_buffer.mapped));
+
+    for (self.instances.items, 0..) |entry, i| {
         aligned[i] = Instance{
             .mesh_idx = entry.mesh_idx.*,
             .material_idx = entry.material_idx.*,
@@ -136,6 +165,14 @@ pub fn syncResources(self: *const @This(), alloc_resources: *const core.resource
             .scale = entry.world_transform.scale,
             .inverse_model_matrix = entry.world_transform.inverseModelMatrix(),
         };
+    }
+
+    const indices: [*]u32 = @ptrCast(@alignCast(index_buffer.mapped));
+
+    @memcpy(
+        indices[0..self.instance_indices.items.len],
+        self.instance_indices.items,
+    );
 }
 
 pub fn initPipeline(
@@ -231,6 +268,9 @@ pub fn recordCommands(
         .instances = allocated_resources.mapped_buffers.buffer_sets.get(INSTANCE_SET_NAME).?.set,
         .textures = allocated_resources.materials.all_textures_descriptor_set,
     });
+    log.debug(
+        \\ instance_set={*}
+    , .{gbuffer_sets.get(.instances).?});
 
     const final_sets = GraphicsPipelines.FinalDescription.Sets.init(.{
         .input_attachments = allocated_resources.subpass_input_attachments.sets.get(
@@ -257,8 +297,10 @@ pub fn recordCommands(
     );
 
     var i: u32 = 0;
-    for (resources.meshes3D.ranges.items) |m3d_rg| {
+    for (resources.meshes3D.ranges.items, 0..) |m3d_rg, mesh_idx| {
         defer i += 1;
+
+        const instances_range = self.ranges.get(@intCast(mesh_idx)) orelse continue;
 
         vk.CmdPushConstants(
             cmd,
@@ -268,10 +310,20 @@ pub fn recordCommands(
             @sizeOf(GraphicsPipelines.MeshInstanceConstants),
             &.{
                 .vertex_offset = m3d_rg.vertex.offset,
-                .index_offset = m3d_rg.index.offset,
             },
         );
-        const instances_range = self.ranges.get(i) orelse continue;
+
+        log.warn(
+            "DRAW mesh={} firstVertex={} indexCount={} vertexOffset={} firstInstance={} instanceCount={}",
+            .{
+                i,
+                m3d_rg.index.offset,
+                m3d_rg.index.range,
+                m3d_rg.vertex.offset,
+                instances_range.offset,
+                instances_range.range,
+            },
+        );
 
         vk.CmdDraw(
             cmd,
@@ -320,13 +372,18 @@ pub fn recordCommands(
     vk.CmdDraw(cmd, 3, 1, 0, 0);
 }
 
-pub fn getInstances(self: *@This(), a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.mem.Allocator.Error!void {
-    var buckets = std.AutoHashMap(usize, std.ArrayList(InstanceEntry)).init(a);
+/// get/update instances
+///
+/// Ensures instances index array is grouped continously per mesh
+pub fn getInstances(
+    self: *@This(),
+    a: std.mem.Allocator,
+    world: *core.engine.world.GameWorld,
+) std.mem.Allocator.Error!void {
+    var buckets = std.AutoHashMap(u32, std.ArrayList(u32)).init(a);
     defer {
         var it = buckets.valueIterator();
-        while (it.next()) |list| {
-            list.deinit(a);
-        }
+        while (it.next()) |list| list.deinit(a);
         buckets.deinit();
     }
 
@@ -337,62 +394,50 @@ pub fn getInstances(self: *@This(), a: std.mem.Allocator, world: *core.engine.wo
         },
     });
 
+    var instances: std.ArrayListUnmanaged(InstanceEntry) = .empty;
+
     while (iter.next()) |*entity| {
-        const mesh =
+        const mesh: *core.engine.world.MaterialMesh3D =
             (entity.accessComponentPtr(.mesh3D) catch @panic("NO MESH?")).mesh3D;
         const transform: *core.engine.world.WorldTransform =
             (entity.accessComponentPtr(.world_transform) catch @panic("NO TRANSFORM?")).world_transform;
 
         const result = try buckets.getOrPut(mesh.mesh_index);
-
         if (!result.found_existing) {
-            result.value_ptr.* = try std.ArrayList(InstanceEntry).initCapacity(a, 16);
+            result.value_ptr.* = try .initCapacity(a, 16);
         }
 
-        log.debug(
-            \\creating instance: entity={} mesh={} material={} position=({d:.3}, {d:.3}, {d:.3})
-        ,
-            .{
-                entity.identifier.*,
-                mesh.mesh_index,
-                mesh.material_index,
-                transform.position.x,
-                transform.position.y,
-                transform.position.z,
-            },
-        );
-        try result.value_ptr.append(a, .{
+        const instance_index: u32 = @intCast(instances.items.len);
+
+        try instances.append(a, .{
             .entity_id = entity.identifier.*,
             .world_transform = transform,
             .mesh_idx = &mesh.mesh_index,
             .material_idx = &mesh.material_index,
         });
+
+        try result.value_ptr.append(a, instance_index);
     }
 
-    var instances = try std.ArrayListUnmanaged(InstanceEntry).initCapacity(a, 128);
-    var ranges = std.AutoHashMapUnmanaged(u32, core.lib.mesh.RangeDesc).empty;
+    var instance_indices: std.ArrayListUnmanaged(u32) = .empty;
+    var ranges: std.AutoHashMapUnmanaged(u32, core.lib.mesh.RangeDesc) = .empty;
 
     var bucket_iter = buckets.iterator();
-
     while (bucket_iter.next()) |entry| {
-        const mesh_idx = entry.key_ptr.*;
         const bucket = entry.value_ptr.*;
-        log.warn(
-            \\ bucket size: {d}
-        , .{bucket.items.len});
+        const offset = instance_indices.items.len;
 
-        const offset = instances.items.len;
+        try instance_indices.appendSlice(a, bucket.items);
 
-        try instances.appendSlice(a, bucket.items);
-
-        try ranges.put(a, @intCast(mesh_idx), .{
+        try ranges.put(a, entry.key_ptr.*, .{
             .offset = @intCast(offset),
             .range = @intCast(bucket.items.len),
         });
     }
 
-    self.ranges = ranges;
     self.instances = instances;
+    self.instance_indices = instance_indices;
+    self.ranges = ranges;
 }
 
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
@@ -402,7 +447,6 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
     defer imgui.End();
 
     var iter = self.ranges.iterator();
-
     while (iter.next()) |entry| {
         const name = ctx.resources.meshes3D.mesh_names_reverse_lookup.get(@intCast(entry.key_ptr.*)) orelse std.debug.panic(
             \\ tried to get an invalid mesh index: {d}
@@ -413,43 +457,51 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
         const start = entry.value_ptr.*.offset;
         const end = start + entry.value_ptr.range;
 
-        for (self.instances.items[start..end]) |inst| {
+        for (self.instances.items[start..end]) |*inst| {
             var buf: [64]u8 = undefined;
             const zbuf = std.fmt.bufPrintSentinel(&buf, "instance: {d}", .{inst.entity_id}, 0) catch @panic("Buffer couldnt print??");
             if (imgui.TreeNode(zbuf.ptr)) {
                 defer imgui.TreePop();
                 const mtl_name = ctx.resources.materials.material_names_reverse_lookup.get(inst.material_idx.*) orelse @panic("No material??");
                 imgui.Text("Material: %s, index: %d", mtl_name.ptr, inst.material_idx.*);
+
+                // const mat_name = self.materials.material_names_reverse_lookup.get(@as(usize, @intCast(mat_idx))).?;
+                // imgui.Text("Material Name: %s", mat_name.ptr);
+
+                var mat_idx: c_int = @intCast(inst.material_idx.*);
+                const amt_mats = ctx.resources.materials.material_names_reverse_lookup.count();
+                if (imgui.InputInt("Material Index", &mat_idx)) {
+                    if (mat_idx >= amt_mats) {
+                        mat_idx = 0;
+                    } else if (mat_idx < 0) {
+                        mat_idx = @intCast(amt_mats - 1);
+                    }
+
+                    inst.material_idx.* = @as(u32, @intCast(mat_idx));
+                }
+
+                const mesh_name = ctx.resources.meshes3D.mesh_names_reverse_lookup.get(inst.mesh_idx.*) orelse @panic("No Mesh??");
+                const amt_meshes = ctx.resources.meshes3D.mesh_indices.count();
+                imgui.Text("Mesh: %s, index: %d", mesh_name.ptr, inst.mesh_idx.*);
+                var mesh_idx: c_int = @intCast(inst.mesh_idx.*);
+                if (imgui.InputInt("Mesh Index", &mesh_idx)) {
+                    if (mesh_idx >= amt_meshes) {
+                        mesh_idx = 0;
+                    } else if (mesh_idx < 0) {
+                        mesh_idx = @intCast(amt_meshes - 1);
+                    }
+                    inst.mesh_idx.* = @as(u32, @intCast(mesh_idx));
+                }
             }
         }
     }
 
     imgui.Separator();
-    imgui.Text("Dithering");
-
-    _ = imgui.SliderFloat(
-        "Grid Size",
-        &self.pipelines.dither_params.grid_size,
-        1.0,
-        25.0,
-    );
-
-    var grayscale = self.pipelines.dither_params.grayscale_only != 0;
-    if (imgui.Checkbox("Grayscale", &grayscale)) {
-        self.pipelines.dither_params.grayscale_only = @intFromBool(grayscale);
-    }
-
-    var invert = self.pipelines.dither_params.invert_color != 0;
-    if (imgui.Checkbox("Invert Color", &invert)) {
-        self.pipelines.dither_params.invert_color = @intFromBool(invert);
-    }
 }
 
 pub const GraphicsPipelines = struct {
-    pub const MeshInstanceConstants = struct {
-        model_matrix: core.lib.math.Mat4,
+    pub const MeshInstanceConstants = extern struct {
         vertex_offset: usize,
-        index_offset: usize,
     };
 
     pub const GBufferDescription = core.engine.pipelines.Description(.{
@@ -484,10 +536,9 @@ pub const GraphicsPipelines = struct {
     pub const FinalDescription = core.engine.pipelines.Description(.{
         .DescriptorSets = enum { input_attachments },
         .input_attachments = .initMany(&.{ .depth, .position, .normal, .albedo, .ssao }),
-        // potentiall BAD
         // we do not pass a color attachment here because it is the final attachment
         // so manager will pass it later
-        // .color_attachments =
+        .color_attachments = null,
         .subpass_idx = 2,
         .push_constants = .{
             DitherParams, vk.SHADER_STAGE_FRAGMENT_BIT,

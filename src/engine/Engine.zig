@@ -159,6 +159,10 @@ pub fn run(self: *Self) void {
 
         self.physics.update(&self.world);
 
+        // BAD
+        // uncomment to be able to change instances
+        self.renderer.getInstances(self.allocs.std, &self.world) catch
+            @panic("OOM");
         self.renderer.syncResources(&self.allocated_resources);
 
         self.system_manager.syncResources(self.allocated_resources);

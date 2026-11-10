@@ -80,6 +80,7 @@ pub fn main(init: std.process.Init) void {
     defer a.free(meshes_objects);
 
     var k: usize = 0;
+
     for (all_objects) |files| {
         for (files, 0..) |*obj, i| {
             meshes_objects[i + k] = .{
@@ -90,9 +91,9 @@ pub fn main(init: std.process.Init) void {
         }
         k += files.len;
     }
-
     for (user_create_meshes) |m| {
         meshes_objects[k] = m;
+        k += 1;
     }
 
     var engine = core.engine.Engine.init(
@@ -183,8 +184,8 @@ fn createEntities(
             resources,
             .{
                 .mesh = "viking_room.obj",
-                // .material = "debug.gray",
-                .material = "globals.viking_room",
+                .material = "debug.gray",
+                // .material = "globals.viking_room",
             },
         ));
 
@@ -231,24 +232,24 @@ fn createEntities(
         var shape_def = core.clibs.box3d.DefaultShapeDef();
         _ = core.clibs.box3d.CreateHullShape(body_id, &shape_def, &box.base);
     }
-    // {
-    //     var ent = world.entities.register(null) catch @panic("OOM");
-    //     ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
-    //         resources,
-    //         .{
-    //             .mesh = "monkey.obj",
-    //             .material = "debug.gray",
-    //         },
-    //     ));
+    {
+        var ent = world.entities.register(null) catch @panic("OOM");
+        ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
+            resources,
+            .{
+                .mesh = "suzanne.obj",
+                .material = "debug.blue",
+            },
+        ));
 
-    //     var tx = core.engine.world.WorldTransform{};
-    //     tx.position = .{
-    //         .x = 0.0,
-    //         .y = 0.0,
-    //         .z = 0.0,
-    //     };
-    //     ent.addComponent(.world_transform, tx);
-    // }
+        var tx = core.engine.world.WorldTransform{};
+        tx.position = .{
+            .x = 0.0,
+            .y = 100.0,
+            .z = 0.0,
+        };
+        ent.addComponent(.world_transform, tx);
+    }
 
     {
         var ent = world.entities.register(null) catch @panic("OOM");

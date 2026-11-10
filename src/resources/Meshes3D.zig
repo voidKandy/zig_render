@@ -146,18 +146,9 @@ pub const Aabb = struct {
 pub const Bindings = enum {
     index,
     vertex,
-    // position = 1,
-    // uv = 2,
-    // normal = 3,
-    // albedo = 4,
 };
 
 pub const AllocatedData = struct {
-    // positions_buffer: vma_usage.AllocatedBuffer,
-    // uvs_buffer: vma_usage.AllocatedBuffer,
-    // normals_buffer: vma_usage.AllocatedBuffer,
-    // albedo_buffer: vma_usage.AllocatedBuffer,
-
     vertex_buffer: vma_usage.AllocatedBuffer,
     index_buffer: vma_usage.AllocatedBuffer,
     descriptor_set: vk.DescriptorSet,
@@ -166,10 +157,6 @@ pub const AllocatedData = struct {
         self: @This(),
         allocs: core.engine.Allocators,
     ) void {
-        // self.positions_buffer.deinit(allocs.vma);
-        // self.uvs_buffer.deinit(allocs.vma);
-        // self.normals_buffer.deinit(allocs.vma);
-        // self.albedo_buffer.deinit(allocs.vma);
         self.index_buffer.deinit(allocs.vma);
         self.vertex_buffer.deinit(allocs.vma);
     }
@@ -257,10 +244,6 @@ pub fn appendMesh(
     name: []const u8,
     mesh: core.lib.mesh.Mesh3D,
 ) std.mem.Allocator.Error!void {
-    defer log.debug(
-        \\ added mesh: '{s}'
-    , .{name});
-
     const verts = mesh.vertices;
     const bounds = Aabb.fromVertices(verts);
 
@@ -280,6 +263,18 @@ pub fn appendMesh(
             .range = @as(u32, @intCast(mesh.indices.len)),
         },
     };
+    var min: u32 = std.math.maxInt(u32);
+    var max: u32 = 0;
+
+    for (mesh.indices) |index| {
+        min = @min(min, index);
+        max = @max(max, index);
+    }
+
+    log.debug(
+        "mesh '{s}'={} vertex_count={} index_count={} index_min={} index_max={}",
+        .{ name, idx, verts.len, mesh.indices.len, min, max },
+    );
 
     try self.vertices.appendSlice(a, verts);
     try self.indices.appendSlice(a, mesh.indices);
@@ -317,34 +312,6 @@ pub fn createDescriptorSetLayout(
         @panic("failed to create descriptor set layout");
 }
 
-const VertexData = struct {
-    positions: []core.lib.math.Vec4,
-    uvs: []core.lib.math.Vec2,
-    normals: []core.lib.math.Vec4,
-    albedos: []core.lib.math.Vec4,
-};
-
-fn prepareVertexData(
-    self: *const @This(),
-    a: std.mem.Allocator,
-) std.mem.Allocator.Error!VertexData {
-    var dat = VertexData{
-        .positions = try a.alloc(core.lib.math.Vec4, self.vertices.items.len),
-        .uvs = try a.alloc(core.lib.math.Vec2, self.vertices.items.len),
-        .normals = try a.alloc(core.lib.math.Vec4, self.vertices.items.len),
-        .albedos = try a.alloc(core.lib.math.Vec4, self.vertices.items.len),
-    };
-
-    for (self.vertices.items, 0..) |vertex, i| {
-        dat.positions[i] = vertex.position;
-        dat.uvs[i] = vertex.uv;
-        dat.normals[i] = vertex.normal;
-        dat.albedos[i] = vertex.color;
-    }
-
-    return dat;
-}
-
 pub fn upload(
     self: *@This(),
     allocs: core.engine.Allocators,
@@ -354,14 +321,6 @@ pub fn upload(
 ) AllocatedData {
     var vertex_buffer: vma_usage.AllocatedBuffer = undefined;
     var index_buffer: vma_usage.AllocatedBuffer = undefined;
-
-    const vrt_data = self.prepareVertexData(allocs.std) catch @panic("failed to prepare vertex data");
-    defer {
-        allocs.std.free(vrt_data.positions);
-        allocs.std.free(vrt_data.uvs);
-        allocs.std.free(vrt_data.normals);
-        allocs.std.free(vrt_data.albedos);
-    }
 
     const vert_alloc_size, const idx_alloc_size = .{
         self.vertices.items.len * @sizeOf(core.lib.mesh.Vertex3D),
@@ -419,7 +378,7 @@ pub fn upload(
     );
     index_buffer = vma_usage.AllocatedBuffer.create(
         allocs.vma,
-        vert_alloc_size,
+        idx_alloc_size,
         vk.BUFFER_USAGE_INDEX_BUFFER_BIT | gpu_usage,
         core.clibs.vma.MEMORY_USAGE_GPU_ONLY,
         0,

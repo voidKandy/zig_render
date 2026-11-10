@@ -70,7 +70,19 @@ pub fn init(a: std.mem.Allocator, ci: CreateInfo) !@This() {
             switch (cm3d.create_mesh) {
                 .obj => |obj| {
                     const mesh = core.lib.mesh.Mesh3D.fromObjFile(a, obj) catch @panic("failed to load mesh");
+
                     defer mesh.deinit(a);
+
+                    var min_index: u32 = std.math.maxInt(u32);
+                    var max_index: u32 = 0;
+
+                    for (mesh.indices) |index| {
+                        min_index = @min(min_index, index);
+                        max_index = @max(max_index, index);
+
+                        std.debug.assert(index < mesh.vertices.len);
+                    }
+
                     try meshes3D.appendMesh(a, obj.name, mesh);
                 },
                 .info => |info| {

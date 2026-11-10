@@ -175,19 +175,24 @@ pub const AllocatedData = struct {
         const set = self.buffer_sets.get(set_name) orelse std.debug.panic(
             \\ tried to update buffer set '{s}' but it does not exist!
         , .{set_name});
+        log.debug("UPDATE BUFFER SET: {s} set={*}\n", .{
+            set_name,
+            set.set,
+        });
 
         std.debug.assert(set.infos.len <= 32);
         var writes: [32]vk.WriteDescriptorSet = undefined;
+        var buffer_infos: [32]vk.DescriptorBufferInfo = undefined;
 
         for (set.infos, 0..) |info, i| {
             const buf = self.buffers.get(info.name) orelse std.debug.panic(
                 \\ tried to access buffer '{s}' but it does not exist!
             , .{info.name});
 
-            const buffer_info = vk.DescriptorBufferInfo{
+            buffer_infos[i] = .{
                 .buffer = buf.allocation.buffer,
-                .offset = i,
-                .range = vk.WHOLE_SIZE,
+                .offset = 0,
+                .range = buf.allocation.size,
             };
 
             writes[i] = vk.WriteDescriptorSet{
@@ -197,7 +202,7 @@ pub const AllocatedData = struct {
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = info.descriptor_type,
-                .pBufferInfo = &buffer_info,
+                .pBufferInfo = &buffer_infos[i],
             };
         }
 

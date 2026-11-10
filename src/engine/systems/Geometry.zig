@@ -1,10 +1,9 @@
 const std = @import("std");
 const core = @import("../../root.zig");
-const log = std.log.scoped(.MeshManipulationSystem);
+const log = std.log.scoped(.Geometry);
 const imgui = core.clibs.imgui;
 const Meshes3D = core.resources.Meshes3D;
 const Meshes2D = core.resources.Meshes2D;
-const MeshManipulation = @This();
 
 /// system side data associated with meshes
 mesh3d_data: std.AutoHashMapUnmanaged(u32, struct {
