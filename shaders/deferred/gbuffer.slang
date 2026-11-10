@@ -65,6 +65,11 @@ struct FragOut {
     float4 albedo   : SV_Target2;
 }
 
+// Slang’s SV_VertexID and SV_InstanceID follow HLSL semantics on every target,
+//  so when compiling to SPIR-V it emits gl_VertexIndex - gl_BaseVertex (and the same for instances).
+//  That is what you saw: the IDs were relative to the draw.
+//  SV_VulkanVertexID and SV_VulkanInstanceID skip
+// that subtraction and give you the raw gl_VertexIndex / gl_InstanceIndex.
 [shader("vertex")]
 VertOut vertexMain(
     uint vertexID : SV_VulkanVertexID,

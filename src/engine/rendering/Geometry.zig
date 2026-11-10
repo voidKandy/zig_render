@@ -448,12 +448,6 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
 
     var iter = self.ranges.iterator();
     while (iter.next()) |entry| {
-        const name = ctx.resources.meshes3D.mesh_names_reverse_lookup.get(@intCast(entry.key_ptr.*)) orelse std.debug.panic(
-            \\ tried to get an invalid mesh index: {d}
-        , .{entry.key_ptr.*});
-
-        imgui.Text("Mesh: '%s'", name.ptr);
-
         const start = entry.value_ptr.*.offset;
         const end = start + entry.value_ptr.range;
 
@@ -491,6 +485,10 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
                         mesh_idx = @intCast(amt_meshes - 1);
                     }
                     inst.mesh_idx.* = @as(u32, @intCast(mesh_idx));
+                }
+                var u = inst.world_transform.scale.x;
+                if (imgui.SliderFloat("Scale", &u, 0.0, 10.0)) {
+                    inst.world_transform.scale = core.lib.math.Vec3.make(u, u, u);
                 }
             }
         }
