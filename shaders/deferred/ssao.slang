@@ -150,18 +150,6 @@ FragOut fragmentMain(VertOut input)
     float s = sin(angle);
     float c = cos(angle);
 
-    // Construct TBN in world space.
-    // float3 randomVec = float3(1.0, 0.0, 0.0);
-
-    // if (abs(dot(randomVec, normal)) > 0.99)
-    //     randomVec = float3(0.0, 1.0, 0.0);
-
-    // float3 tangent = normalize(
-    //     randomVec - normal * dot(randomVec, normal)
-    // );
-
-    // float3 bitangent = cross(normal, tangent);
-    // float3x3 TBN       = float3x3(tangent, bitangent, normal);
     float3 randomVec = float3(1.0, 0.0, 0.0);
 
     if (abs(dot(randomVec, normalView)) > 0.99)
@@ -226,10 +214,8 @@ FragOut fragmentMain(VertOut input)
             continue;
 
         // Actual scene depth at projected sample location.
-        // float sampledDepth = LinearizeDepth(sampleUV);
         float4 sp = sampleMaterial(POSITIONS_TEXTURE_INDEX, sampleUV);
         if (sp.w < 0.5) continue; // no geometry (assumes the attachment is cleared to 0)
-        // float sampledDepth = -dot(Camera.view[2], float4(sp.xyz, 1.0));
         float3 sampledViewPos = mul(
             Camera.view,
             float4(sp.xyz, 1.0)

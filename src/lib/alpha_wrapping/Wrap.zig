@@ -64,7 +64,7 @@ const WrapParams = struct {
     manifold: bool = true,
 };
 
-const WrapStats = struct {
+pub const WrapStats = struct {
     steiner_points: u32 = 0,
     rule1: u32 = 0,
     rule2: u32 = 0,
@@ -746,7 +746,7 @@ fn maxFacetR2(m: Mesh) f64 {
 
 /// Mirrors the C++ `alpha_wrap(soup, alpha, offset, manifold, &stats)` convenience wrapper.
 /// Assumes alphaWrap has the signature
-fn runWrap(
+pub fn runWrap(
     alloc: Allocator,
     soup: []const shared.Triangle,
     alpha: f64,
