@@ -76,8 +76,9 @@ pub const KeyCode = enum(sdl.Keycode) {
     Escape = sdl.K_ESCAPE,
     LShift = sdl.K_LSHIFT,
     RShift = sdl.K_RSHIFT,
-    @"?" = sdl.K_QUESTION,
     Tab = sdl.K_TAB,
+    @"?" = sdl.K_QUESTION,
+    @"/" = sdl.K_SLASH,
 
     pub fn isShift(self: @This()) bool {
         return self == .LShift or self == .RShift;

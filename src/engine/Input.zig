@@ -9,10 +9,14 @@ const math_mod = core.lib.math;
 scroll: f32 = 0.0,
 mouse_delta: math_mod.Vec2 = .ZERO,
 quit: bool = false,
-keys: std.EnumSet(sdl_usage.KeyCode) = .empty,
+keys: std.EnumSet(KeyCode) = .empty,
+
+/// because sdl_usage.KeyCode uses non contiguous sdl consts to describe it's variants' values
+/// we create an intermediary enum from that to avoid recursive issues using EnumSet
+const KeyCode = std.meta.FieldEnum(sdl_usage.KeyCode);
 
 pub fn isDown(self: @This(), key: sdl_usage.KeyCode) bool {
-    return self.keys.contains(key);
+    return self.keys.contains(std.meta.stringToEnum(KeyCode, @tagName(key)).?);
 }
 
 pub fn update(self: *@This(), event: sdl.Event) void {
@@ -25,11 +29,15 @@ pub fn update(self: *@This(), event: sdl.Event) void {
         },
         .KeyDown => {
             const key = std.enums.fromInt(sdl_usage.KeyCode, event.key.key) orelse return;
-            self.keys.insert(key);
+            const code =
+                std.meta.stringToEnum(KeyCode, @tagName(key)).?;
+            self.keys.insert(code);
         },
         .KeyUp => {
             const key = std.enums.fromInt(sdl_usage.KeyCode, event.key.key) orelse return;
-            self.keys.remove(key);
+            const code =
+                std.meta.stringToEnum(KeyCode, @tagName(key)).?;
+            self.keys.remove(code);
         },
         .MouseMotion => {
             self.mouse_delta.x += event.motion.xrel;

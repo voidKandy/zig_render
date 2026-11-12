@@ -111,16 +111,16 @@ pub fn CreateManager(comptime INFOS: []const ManagerInfo) type {
             return Depth.format.?;
         }
 
-        /// Transitions depth image into DepthStencil format
-        /// BAD
-        /// (see call site)
-        pub fn transitionDepth(
+        /// Call before beginning render pass
+        pub fn transitionAttachments(
+            self: @This(),
             cmd: vk.CommandBuffer,
-            attachment: FrameBufferAttachment,
         ) void {
+            const depth = self.plexe.get(.depth);
+
             vku.transitionImageLayout(
                 cmd,
-                attachment.image.image,
+                depth.image.image,
                 vk.IMAGE_LAYOUT_UNDEFINED,
                 vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 0,

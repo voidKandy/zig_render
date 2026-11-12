@@ -108,13 +108,16 @@ pub fn update(self: *@This(), ctx: core.engine.systems.manager.UpdateContext) vo
     var controller: *Controller = (camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?")).camera;
     const trans: *core.engine.world.WorldTransform = (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
 
-    if (ctx.input.isDown(.Tab)) {
-        controller.mode = @fromBackingInt(@intCast(
-            @backingInt(controller.mode) + 1 % std.enums.values(Controller.Mode).len,
-        ));
+    if (ctx.input.isDown(.@"/")) {
+        const mode_count = std.enums.values(Controller.Mode).len;
+        const current: usize = @intCast(@backingInt(controller.mode));
+        controller.mode = @fromBackingInt(@intCast((current + 1) % mode_count));
     }
 
-    controller.control(&self.gpu_camera.?, trans, ctx.dt, ctx.input);
+    switch (controller.mode) {
+        .input => controller.control(&self.gpu_camera.?, trans, ctx.dt, ctx.input),
+        else => {},
+    }
 }
 
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
@@ -142,7 +145,7 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
     imgui.Text("Camera Pos: (%.2f, %.2f, %.2f)", pos.x, pos.y, pos.z);
 
     imgui.Text(@tagName(cam.mode));
-    imgui.Text("Press tab to cycle camera modes");
+    imgui.Text("Press '/' to cycle camera modes");
 
     var angles = Controller.Angles.fromRotation(&trans.rotation);
     _ = imgui.DragFloat("Yaw", &angles.yaw);

@@ -278,11 +278,44 @@ fn initVulkan(self: *Self) void {
     ) catch @panic("failed to create framebuffers");
 }
 
-/// honestly this whole function should be in Manager
-/// Allocates resources, creates descriptor layouts/pool
-pub fn allocateResources(self: *Self) void {
-    self.initImgui();
+pub fn initRenderer(self: *Self) void {
+    const graphics_common = core.engine.pipelines.Common{
+        .device = self.logical_device.handle,
+        .render_pass = self.renderer.main_render_pass,
+        .window_extent = self.swapchain.extent,
+    };
+    self.renderer.registerSetsAndBuffers(
+        self.allocs.std,
+        self.logical_device.handle,
+        &self.resources,
+        self.alloc_cbs,
+    ) catch @panic("OOM");
+    self.renderer.updateSets(&self.swapchain, self.logical_device.handle, &self.allocated_resources);
+    self.renderer.initPipelines(graphics_common, &self.resources, self.alloc_cbs);
+}
 
+pub fn initSystems(self: *Self) void {
+    self.system_manager.registerSets(
+        self.allocs.std,
+        self.logical_device.handle,
+        &self.resources,
+        self.alloc_cbs,
+    ) catch @panic("OOM");
+    self.system_manager.plexe.Debug.?.bind(
+        self.allocs.std,
+        &self.resources,
+        &self.allocated_resources,
+    ) catch @panic("OOM");
+    self.system_manager.plexe.Debug.?.bindAttachments(
+        self.allocs.std,
+        &self.swapchain,
+        &self.allocated_resources,
+    ) catch @panic("OOM");
+
+    self.system_manager.updateSets(self.logical_device.handle, &self.allocated_resources);
+}
+
+pub fn registerSets(self: *Self) void {
     self.renderer.registerSetsAndBuffers(
         self.allocs.std,
         self.logical_device.handle,
@@ -297,7 +330,9 @@ pub fn allocateResources(self: *Self) void {
         &self.resources,
         self.alloc_cbs,
     ) catch @panic("OOM");
+}
 
+pub fn uploadResources(self: *Self) void {
     // BAD??
     const max_sets = 16;
     self.allocated_resources = self.resources.upload(
@@ -307,7 +342,9 @@ pub fn allocateResources(self: *Self) void {
         self.logical_device,
         self.alloc_cbs,
     ) catch @panic("OOM");
+}
 
+pub fn updateSets(self: *Self) void {
     self.allocated_resources.meshes3D.updateDescriptorSet(
         self.logical_device.handle,
     ) catch @panic("OOM");
@@ -319,20 +356,19 @@ pub fn allocateResources(self: *Self) void {
         core.resources.Materials.DEFAULT_BINDINGS,
     ) catch @panic("OOM");
 
-    // BAD??
     self.renderer.updateSets(&self.swapchain, self.logical_device.handle, &self.allocated_resources);
+
     self.system_manager.plexe.Debug.?.bind(
         self.allocs.std,
         &self.resources,
         &self.allocated_resources,
-    ) catch
-        @panic("OOM");
+    ) catch @panic("OOM");
     self.system_manager.plexe.Debug.?.bindAttachments(
         self.allocs.std,
         &self.swapchain,
         &self.allocated_resources,
-    ) catch
-        @panic("OOM");
+    ) catch @panic("OOM");
+
     self.system_manager.updateSets(self.logical_device.handle, &self.allocated_resources);
 }
 
@@ -356,8 +392,6 @@ fn drawImgui(self: *Self) void {
     const ctx = core.engine.systems.manager.DrawImguiContext.fromEngine(self);
     self.renderer.drawImgui(ctx);
     self.system_manager.drawImgui(ctx);
-    // self.mesh3D_pipeline_render_system.drawImgui(self.resources.meshes3D, self.resources.materials);
-
     c.imgui.Render();
 }
 
@@ -508,12 +542,7 @@ fn recordCommandBuffer(
         .pClearValues = &all_clear_values,
     };
 
-    // BAD move this into Swapchain or Renderer module
-    core.engine.Renderer.Attachments.transitionDepth(
-        frame.main_command_buffer,
-        self.swapchain.attachments.plexe.get(.depth),
-    );
-
+    self.swapchain.attachments.transitionAttachments(frame.main_command_buffer);
     vk.CmdBeginRenderPass(
         frame.main_command_buffer,
         &render_pass_info,
@@ -541,7 +570,7 @@ fn recordCommandBuffer(
     c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
 }
 
-fn initImgui(self: *Self) void {
+pub fn initImgui(self: *Self) void {
     const pool_sizes = [_]vk.DescriptorPoolSize{
         .{
             .type = vk.DESCRIPTOR_TYPE_SAMPLER,

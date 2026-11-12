@@ -807,9 +807,6 @@ pub const GraphicsPipelines = struct {
             .back = .{},
         };
 
-        // BAD
-        // maybe attachment information should be added to PipelineDescription
-        // that way this number can be derived
         const blend_attachment_states: [if (@TypeOf(pd).OPTIONS.color_attachments) |c| c.count() else 1]vk.PipelineColorBlendAttachmentState = @splat(
             .{
                 .blendEnable = vk.FALSE,

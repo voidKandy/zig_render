@@ -67,11 +67,8 @@ pub fn bindAttachments(
             att.image.view,
             layout,
         );
-        const name = @tagName(tag) ++ " attachment";
-        log.debug(
-            \\ created set for {s} 
-        , .{name});
-        try self.attachment_sets.put(a, name, set);
+        log.debug("created image set for {s} attachment", .{@tagName(tag)});
+        try self.attachment_sets.put(a, @tagName(tag), set);
     }
 }
 

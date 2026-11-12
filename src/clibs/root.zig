@@ -330,6 +330,7 @@ pub const sdl = struct {
     pub const K_LSHIFT = c.SDLK_LSHIFT;
     pub const K_QUESTION = c.SDLK_QUESTION;
     pub const K_TAB = c.SDLK_TAB;
+    pub const K_SLASH = c.SDLK_SLASH;
 };
 
 /// VMA types

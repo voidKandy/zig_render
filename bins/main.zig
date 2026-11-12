@@ -159,8 +159,11 @@ pub fn main(init: std.process.Init) void {
     engine.system_manager.initSystemEntities(.Debug, &engine.world, &engine.resources) catch @panic("OOM");
 
     // BAD
-    // consumer shouldnt facilitate this
-    engine.allocateResources();
+    // consumer shouldnt facilitate this?
+    engine.initImgui();
+    engine.registerSets();
+    engine.uploadResources();
+    engine.updateSets();
     engine.initPipelines();
 
     engine.physics.createMeshes(

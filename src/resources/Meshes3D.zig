@@ -242,9 +242,10 @@ pub fn appendMesh(
     self: *@This(),
     a: std.mem.Allocator,
     name: []const u8,
-    raw_mesh: core.lib.mesh.Mesh3D,
+    // raw_mesh: core.lib.mesh.Mesh3D,
+    mesh: core.lib.mesh.Mesh3D,
 ) std.mem.Allocator.Error!void {
-    const mesh = try core.lib.alpha_wrapping.wrapMesh3D(a, raw_mesh);
+    // const mesh = try core.lib.alpha_wrapping.wrapMesh3D(a, raw_mesh);
     const verts = mesh.vertices;
     const bounds = Aabb.fromVertices(verts);
 
