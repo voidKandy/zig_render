@@ -103,17 +103,18 @@ pub fn syncResources(self: *@This(), alloc_resources: core.resources.Manager.All
     aligned.* = self.gpu_camera.?;
 }
 
-pub fn update(
-    self: *@This(),
-    dt: f32,
-    input: core.engine.Input,
-    world: *core.engine.world.GameWorld,
-) void {
-    var camera_ent = world.entityHandle(self.main_camera_entity.?) catch @panic("No entity??");
+pub fn update(self: *@This(), ctx: core.engine.systems.manager.UpdateContext) void {
+    var camera_ent = ctx.world.entityHandle(self.main_camera_entity.?) catch @panic("No entity??");
     var controller: *Controller = (camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?")).camera;
     const trans: *core.engine.world.WorldTransform = (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
 
-    controller.control(&self.gpu_camera.?, trans, dt, input);
+    if (ctx.input.isDown(.Tab)) {
+        controller.mode = @fromBackingInt(@intCast(
+            @backingInt(controller.mode) + 1 % std.enums.values(Controller.Mode).len,
+        ));
+    }
+
+    controller.control(&self.gpu_camera.?, trans, ctx.dt, ctx.input);
 }
 
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
@@ -140,6 +141,9 @@ pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiConte
     const pos = trans.position;
     imgui.Text("Camera Pos: (%.2f, %.2f, %.2f)", pos.x, pos.y, pos.z);
 
+    imgui.Text(@tagName(cam.mode));
+    imgui.Text("Press tab to cycle camera modes");
+
     var angles = Controller.Angles.fromRotation(&trans.rotation);
     _ = imgui.DragFloat("Yaw", &angles.yaw);
     _ = imgui.DragFloat("Pitch", &angles.pitch);
@@ -162,6 +166,9 @@ pub const Controller = struct {
     min_fov: f32 = 1.0,
     max_fov: f32 = 180.0,
     constrain_pitch: bool = true,
+    mode: Mode = .input,
+
+    const Mode = enum { input, fixed };
 
     pub const Angles = struct {
         yaw: f32,

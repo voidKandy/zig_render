@@ -328,6 +328,8 @@ pub const sdl = struct {
     pub const K_ESCAPE = c.SDLK_ESCAPE;
     pub const K_RSHIFT = c.SDLK_RSHIFT;
     pub const K_LSHIFT = c.SDLK_LSHIFT;
+    pub const K_QUESTION = c.SDLK_QUESTION;
+    pub const K_TAB = c.SDLK_TAB;
 };
 
 /// VMA types

@@ -59,8 +59,8 @@ fn sortedFacet(del: Delaunay, c: shared.CellId, fi: usize) [3]shared.VertexId {
 }
 
 const WrapParams = struct {
-    alpha: f64 = 0,
-    offset: f64 = 0,
+    alpha: f64 = 0.0,
+    offset: f64 = 0.0,
     manifold: bool = true,
 };
 
@@ -83,15 +83,29 @@ const Label = enum(u8) {
 
 const Wrap = @This();
 
+io: std.Io.Threaded,
 oracle: Oracle,
-delaunay: Delaunay = .{},
-labels: std.ArrayListUnmanaged(Label) = .empty,
-params: WrapParams = .{},
+delaunay: Delaunay,
+params: WrapParams,
 stats: WrapStats = .{},
-alpha2: f64 = 0.0,
+labels: std.ArrayListUnmanaged(Label) = .empty,
+alpha_squared: f64 = 0.0,
 first_real_vertex: shared.VertexId = 0, // ids < this are super/bbox scaffolding
 
-fn deinit(self: *@This(), a: Allocator) void {
+pub fn init(
+    a: std.mem.Allocator,
+    params: WrapParams,
+) @This() {
+    return @This(){
+        .io = std.Io.Threaded.init(a, .{}),
+        .params = params,
+        .alpha_squared = params.alpha * params.alpha,
+        .oracle = undefined,
+        .delaunay = undefined,
+    };
+}
+
+pub fn deinit(self: *@This(), a: Allocator) void {
     self.delaunay.deinit(a);
     self.labels.deinit(a);
     self.oracle.deinit(a);
@@ -175,18 +189,17 @@ fn gateSquaredRadius(self: *const @This(), outside: shared.CellId, fi: usize, in
 }
 
 fn gateTraversable(self: *const @This(), outside: shared.CellId, fi: usize, inside: shared.CellId) bool {
-    return gateSquaredRadius(outside, fi, inside) > self.alpha2;
+    return gateSquaredRadius(outside, fi, inside) > self.alpha_squared;
 }
 
 fn computeSteinerPoint(
     self: *const @This(),
-    alloc: Allocator,
     outside: shared.CellId,
     fi: usize,
     inside: shared.CellId,
     out: *Vec3,
     rule: *usize,
-) Allocator.Error!bool {
+) bool {
     const inner_cell = self.delaunay.circumcenter(inside);
     const outer_cell = if (!self.delaunay.cellIsOuter(outside)) self.delaunay.circumcenter(outside) else vec: {
         // Outer cell models an infinite cell: the dual Voronoi edge is a ray from
@@ -220,7 +233,7 @@ fn computeSteinerPoint(
     const b = self.delaunay.pointAt(@intCast(ic.vertices[1])).?;
     const c = self.delaunay.pointAt(@intCast(ic.vertices[2])).?;
     const d = self.delaunay.pointAt(@intCast(ic.vertices[3])).?;
-    if (try self.oracle.doIntersectTet(alloc, a, b, c, d)) {
+    if (self.oracle.doIntersectTet(a, b, c, d)) {
         const p = self.oracle.closestPoint(inner_cell);
         const dir = inner_cell.sub(p);
         const len = dir.norm();
@@ -243,15 +256,12 @@ const GateQueue =
     }.c);
 
 const DEFAULT_MARGIN = 1000.0;
-fn makeMesh(
+fn wrapTris(
     self: *@This(),
     alloc: Allocator,
     tris: []const shared.Triangle,
-    params: WrapParams,
 ) Allocator.Error!Mesh {
-    self.params = params;
-    self.stats = .{};
-    self.alpha2 = params.alpha * params.alpha;
+    self.oracle.deinit(alloc);
     self.oracle = try Oracle.build(alloc, tris);
 
     // ---- loose bounding box: scale 1.2 about center, expand by sqrt(3)*offset ----
@@ -337,6 +347,7 @@ fn makeMesh(
     var new_cells = std.ArrayListUnmanaged(shared.CellId).empty;
     defer new_cells.deinit(alloc);
 
+    const bf = std.Io.Clock.now(.real, self.io.io()).toMilliseconds();
     while (pq.pop()) |g| {
         self.stats.gates_popped += 1;
 
@@ -354,7 +365,7 @@ fn makeMesh(
 
         var sp = Vec3.ZERO;
         var rule: usize = 0;
-        const hit = try self.computeSteinerPoint(alloc, g.outside, g.fi, inside, &sp, &rule);
+        const hit = self.computeSteinerPoint(g.outside, g.fi, inside, &sp, &rule);
 
         if (self.stats.gates_popped <= 12) log.debug(
             "pop {d}: r2={d} outside={d} inside={d} steiner={} rule={d} sp={any}",
@@ -402,6 +413,10 @@ fn makeMesh(
         }
     }
 
+    const dif = std.Io.Clock.now(.real, self.io.io()).toMilliseconds() - bf;
+    log.debug(
+        \\ queue took: {d}ms to process
+    , .{dif});
     log.debug("AFTER LOOP: popped={d} carved={d} steiner={d}", .{
         self.stats.gates_popped, self.stats.carved, self.stats.steiner_points,
     });
@@ -525,17 +540,10 @@ fn extract(self: *@This(), alloc: Allocator) Allocator.Error!Mesh {
 }
 
 fn alphaWrap(alloc: Allocator, tris: []const shared.Triangle, params: WrapParams, stats: *WrapStats) Allocator.Error!Mesh {
-    var wrap = Wrap{
-        .oracle = .{
-            .bounding_box = .empty(),
-        },
-        .params = params,
-        .stats = stats.*,
-    };
-
+    var wrap = Wrap.init(alloc, params);
     defer wrap.deinit(alloc);
 
-    const m = try makeMesh(&wrap, alloc, tris, params);
+    const m = try wrap.wrapTris(alloc, tris);
     stats.* = wrap.stats;
     return m;
 }
@@ -575,7 +583,7 @@ const Helpers = struct {
         if (inside == shared.NO_CELL or !wrap.delaunay.cellAlive(inside)) return;
         if (wrap.labelOf(oc) != .outside or wrap.labelOf(inside) != .inside) return;
         const r2 = wrap.gateSquaredRadius(oc, fi, inside);
-        if (r2 <= wrap.alpha2) return; // not traversable
+        if (r2 <= wrap.alpha_squared) return; // not traversable
         try pq.push(a, Gate{
             .r2 = r2,
             .outside = oc,

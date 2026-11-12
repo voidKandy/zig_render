@@ -55,48 +55,65 @@ fn closestPointOnTriangle(
     return a.add(ab.mul(v)).add(ac.mul(w));
 }
 
+const SmallPoly = struct {
+    const MAX = 12; // triangle (3) + 1 per plane; 12 leaves headroom for more planes
+    pts: [MAX]Vec3 = undefined,
+    len: usize = 0,
+
+    inline fn push(self: *SmallPoly, v: Vec3) void {
+        std.debug.assert(self.len < MAX);
+        self.pts[self.len] = v;
+        self.len += 1;
+    }
+};
+
 fn clipHalfspace(
-    a: Allocator,
-    poly: *std.ArrayListUnmanaged(Vec3),
+    poly: *SmallPoly,
+    // poly: *std.ArrayListUnmanaged(Vec3),
     p0: Vec3,
     n: Vec3,
     keep: f64,
     eps: f64,
-) Allocator.Error!void {
-    const m = poly.items.len;
+) void {
+    const m = poly.len;
     if (m == 0) return;
-    var out = try std.ArrayListUnmanaged(Vec3).initCapacity(a, m + 1);
-    errdefer out.deinit(a);
+    var out = SmallPoly{};
+
+    var vert_signed_dists: [SmallPoly.MAX]f64 = undefined;
+    var n_in: usize = 0;
+    for (0..m) |i| {
+        vert_signed_dists[i] = n.dot(poly.pts[i].sub(p0)) * keep;
+        if (vert_signed_dists[i] >= -eps) n_in += 1;
+    }
+    if (n_in == m) return; // fully inside: nothing to do
+    if (n_in == 0) {
+        poly.len = 0;
+        return;
+    } // fully outside: empty
 
     for (0..m) |i| {
-        const vi = poly.items[i];
-        const vj = poly.items[(i + 1) % m];
-        const di = n.dot(vi.sub(p0)) * keep;
-        const dj = n.dot(vj.sub(p0)) * keep;
-        const in_i = di >= -eps;
-        const in_j = dj >= -eps;
-        if (in_i) out.appendAssumeCapacity(vi);
+        const j = if (i + 1 == m) 0 else i + 1;
+        const in_i = vert_signed_dists[i] >= -eps;
+        const in_j = vert_signed_dists[j] >= -eps;
+        if (in_i) out.push(poly.pts[i]);
         if (in_i != in_j) {
-            const t = di / (di - dj); // di,dj straddle 0
-            out.appendAssumeCapacity(vi.add((vj.sub(vi).mul(t))));
+            const t = vert_signed_dists[i] / (vert_signed_dists[i] - vert_signed_dists[j]);
+            out.push(poly.pts[i].add(poly.pts[j].sub(poly.pts[i]).mul(t)));
         }
     }
 
-    std.mem.swap(std.ArrayListUnmanaged(Vec3), poly, &out);
-    out.deinit(a);
+    poly.* = out;
 }
 
 fn triangleIntersectsTet(
-    alloc: Allocator,
     t: Triangle,
     a: Vec3,
     b: Vec3,
     c: Vec3,
     d: Vec3,
-) Allocator.Error!bool {
-    var poly = try std.ArrayListUnmanaged(Vec3).initCapacity(alloc, 8);
-    defer poly.deinit(alloc);
-    poly.appendSliceAssumeCapacity(&.{ t[0], t[1], t[2] });
+) bool {
+    var poly = SmallPoly{};
+    for (t) |vert| poly.push(vert);
 
     const scale = @sqrt(@max(
         b.sub(a).squaredNorm(),
@@ -128,11 +145,11 @@ fn triangleIntersectsTet(
         if (keep == 0) continue;
         keep = if (keep > 0) 1.0 else -1.0;
 
-        try clipHalfspace(alloc, &poly, fa, n, keep, eps);
-        if (poly.items.len == 0) return false;
+        clipHalfspace(&poly, fa, n, keep, eps);
+        if (poly.len == 0) return false;
     }
 
-    return (poly.items.len != 0);
+    return (poly.len != 0);
 }
 
 const Node = struct {
@@ -170,7 +187,7 @@ triangles: std.ArrayListUnmanaged(Triangle) = .empty,
 /// triangle indices, permuted by the tree
 order: std.ArrayListUnmanaged(usize) = .empty,
 nodes: std.ArrayListUnmanaged(Node) = .empty,
-bounding_box: Aabb,
+bounding_box: Aabb = .empty(),
 
 pub fn deinit(self: *@This(), a: Allocator) void {
     self.triangles.deinit(a);
@@ -336,41 +353,39 @@ pub fn closestPoint(self: *const @This(), p: Vec3) Vec3 {
 
 pub fn intersectTetRecursive(
     self: *const @This(),
-    alloc: Allocator,
     node: usize,
     aabb: *Aabb,
     a: Vec3,
     b: Vec3,
     c: Vec3,
     d: Vec3,
-) Allocator.Error!bool {
+) bool {
     const nd = self.nodes.items[node];
     if (!boxesOverlap(&nd.aabb, aabb)) return false;
     if (nd.left < 0) { // leaf
         for (@intCast(nd.start)..@intCast(nd.start + nd.count)) |i| {
             const t = self.triangles.items[self.order.items[i]];
-            if (try triangleIntersectsTet(alloc, t, a, b, c, d)) return true;
+            if (triangleIntersectsTet(t, a, b, c, d)) return true;
         }
         return false;
     }
     // Early exit: stop at the first intersecting triangle found in either child.
-    return try self.intersectTetRecursive(alloc, @intCast(nd.left), aabb, a, b, c, d) or
-        try self.intersectTetRecursive(alloc, @intCast(nd.start), aabb, a, b, c, d);
+    return self.intersectTetRecursive(@intCast(nd.left), aabb, a, b, c, d) or
+        self.intersectTetRecursive(@intCast(nd.start), aabb, a, b, c, d);
 }
 
 pub fn doIntersectTet(
     self: *const @This(),
-    alloc: Allocator,
     a: Vec3,
     b: Vec3,
     c: Vec3,
     d: Vec3,
-) Allocator.Error!bool {
+) bool {
     if (self.nodes.items.len == 0) return false;
     var aabb = Aabb.empty();
     for ([_]Vec3{ a, b, c, d }) |v|
         shared.aabbExpand(&aabb, v);
-    return try self.intersectTetRecursive(alloc, 0, &aabb, a, b, c, d);
+    return self.intersectTetRecursive(0, &aabb, a, b, c, d);
 }
 
 fn distHelper(self: *const @This(), a: Vec3, b: Vec3, t: f64, delta: f64) f64 {
@@ -571,7 +586,7 @@ test "oracle.tet_intersection_matches_brute_force" {
         const c = a.add(Vec3.make(0, uniform(rng, 0.1, 0.8), 0));
         const d = a.add(Vec3.make(0, 0, uniform(rng, 0.1, 0.8)));
 
-        const via_tree = o.doIntersectTet(alloc, a, b, c, d) catch @panic("OOM");
+        const via_tree = o.doIntersectTet(a, b, c, d) catch @panic("OOM");
         const via_brute = bruteIntersectTet(alloc, tris, a, b, c, d);
         total += 1;
         if (via_tree == via_brute) agree += 1;

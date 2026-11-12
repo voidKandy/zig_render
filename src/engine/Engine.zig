@@ -146,16 +146,11 @@ pub fn run(self: *Self) void {
             self.input.update(event);
         }
 
-        if (self.input.isDown(.Escape)) {
-            const is_relative_mouse = sdl.GetWindowRelativeMouseMode(self.window) == true;
-            _ = sdl.SetWindowRelativeMouseMode(self.window, !is_relative_mouse);
-        }
-
         const now = std.Io.Timestamp.now(self.io, .real).toNanoseconds();
         const dt: f32 = @as(f32, @floatFromInt(now - last_time)) / @as(f32, @floatFromInt(std.time.ns_per_s));
         last_time = now;
 
-        self.system_manager.update(dt, self.input, &self.world);
+        self.system_manager.update(.fromEngine(self, dt));
 
         self.physics.update(&self.world);
 

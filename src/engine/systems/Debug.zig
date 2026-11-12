@@ -75,6 +75,13 @@ pub fn bindAttachments(
     }
 }
 
+pub fn update(_: *@This(), ctx: core.engine.systems.manager.UpdateContext) void {
+    if (ctx.input.isDown(.Escape)) {
+        const is_relative_mouse = sdl.GetWindowRelativeMouseMode(ctx.window) == true;
+        _ = sdl.SetWindowRelativeMouseMode(ctx.window, !is_relative_mouse);
+    }
+}
+
 pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
     var open = true;
     // const window = engine.window;

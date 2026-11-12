@@ -74,6 +74,21 @@ inline fn removeSelf(fn_info: std.lang.Type.Fn) std.lang.Type.Fn {
     return info;
 }
 
+pub const UpdateContext = struct {
+    dt: f32,
+    input: core.engine.Input,
+    world: *core.engine.world.GameWorld,
+    window: *core.clibs.sdl.Window,
+    pub fn fromEngine(engine: *core.engine.Engine, dt: f32) @This() {
+        return .{
+            .window = engine.window,
+            .input = engine.input,
+            .world = &engine.world,
+            .dt = dt,
+        };
+    }
+};
+
 pub const DrawImguiContext = struct {
     window: *core.clibs.sdl.Window,
     world: *core.engine.world.GameWorld,
@@ -302,16 +317,11 @@ pub fn SystemManager(
         //     }
         // }
 
-        pub fn update(
-            self: *@This(),
-            dt: f32,
-            input: core.engine.Input,
-            world: *core.engine.world.GameWorld,
-        ) void {
+        pub fn update(self: *@This(), ctx: UpdateContext) void {
             inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
                 const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-                    if (@field(self.plexe, @tagName(tag))) |*f| f.update(dt, input, world);
+                    if (@field(self.plexe, @tagName(tag))) |*f| f.update(ctx);
             }
         }
 

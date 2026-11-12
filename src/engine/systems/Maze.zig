@@ -286,13 +286,8 @@ pub fn syncResources(self: *@This(), alloc_resources: core.resources.Manager.All
     }
 }
 
-pub fn update(
-    self: *@This(),
-    _: f32,
-    _: core.engine.Input,
-    world: *core.engine.world.GameWorld,
-) void {
-    var camera_ent = world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
+pub fn update(self: *@This(), ctx: core.engine.systems.manager.UpdateContext) void {
+    var camera_ent = ctx.world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
     const trans: *core.engine.world.WorldTransform =
         (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
 

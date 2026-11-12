@@ -22,9 +22,6 @@ const Cell = struct {
     alive: bool = false,
 };
 
-/// More or less direct Port
-/// https://github.com/alecjacobson/alpha-wrap/blob/main/src/delaunay.hpp
-/// https://github.com/alecjacobson/alpha-wrap/blob/main/src/delaunay.cpp
 const Delaunay = @This();
 
 points: std.ArrayListUnmanaged(Vec3) = .empty,

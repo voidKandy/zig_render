@@ -187,6 +187,9 @@ pub const lib = struct {
     pub const Maze = @import("lib/Maze.zig");
     pub const mesh = @import("lib/mesh.zig");
     pub const terrain = @import("lib/terrain.zig");
+
+    /// started as port of this guy's implementation
+    /// https://github.com/alecjacobson/alpha-wrap/tree/main/src
     pub const alpha_wrapping = struct {
         pub const Delaunay = @import("lib/alpha_wrapping/Delaunay.zig");
         pub const Wrap = @import("lib/alpha_wrapping/Wrap.zig");
