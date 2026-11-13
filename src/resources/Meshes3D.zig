@@ -284,6 +284,15 @@ pub fn appendMesh(
     try self.bounds.append(a, bounds);
 }
 
+pub fn getMeshVertices(self: *const @This(), a: std.mem.Allocator, mesh_idx: usize) std.mem.Allocator.Error![]core.lib.mesh.Vertex3D {
+    const range = self.ranges.items[mesh_idx];
+    const verts = try a.alloc(core.lib.mesh.Vertex3D, range.vertex.range);
+    for (self.vertices.items[range.vertex.offset..][0..range.vertex.range], verts) |vtx, *p| {
+        p.* = vtx;
+    }
+    return verts;
+}
+
 pub fn createDescriptorSetLayout(
     self: *@This(),
     device: vk.Device,

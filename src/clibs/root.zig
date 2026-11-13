@@ -98,10 +98,14 @@ pub const box3d = struct {
     pub const BODY_TYPE_DYNAMIC = c.b3_dynamicBody;
 
     pub const BoxHull = c.b3BoxHull;
-
     pub const MakeBoxHull = c.b3MakeBoxHull;
+    pub const HullData = c.b3HullData;
+    pub const CreateHull = c.b3CreateHull;
+    pub const DestroyHull = c.b3DestroyHull;
     pub const MakeTransformedBoxHull = c.b3MakeTransformedBoxHull;
     pub const CreateHullShape = c.b3CreateHullShape;
+    pub const GetHullPoints = c.b3GetHullPoints;
+    pub const GetHullEdges = c.b3GetHullEdges;
 
     pub const World_Step = c.b3World_Step;
     pub const WorldTransform = c.b3WorldTransform;

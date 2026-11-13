@@ -372,10 +372,7 @@ pub fn recordCommands(
     vk.CmdDraw(cmd, 3, 1, 0, 0);
 }
 
-/// get/update instances
-///
-/// Ensures instances index array is grouped continously per mesh
-pub fn getInstances(
+pub fn instancesFromWorld(
     self: *@This(),
     a: std.mem.Allocator,
     world: *core.engine.world.GameWorld,

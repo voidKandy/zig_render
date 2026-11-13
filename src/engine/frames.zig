@@ -78,8 +78,9 @@ pub fn FramesContainer(MAX_FRAMES_IN_FLIGHT: usize) type {
                     .level = vk.COMMAND_BUFFER_LEVEL_PRIMARY,
                     .commandBufferCount = 1,
                 };
-
+                // after vk.AllocateCommandBuffers(...)
                 checkVk(vk.AllocateCommandBuffers(device, &command_buffer_ai, &frame.main_command_buffer)) catch @panic("Failed to allocate command buffer");
+                log.debug("cmdbuf alloc 0x{x} ", .{@intFromPtr(frame.main_command_buffer)});
             }
         }
     };

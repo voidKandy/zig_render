@@ -198,7 +198,7 @@ pub fn recordCommands(
     }
 }
 
-pub fn getInstances(self: *@This(), a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.mem.Allocator.Error!void {
+pub fn instancesFromWorld(self: *@This(), a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.mem.Allocator.Error!void {
     var buckets = std.AutoHashMap(usize, std.ArrayList(InstanceEntry)).init(a);
     defer {
         var it = buckets.valueIterator();

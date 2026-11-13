@@ -3,34 +3,40 @@ const core = @import("../root.zig");
 const box3d = core.clibs.box3d;
 
 pub const DebugDrawFunctions = struct {
-    pub const DrawShapeFcn = *const fn (?*anyopaque, box3d.WorldTransform, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    pub const DrawSegmentFcn = *const fn (box3d.Pos, box3d.Pos, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    pub const DrawTransformFcn = *const fn (box3d.WorldTransform, ?*anyopaque) callconv(.c) void;
-    pub const DrawPointFcn = *const fn (box3d.Pos, f32, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    pub const DrawSphereFcn = *const fn (box3d.Pos, f32, box3d.HexColor, f32, ?*anyopaque) callconv(.c) void;
-    pub const DrawCapsuleFcn = *const fn (box3d.Pos, box3d.Pos, f32, box3d.HexColor, f32, ?*anyopaque) callconv(.c) void;
-    pub const DrawBoundsFcn = *const fn (box3d.AABB, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    pub const DrawBoxFcn = *const fn (box3d.Vec3, box3d.WorldTransform, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-    pub const DrawStringFcn = *const fn (box3d.Pos, [*c]const u8, box3d.HexColor, ?*anyopaque) callconv(.c) void;
-
-    draw_shape: ?DrawShapeFcn = null,
-    draw_segment: ?DrawSegmentFcn = null,
-    draw_transform: ?DrawTransformFcn = null,
-    draw_point: ?DrawPointFcn = null,
-    draw_sphere: ?DrawSphereFcn = null,
-    draw_capsule: ?DrawCapsuleFcn = null,
-    draw_bounds: ?DrawBoundsFcn = null,
-    draw_box: ?DrawBoxFcn = null,
-    draw_string: ?DrawStringFcn = null,
+    draw_shape: ?*const fn (?*anyopaque, box3d.WorldTransform, box3d.HexColor, ?*anyopaque) callconv(.c) void = null,
+    draw_segment: ?*const fn (box3d.Pos, box3d.Pos, box3d.HexColor, ?*anyopaque) callconv(.c) void = null,
+    draw_transform: ?*const fn (box3d.WorldTransform, ?*anyopaque) callconv(.c) void = null,
+    draw_point: ?*const fn (box3d.Pos, f32, box3d.HexColor, ?*anyopaque) callconv(.c) void = null,
+    draw_sphere: ?*const fn (box3d.Pos, f32, box3d.HexColor, f32, ?*anyopaque) callconv(.c) void = null,
+    draw_capsule: ?*const fn (box3d.Pos, box3d.Pos, f32, box3d.HexColor, f32, ?*anyopaque) callconv(.c) void = null,
+    draw_bounds: ?*const fn (box3d.AABB, box3d.HexColor, ?*anyopaque) callconv(.c) void = null,
+    draw_box: ?*const fn (box3d.Vec3, box3d.WorldTransform, box3d.HexColor, ?*anyopaque) callconv(.c) void = null,
+    draw_string: ?*const fn (box3d.Pos, [*c]const u8, box3d.HexColor, ?*anyopaque) callconv(.c) void = null,
 };
 
 pub const DebugShapeFunctions = struct {
-    pub const CreateDebugShape = *const fn (?*const box3d.DebugShape, ?*anyopaque) callconv(.c) ?*anyopaque;
-    pub const DestroyDebugShape = *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void;
-    create_debug_shape: CreateDebugShape,
-    destroy_debug_shape: DestroyDebugShape,
+    create_debug_shape: ?*const fn (?*const box3d.DebugShape, ?*anyopaque) callconv(.c) ?*anyopaque = null,
+    destroy_debug_shape: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void = null,
 };
 
+/// BAD
+/// calls alpha wrap
+pub fn getMeshCollider(
+    a: std.mem.Allocator,
+    mesh: core.lib.mesh.Mesh3D,
+    // meshes3D: *const core.resources.Meshes3D,
+    // mesh_idx: usize,
+) std.mem.Allocator.Error![*]box3d.HullData {
+    const points = try a.alloc(box3d.Vec3, mesh.vertices.len);
+    defer a.free(points);
+    for (mesh.vertices, points) |vtx, *p| {
+        p.* = fromCoreVec3(vtx.position.toVec3());
+    }
+
+    return box3d.CreateHull(points.ptr, @intCast(mesh.vertices.len), 2048 * 8);
+}
+
+/// still a good option for terrain and static meshes
 pub fn createMesh(
     a: std.mem.Allocator,
     meshes3D: *const core.resources.Meshes3D,

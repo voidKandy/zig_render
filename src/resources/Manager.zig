@@ -36,8 +36,15 @@ materials: Materials,
 meshes2D: Meshes2D,
 meshes3D: Meshes3D,
 mapped_buffers: MappedBuffers,
-
 subpass_input_attachments: Attachments = .{},
+
+/// Holds the information for the creation of anything that might be included in a descriptor set
+/// `Materials`: any static or writable textures
+/// `Meshes2D`: any `Mesh2D`
+/// `Meshes3D`: any `Mesh3D`
+/// `MappedBuffers`: any mapped buffer of an arbitrary type, used mostly by consumers who have their own data
+/// `Attachments`: subpass swapchain attachments, currently tightly coupled with rendering system
+const Self = @This();
 
 pub fn deinit(
     self: *@This(),

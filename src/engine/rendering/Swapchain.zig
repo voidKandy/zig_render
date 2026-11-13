@@ -34,12 +34,11 @@ pub const CreateOpts = struct {
     old_swapchain: vk.SwapchainKHR = null,
     vsync: bool = false,
     triple_buffer: bool = false,
-    window_width: u32 = 0,
-    window_height: u32 = 0,
+    window: *sdl.Window,
     alloc_cb: ?*vk.AllocationCallbacks = null,
 };
 
-pub fn create(allocs: core.engine.Allocators, opts: CreateOpts) (vki.VkError || Allocator.Error)!@This() {
+pub fn create(allocs: core.engine.Allocators, opts: CreateOpts) Allocator.Error!@This() {
     const support_info = try SupportInfo.init(allocs.std, opts.physical_device.handle, opts.surface);
     defer support_info.deinit(allocs.std);
 
@@ -83,29 +82,29 @@ pub fn create(allocs: core.engine.Allocators, opts: CreateOpts) (vki.VkError || 
     }
 
     var swapchain: vk.SwapchainKHR = undefined;
-    try checkVk(vk.CreateSwapchainKHR(opts.logical_device, &swapchain_info, opts.alloc_cb, &swapchain));
+    checkVk(vk.CreateSwapchainKHR(opts.logical_device, &swapchain_info, opts.alloc_cb, &swapchain)) catch @panic("Failed to create swapchain");
     errdefer vk.DestroySwapchainKHR(opts.logical_device, swapchain, opts.alloc_cb);
     log.info("Created vulkan swapchain\n", .{});
 
     // Try and fetch the images from the swpachain.
     var swapchain_image_count: u32 = undefined;
-    try checkVk(vk.GetSwapchainImagesKHR(opts.logical_device, swapchain, &swapchain_image_count, null));
+    checkVk(vk.GetSwapchainImagesKHR(opts.logical_device, swapchain, &swapchain_image_count, null)) catch @panic("Failed to get swapchain images");
     const swapchain_images = try allocs.std.alloc(vk.Image, swapchain_image_count);
     errdefer allocs.std.free(swapchain_images);
-    try checkVk(vk.GetSwapchainImagesKHR(opts.logical_device, swapchain, &swapchain_image_count, swapchain_images.ptr));
+    checkVk(vk.GetSwapchainImagesKHR(opts.logical_device, swapchain, &swapchain_image_count, swapchain_images.ptr)) catch @panic("Failed to get swapchain images");
 
     // Create image views for the swapchain images.
     const swapchain_image_views = try allocs.std.alloc(vk.ImageView, swapchain_image_count);
     errdefer allocs.std.free(swapchain_image_views);
 
     for (swapchain_images, swapchain_image_views) |image, *view| {
-        view.* = try createImageView(opts.logical_device, image, format, vk.IMAGE_ASPECT_COLOR_BIT, opts.alloc_cb);
+        view.* = createImageView(opts.logical_device, image, format, vk.IMAGE_ASPECT_COLOR_BIT, opts.alloc_cb);
     }
 
     const semaphore_ci = vk.SemaphoreCreateInfo{
         .sType = vk.STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
     };
-    const semaphores = allocs.std.alloc(vk.Semaphore, swapchain_image_count) catch @panic("Out of memory");
+    const semaphores = try allocs.std.alloc(vk.Semaphore, swapchain_image_count);
     errdefer allocs.std.free(semaphores);
 
     for (0..semaphores.len) |i| {
@@ -156,14 +155,13 @@ pub fn recreate(
     self: *@This(),
     allocs: core.engine.Allocators,
     opts: CreateOpts,
-    window: *sdl.Window,
     render_pass: vk.RenderPass,
     vk_alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     var width: c_int, var height: c_int = .{ undefined, undefined };
-    core.bindings.sdl_usage.checkSdl(sdl.GetWindowSize(window, &width, &height));
+    core.bindings.sdl_usage.checkSdl(sdl.GetWindowSize(opts.window, &width, &height));
     while (width == 0 or height == 0) {
-        core.bindings.sdl_usage.checkSdl(sdl.GetWindowSize(window, &width, &height));
+        core.bindings.sdl_usage.checkSdl(sdl.GetWindowSize(opts.window, &width, &height));
     }
     _ = vk.DeviceWaitIdle(opts.logical_device);
 
@@ -221,7 +219,7 @@ fn createImageView(
     format: vk.Format,
     aspect_flags: vk.ImageAspectFlags,
     alloc_cb: ?*vk.AllocationCallbacks,
-) vki.VkError!vk.ImageView {
+) vk.ImageView {
     const view_info = vk.ImageViewCreateInfo{
         .sType = vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = image,
@@ -243,7 +241,7 @@ fn createImageView(
     };
 
     var image_view: vk.ImageView = undefined;
-    try checkVk(vk.CreateImageView(device, &view_info, alloc_cb, &image_view));
+    checkVk(vk.CreateImageView(device, &view_info, alloc_cb, &image_view)) catch @panic("Failed to create Image View");
     return image_view;
 }
 
@@ -252,19 +250,19 @@ pub const SupportInfo = struct {
     formats: []vk.SurfaceFormatKHR = &.{},
     present_modes: []vk.PresentModeKHR = &.{},
 
-    pub fn init(a: Allocator, device: vk.PhysicalDevice, surface: vk.SurfaceKHR) (vki.VkError || Allocator.Error)!@This() {
+    pub fn init(a: Allocator, device: vk.PhysicalDevice, surface: vk.SurfaceKHR) Allocator.Error!@This() {
         var capabilities: vk.SurfaceCapabilitiesKHR = undefined;
-        try checkVk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities));
+        checkVk(vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities)) catch @panic("Failed to GetPhysicalDeviceSurfaceCapabilitiesKHR");
 
         var format_count: u32 = undefined;
-        try checkVk(vk.GetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, null));
+        checkVk(vk.GetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, null)) catch @panic("Failed to GetPhysicalDeviceSurfaceFormatsKHR");
         const formats = try a.alloc(vk.SurfaceFormatKHR, format_count);
-        try checkVk(vk.GetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, formats.ptr));
+        checkVk(vk.GetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, formats.ptr)) catch @panic("Failed to GetPhysicalDeviceSurfaceFormatsKHR");
 
         var present_mode_count: u32 = undefined;
-        try checkVk(vk.GetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null));
+        checkVk(vk.GetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null)) catch @panic("Failed to GetPhysicalDeviceSurfacePresentModesKHR");
         const present_modes = try a.alloc(vk.PresentModeKHR, present_mode_count);
-        try checkVk(vk.GetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, present_modes.ptr));
+        checkVk(vk.GetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, present_modes.ptr)) catch @panic("Failed to GetPhysicalDeviceSurfacePresentModesKHR");
 
         return .{
             .capabilities = capabilities,
@@ -322,9 +320,12 @@ pub const SupportInfo = struct {
             return self.capabilities.currentExtent;
         }
 
+        var win_width: c_int, var win_height: c_int = .{ undefined, undefined };
+        core.bindings.sdl_usage.checkSdl(core.clibs.sdl.GetWindowSize(opts.window, &win_width, &win_height));
+
         var extent = vk.Extent2D{
-            .width = opts.window_width,
-            .height = opts.window_height,
+            .width = @intCast(win_width),
+            .height = @intCast(win_height),
         };
 
         const min_support_w, const max_support_w = .{

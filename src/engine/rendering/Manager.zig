@@ -7,8 +7,7 @@ const vki = core.bindings.vulkan_init;
 const checkVk = vki.checkVk;
 const Meshes3DResource = core.resources.Meshes3D;
 const Allocator = std.mem.Allocator;
-const attachments =
-    @import("./attachments.zig");
+const attachments = @import("./attachments.zig");
 
 pub const Attachments = attachments.CreateManager(&[_]attachments.ManagerInfo{
     .{
@@ -103,6 +102,8 @@ meshes2D: ?Meshes2D = null,
 physics_debug: ?PhysicsDebug = null,
 
 main_render_pass: vk.RenderPass = undefined,
+swapchain: core.engine.Renderer.Swapchain = undefined,
+framebuffer_resized: bool = false,
 
 pub const MAIN_RENDER_PASS_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
 
@@ -110,9 +111,11 @@ pub const CreateInfo = struct {
     physics_debug: ?*const core.engine.Physics.DebugContext,
     meshes3D: bool,
     meshes2D: bool,
+    swapchain: Swapchain.CreateOpts,
 };
 
 pub fn init(
+    allocs: core.engine.Allocators,
     ci: CreateInfo,
 ) Allocator.Error!@This() {
     const meshes3D =
@@ -125,10 +128,12 @@ pub fn init(
     if (meshes2D == null and meshes3D == null)
         @panic("attempted to create empty renderer??");
 
+    const swapchain = try core.engine.Renderer.Swapchain.create(allocs, ci.swapchain);
     return .{
         .meshes2D = meshes2D,
         .geometry = meshes3D,
         .physics_debug = physics_debug,
+        .swapchain = swapchain,
     };
 }
 
@@ -142,18 +147,19 @@ pub fn deinit(
     if (self.geometry) |*m| m.deinit(allocs, device, alloc_cbs);
     if (self.physics_debug) |*p| p.deinit(allocs, device, alloc_cbs);
     vk.DestroyRenderPass(device, self.main_render_pass, alloc_cbs);
+    self.swapchain.deinit(allocs, device, alloc_cbs);
 }
 
 pub fn updateSets(
     self: @This(),
-    swapchain: *const core.engine.Renderer.Swapchain,
+    // swapchain: *const core.engine.Renderer.Swapchain,
     device: vk.Device,
     allocated_resources: *core.resources.Manager.AllocatedData,
 ) void {
     if (self.meshes2D != null) Meshes2D.updateSets(device, allocated_resources);
     if (self.geometry != null) {
         Geometry.updateBufferSets(device, allocated_resources);
-        Geometry.updateAttachmentSets(device, swapchain, allocated_resources);
+        Geometry.updateAttachmentSets(device, &self.swapchain, allocated_resources);
     }
 
     if (self.physics_debug != null) PhysicsDebug.updateSets(device, allocated_resources);
@@ -171,9 +177,9 @@ pub fn registerSetsAndBuffers(
     if (self.physics_debug != null) try PhysicsDebug.registerSetsAndBuffers(a, device, resources, alloc_cbs);
 }
 
-pub fn getInstances(self: *@This(), a: Allocator, world: *core.engine.world.GameWorld) Allocator.Error!void {
-    if (self.meshes2D) |*m| try m.getInstances(a, world);
-    if (self.geometry) |*m| try m.getInstances(a, world);
+pub fn instancesFromWorld(self: *@This(), a: Allocator, world: *core.engine.world.GameWorld) Allocator.Error!void {
+    if (self.meshes2D) |*m| try m.instancesFromWorld(a, world);
+    if (self.geometry) |*m| try m.instancesFromWorld(a, world);
 }
 
 pub fn syncResources(self: @This(), alloc_resources: *const core.resources.Manager.AllocatedData) void {
@@ -244,7 +250,7 @@ pub fn createMainRenderPass(
             .pColorAttachments = &gbuffer_attachments.color,
             .inputAttachmentCount = @intCast(gbuffer_attachments.input.len),
             .pInputAttachments = &gbuffer_attachments.input,
-            .pDepthStencilAttachment = if (gbuffer_attachments.depth) |a| &a else null,
+            .pDepthStencilAttachment = if (gbuffer_attachments.depth) |*a| a else null,
         };
 
     const ssao_subpass =
@@ -254,7 +260,7 @@ pub fn createMainRenderPass(
             .pColorAttachments = &ssao_attachments.color,
             .inputAttachmentCount = @intCast(ssao_attachments.input.len),
             .pInputAttachments = &ssao_attachments.input,
-            .pDepthStencilAttachment = if (ssao_attachments.depth) |a| &a else null,
+            .pDepthStencilAttachment = if (ssao_attachments.depth) |*a| a else null,
         };
 
     const final_subpass =
@@ -267,7 +273,7 @@ pub fn createMainRenderPass(
             },
             .inputAttachmentCount = @intCast(final_attachments.input.len),
             .pInputAttachments = &final_attachments.input,
-            .pDepthStencilAttachment = if (final_attachments.depth) |a| &a else null,
+            .pDepthStencilAttachment = if (final_attachments.depth) |*a| a else null,
         };
 
     const subpass_descriptions = [_]vk.SubpassDescription{
@@ -328,4 +334,30 @@ pub fn createMainRenderPass(
     };
 
     checkVk(vk.CreateRenderPass(log_device, &ci, alloc_cbs, &self.main_render_pass)) catch @panic("failed to create render pass");
+}
+
+pub fn recreateSwapchain(
+    self: *@This(),
+    allocs: core.engine.Allocators,
+    opts: Swapchain.CreateOpts,
+    allocated_resources: *core.resources.Manager.AllocatedData,
+    alloc_cbs: ?*vk.AllocationCallbacks,
+) void {
+    var recreate_opts = opts;
+    recreate_opts.old_swapchain = self.swapchain.handle;
+    self.swapchain.recreate(
+        allocs,
+        recreate_opts,
+        self.main_render_pass,
+        alloc_cbs,
+    );
+
+    Geometry.updateAttachmentSets(recreate_opts.logical_device, &self.swapchain, allocated_resources);
+
+    // BAD
+    self.geometry.?.pipelines.dither_params.resolution = core.lib.math.Vec2{
+        .x = @as(f32, @floatFromInt(self.swapchain.extent.width)),
+        .y = @as(f32, @floatFromInt(self.swapchain.extent.height)),
+    };
+    self.framebuffer_resized = false;
 }

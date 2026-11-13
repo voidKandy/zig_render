@@ -6,7 +6,8 @@ const box3d_usage = core.bindings.box3d_usage;
 
 world: box3d.WorldId,
 debug_ctx: ?*DebugContext,
-meshes: std.StringHashMapUnmanaged(*box3d.MeshData) = .empty,
+// meshes: std.StringHashMapUnmanaged(*box3d.MeshData) = .empty,
+colliders: std.StringHashMapUnmanaged(*box3d.HullData) = .empty,
 
 pub fn init(debug_ci: ?DebugContext.CreateInfo) std.mem.Allocator.Error!@This() {
     var world_def = box3d.DefaultWorldDef();
@@ -37,11 +38,11 @@ pub fn init(debug_ci: ?DebugContext.CreateInfo) std.mem.Allocator.Error!@This() 
 pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
     box3d.DestroyWorld(self.world);
 
-    var iter = self.meshes.valueIterator();
-    while (iter.next()) |mesh|
-        box3d.DestroyMesh(mesh.*);
+    var iter = self.colliders.valueIterator();
+    while (iter.next()) |hull|
+        box3d.DestroyHull(hull.*);
 
-    self.meshes.deinit(a);
+    self.colliders.deinit(a);
 
     if (self.debug_ctx) |ctx| {
         ctx.vertices.deinit(ctx.allocator);
@@ -49,7 +50,7 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
     }
 }
 
-pub fn createMeshes(
+pub fn createColliders(
     self: *@This(),
     a: std.mem.Allocator,
     _: *core.engine.world.GameWorld,
@@ -60,10 +61,12 @@ pub fn createMeshes(
         const idx = entry.value_ptr.*;
         const name = entry.key_ptr.*;
 
-        const result = try self.meshes.getOrPut(a, name);
+        const result = try self.colliders.getOrPut(a, name);
         if (result.found_existing) continue;
-        const b3d_mesh: *box3d.MeshData = &(try box3d_usage.createMesh(a, meshes, idx))[0];
-        result.value_ptr.* = b3d_mesh;
+        const verts = try meshes.getMeshVertices(a, idx);
+        const wrap = try core.lib.alpha_wrapping.wrapVertex3DSoup(a, verts);
+        const b3d_collider: *box3d.HullData = &(try box3d_usage.getMeshCollider(a, wrap))[0];
+        result.value_ptr.* = b3d_collider;
     }
 }
 
@@ -170,27 +173,51 @@ pub const DebugContext = struct {
         .create_debug_shape = struct {
             pub fn call(debug_shape: ?*const box3d.DebugShape, context: ?*anyopaque) callconv(.c) ?*anyopaque {
                 const ds = debug_shape.?;
-                if (ds.type != box3d.mesh_shape) return null; // let boxes/spheres/capsules keep using their typed callbacks
-
                 const ctx: *DebugContext = @ptrCast(@alignCast(context.?));
-                const mesh_data = ds.unnamed_0.mesh[0].data;
 
-                const verts = box3d.GetMeshVertices(mesh_data);
-                const tris = box3d.GetMeshTriangles(mesh_data);
-                const tri_count = mesh_data[0].triangleCount;
+                var lines: std.ArrayListUnmanaged(box3d.Vec3) = .empty;
 
-                var lines = std.ArrayListUnmanaged(box3d.Vec3).initCapacity(ctx.allocator, @intCast(tri_count * 6)) catch return null;
+                switch (ds.type) {
+                    box3d.mesh_shape => {
+                        const mesh_data = ds.unnamed_0.mesh[0].data;
+                        const verts = box3d.GetMeshVertices(mesh_data);
+                        const tris = box3d.GetMeshTriangles(mesh_data);
+                        const tri_count: usize = @intCast(mesh_data[0].triangleCount);
 
-                for (0..@intCast(tri_count)) |i| {
-                    const tri = tris[i];
-                    const v0 = verts[@intCast(tri.index1)];
-                    const v1 = verts[@intCast(tri.index2)];
-                    const v2 = verts[@intCast(tri.index3)];
-                    lines.appendSliceAssumeCapacity(&.{ v0, v1, v1, v2, v2, v0 });
+                        lines.ensureTotalCapacity(ctx.allocator, tri_count * 6) catch return null;
+                        for (tris[0..tri_count]) |tri| {
+                            const v0 = verts[@intCast(tri.index1)];
+                            const v1 = verts[@intCast(tri.index2)];
+                            const v2 = verts[@intCast(tri.index3)];
+                            lines.appendSliceAssumeCapacity(&.{ v0, v1, v1, v2, v2, v0 });
+                        }
+                    },
+
+                    box3d.hull_shape => {
+                        const hull = ds.unnamed_0.hull; // adjust: may be a pointer or a struct with .hull
+                        const points = box3d.GetHullPoints(hull);
+                        const edges = box3d.GetHullEdges(hull);
+                        const edge_count: usize = @intCast(hull[0].edgeCount);
+
+                        lines.ensureTotalCapacity(ctx.allocator, edge_count) catch return null;
+                        // half-edges come in twin pairs, so step by 2 to draw each edge once
+                        var i: usize = 0;
+                        while (i + 1 < edge_count) : (i += 2) {
+                            const a = points[@intCast(edges[i].origin)];
+                            const b = points[@intCast(edges[i + 1].origin)];
+                            lines.appendSliceAssumeCapacity(&.{ a, b });
+                        }
+                    },
+
+                    // boxes/spheres/capsules use their typed callbacks
+                    else => return null,
                 }
 
                 const owned = lines.toOwnedSlice(ctx.allocator) catch return null;
-                const boxed = ctx.allocator.create(DebugMeshLines) catch return null;
+                const boxed = ctx.allocator.create(DebugMeshLines) catch {
+                    ctx.allocator.free(owned);
+                    return null;
+                };
                 boxed.* = .{ .lines = owned };
                 return @ptrCast(boxed);
             }
