@@ -50,7 +50,7 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
     }
 }
 
-pub fn createColliders(
+pub fn createMeshColliders(
     self: *@This(),
     a: std.mem.Allocator,
     _: *core.engine.world.GameWorld,

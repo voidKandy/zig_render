@@ -166,7 +166,7 @@ pub fn main(init: std.process.Init) void {
     engine.updateSets();
     engine.initPipelines();
 
-    engine.physics.createColliders(
+    engine.physics.createMeshColliders(
         engine.allocs.std,
         &engine.world,
         &engine.resources.meshes3D,
@@ -181,15 +181,20 @@ fn createEntities(
     world: *core.engine.world.GameWorld,
     physics: *const core.engine.Physics,
 ) void {
-    for (0..3) |i| {
+    for ([_]struct { []const u8, []const u8 }{
+        .{
+            "viking_room.obj",
+            "debug.gray",
+        },
+        .{
+            "suzanne.obj",
+            "debug.blue",
+        },
+    }, 0..) |names, i| {
         var ent = world.entities.register(null) catch @panic("OOM");
         ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
             resources,
-            .{
-                .mesh = "viking_room.obj",
-                .material = "debug.gray",
-                // .material = "globals.viking_room",
-            },
+            .{ .mesh = names.@"0", .material = names.@"1" },
         ));
 
         var tx = core.engine.world.WorldTransform{};
@@ -215,45 +220,9 @@ fn createEntities(
             .id = body_id,
         });
 
-        // const idx = resources.meshes3D.mesh_indices.get("viking_room.obj").?;
-        // const bounds = resources.meshes3D.bounds.items[idx];
-        // const extents = bounds.extents();
-        // const center = bounds.center();
-
-        // const local_transform = core.clibs.box3d.Transform{
-        //     .p = core.bindings.box3d_usage.fromCoreVec3(center),
-        //     .q = core.bindings.box3d_usage.fromCoreVec4(.IDENTITY), // check exact identity-quat name in your bindings
-        // };
-
-        // const box = core.clibs.box3d.MakeTransformedBoxHull(
-        //     extents.x,
-        //     extents.y,
-        //     extents.z,
-        //     local_transform,
-        // );
-
-        const hull = physics.colliders.get("viking_room.obj").?;
+        const hull = physics.colliders.get(names.@"0").?;
         var shape_def = core.clibs.box3d.DefaultShapeDef();
         _ = core.clibs.box3d.CreateHullShape(body_id, &shape_def, hull);
-        // _ = core.clibs.box3d.CreateHullShape(body_id, &shape_def, &box.base);
-    }
-    {
-        var ent = world.entities.register(null) catch @panic("OOM");
-        ent.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(
-            resources,
-            .{
-                .mesh = "suzanne.obj",
-                .material = "debug.blue",
-            },
-        ));
-
-        var tx = core.engine.world.WorldTransform{};
-        tx.position = .{
-            .x = 0.0,
-            .y = 100.0,
-            .z = 0.0,
-        };
-        ent.addComponent(.world_transform, tx);
     }
 
     {
@@ -286,7 +255,9 @@ fn createEntities(
         var shape_def = core.clibs.box3d.DefaultShapeDef();
         shape_def.density = 0.0;
         _ = core.clibs.box3d.CreateHullShape(body_id, &shape_def, hull);
-    } // for (self.meshes2D.ranges.items) |ranges| {
+    }
+
+    // for (self.meshes2D.ranges.items) |ranges| {
     //     var ent = world.entities.register(null) catch @panic("OOM");
     //     ent.addComponent(.mesh2D, core.engine.world.Mesh2DComponent{
     //         .ranges = ranges,
