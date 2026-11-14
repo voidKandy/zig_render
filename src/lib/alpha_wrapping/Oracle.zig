@@ -272,11 +272,12 @@ pub fn buildNode(self: *@This(), a: Allocator, centroids: []const Vec3, start: u
         return @intCast(idx);
     }
     const ext = new_node.aabb.extents();
-    const longest_axis: CentroidSortCtx.Axis = a: {
-        if (ext.y > ext.x) break :a .y;
-        if (ext.z > ext.x) break :a .z;
-        break :a .x;
-    };
+    const longest_axis: CentroidSortCtx.Axis = if (ext.x >= ext.y and ext.x >= ext.z)
+        .x
+    else if (ext.y >= ext.z)
+        .y
+    else
+        .z;
 
     const mid = start + count / 2;
     const ctx = CentroidSortCtx{ .centroids = centroids, .axis = longest_axis };
