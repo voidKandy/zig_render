@@ -83,9 +83,8 @@ const Label = enum(u8) {
 
 const Wrap = @This();
 
-io: std.Io.Threaded,
-oracle: Oracle,
-delaunay: Delaunay,
+oracle: Oracle = .{},
+delaunay: Delaunay = .{},
 params: WrapParams,
 stats: WrapStats = .{},
 labels: std.ArrayListUnmanaged(Label) = .empty,
@@ -93,15 +92,11 @@ alpha_squared: f64 = 0.0,
 first_real_vertex: shared.VertexId = 0, // ids < this are super/bbox scaffolding
 
 pub fn init(
-    a: std.mem.Allocator,
     params: WrapParams,
 ) @This() {
     return @This(){
-        .io = std.Io.Threaded.init(a, .{}),
         .params = params,
         .alpha_squared = params.alpha * params.alpha,
-        .oracle = undefined,
-        .delaunay = undefined,
     };
 }
 
@@ -188,9 +183,9 @@ fn gateSquaredRadius(self: *const @This(), outside: shared.CellId, fi: usize, in
     );
 }
 
-fn gateTraversable(self: *const @This(), outside: shared.CellId, fi: usize, inside: shared.CellId) bool {
-    return gateSquaredRadius(outside, fi, inside) > self.alpha_squared;
-}
+// fn gateTraversable(self: *const @This(), outside: shared.CellId, fi: usize, inside: shared.CellId) bool {
+//     return self.gateSquaredRadius(outside, fi, inside) > self.alpha_squared;
+// }
 
 fn computeSteinerPoint(
     self: *const @This(),
@@ -347,7 +342,6 @@ fn wrapTris(
     var new_cells = std.ArrayListUnmanaged(shared.CellId).empty;
     defer new_cells.deinit(alloc);
 
-    const bf = std.Io.Clock.now(.real, self.io.io()).toMilliseconds();
     while (pq.pop()) |g| {
         self.stats.gates_popped += 1;
 
@@ -412,14 +406,6 @@ fn wrapTris(
             }
         }
     }
-
-    const dif = std.Io.Clock.now(.real, self.io.io()).toMilliseconds() - bf;
-    log.debug(
-        \\ queue took: {d}ms to process
-    , .{dif});
-    log.debug("AFTER LOOP: popped={d} carved={d} steiner={d}", .{
-        self.stats.gates_popped, self.stats.carved, self.stats.steiner_points,
-    });
 
     if (self.params.manifold) try self.makeManifold(alloc);
 
@@ -540,7 +526,7 @@ fn extract(self: *@This(), alloc: Allocator) Allocator.Error!Mesh {
 }
 
 fn alphaWrap(alloc: Allocator, tris: []const shared.Triangle, params: WrapParams, stats: *WrapStats) Allocator.Error!Mesh {
-    var wrap = Wrap.init(alloc, params);
+    var wrap = Wrap.init(params);
     defer wrap.deinit(alloc);
 
     const m = try wrap.wrapTris(alloc, tris);
@@ -781,7 +767,8 @@ test "cube_is_watertight_and_encloses" {
     const offset = alpha / 10.0;
 
     var st = WrapStats{};
-    var m = try runWrap(alloc, soup, alpha, offset, false, &st);
+    const params = WrapParams{ .alpha = alpha, .offset = offset, .manifold = false };
+    var m = try alphaWrap(alloc, soup, params, &st);
     defer m.deinit(alloc);
 
     const c = try tu.checkMesh(alloc, m);
@@ -818,7 +805,8 @@ test "sphere_band_and_facet_bound" {
     const offset = alpha / 15.0;
 
     var st = WrapStats{};
-    var m = try runWrap(alloc, soup, alpha, offset, false, &st);
+    const params = WrapParams{ .alpha = alpha, .offset = offset, .manifold = false };
+    var m = try alphaWrap(alloc, soup, params, &st);
     defer m.deinit(alloc);
 
     const c = try tu.checkMesh(alloc, m);
@@ -865,7 +853,8 @@ test "single_triangle_makes_thin_shell" {
     const offset = 0.02;
 
     var st = WrapStats{};
-    var m = try runWrap(alloc, &soup, alpha, offset, false, &st);
+    const params = WrapParams{ .alpha = alpha, .offset = offset, .manifold = false };
+    var m = try alphaWrap(alloc, &soup, params, &st);
     defer m.deinit(alloc);
 
     const c = try tu.checkMesh(alloc, m);
@@ -915,7 +904,8 @@ test "robust_to_defective_soup" {
     const offset = 0.01;
 
     var stats = WrapStats{};
-    var m = try runWrap(alloc, soup.items, 0.12, offset, true, &stats);
+    const params = WrapParams{ .alpha = 0.12, .offset = offset, .manifold = false };
+    var m = try alphaWrap(alloc, soup.items, params, &stats);
     defer m.deinit(alloc);
 
     const c = try tu.checkMesh(alloc, m);
@@ -943,7 +933,8 @@ test "torus_genus_depends_on_alpha" {
 
     {
         var s1 = WrapStats{};
-        var keep = try runWrap(alloc, soup, 0.15, offset, false, &s1);
+        const params = WrapParams{ .alpha = 0.15, .offset = offset, .manifold = false };
+        var keep = try alphaWrap(alloc, soup, params, &s1);
         defer keep.deinit(alloc);
 
         const ck = try tu.checkMesh(alloc, keep);
@@ -958,7 +949,8 @@ test "torus_genus_depends_on_alpha" {
 
     {
         var s2 = WrapStats{};
-        var fill = try runWrap(alloc, soup, 0.9, offset, false, &s2);
+        const params = WrapParams{ .alpha = 0.9, .offset = offset, .manifold = false };
+        var fill = try alphaWrap(alloc, soup, params, &s2);
         defer fill.deinit(alloc);
 
         const cf = try tu.checkMesh(alloc, fill);
@@ -987,7 +979,8 @@ test "alpha_controls_gap_bridging" {
     // into one connected shell.
     {
         var stbig = WrapStats{};
-        var big = try runWrap(alloc, soup.items, 0.5, offset, false, &stbig);
+        const params = WrapParams{ .alpha = 0.5, .offset = offset, .manifold = false };
+        var big = try alphaWrap(alloc, soup.items, params, &stbig);
         defer big.deinit(alloc);
 
         const cb = try tu.checkMesh(alloc, big);
@@ -1002,7 +995,8 @@ test "alpha_controls_gap_bridging" {
     // separately -> two components.
     {
         var stsmall = WrapStats{};
-        var small = try runWrap(alloc, soup.items, 0.12, offset, false, &stsmall);
+        const params = WrapParams{ .alpha = 0.12, .offset = offset, .manifold = false };
+        var small = try alphaWrap(alloc, soup.items, params, &stsmall);
         defer small.deinit(alloc);
 
         const cs = try tu.checkMesh(alloc, small);

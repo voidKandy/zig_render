@@ -188,11 +188,71 @@ pub const lib = struct {
     pub const mesh = @import("lib/mesh.zig");
     pub const terrain = @import("lib/terrain.zig");
 
+    /// https://doc.cgal.org/latest/Alpha_wrap_3/index.html
     /// started as port of this guy's implementation
     /// https://github.com/alecjacobson/alpha-wrap/tree/main/src
     pub const alpha_wrapping = struct {
+        /// Incremental 3D Delaunay tetrahedralization (Bowyer-Watson).
+        ///
+        /// The triangulation starts as a single super-tetrahedron (vertex ids 0..3) that
+        /// encloses the whole domain, so every inserted point is strictly interior and
+        /// the hull never needs special handling. Cells store four vertex ids and four
+        /// neighbor ids, where neighbor `i` lies across the facet opposite vertex `i`
+        /// (see `FACET`). Live cells are always positively oriented. Dead cell slots
+        /// are recycled through a free list, so a `CellId` is only stable while its
+        /// cell is alive.
+        ///
+        /// `insert` locates the containing cell with a walk (seeded by `last_cell`),
+        /// floods the conflict zone (cells whose circumsphere contains the point) using
+        /// per-cell stamps, kills those cells, and stellates the cavity boundary to the
+        /// new vertex. Duplicate points return the existing vertex id.
+        ///
+        /// Uses exact `orient3d`/`inSphere` predicates but no symbolic perturbation:
+        /// cospherical points count as "not in conflict". Circumcenters and radii are
+        /// inexact floating-point constructions.
         pub const Delaunay = @import("lib/alpha_wrapping/Delaunay.zig");
+
+        /// 3D alpha wrapping: builds a watertight, orientation-consistent triangle mesh
+        /// that strictly encloses an input triangle soup, following the CGAL
+        /// alpha-wrap algorithm.
+        ///
+        /// A Delaunay triangulation of a loose bounding box (plus scaffolding corner
+        /// vertices) is labelled cell by cell as inside/outside/manifold. Starting from
+        /// the exterior, "gates" (outside->inside facets) are processed from largest to
+        /// smallest squared radius, and only gates whose radius exceeds `alpha^2` are
+        /// traversable. For each gate, either:
+        ///   - Rule 1: the dual Voronoi edge crosses the `offset` iso-surface of the
+        ///     input, so a Steiner point is inserted there;
+        ///   - Rule 2: the inside cell still intersects the input, so a Steiner point is
+        ///     inserted at the offset projection of its circumcenter; or
+        ///   - otherwise the inside cell is carved (relabelled outside).
+        /// `alpha` sets the feature/gap size the wrap can enter (smaller = tighter,
+        /// more detail, more cells); `offset` sets the distance kept from the input.
+        ///
+        /// With `params.manifold` set, a post-pass reclaims outside cells around
+        /// non-manifold vertices. The boundary between solid and outside cells is then
+        /// extracted as the output `Mesh`. Statistics are collected in `WrapStats`.
         pub const Wrap = @import("lib/alpha_wrapping/Wrap.zig");
+
+        /// Geometric query oracle over a triangle soup, backed by a static AABB
+        /// bounding-volume hierarchy (median split on the longest axis, leaves of up to
+        /// 4 triangles).
+        ///
+        /// Zero-area triangles are discarded at build time, since they carry no
+        /// distance information and destabilize the offset projection and tet tests.
+        /// All queries use `f64`.
+        ///
+        /// Supported queries:
+        ///   - `squaredDistance` / `unsignedDistance` / `closestPoint`: nearest point on
+        ///     the soup, with best-first traversal and bbox pruning;
+        ///   - `doIntersectTet`: whether any triangle intersects a tetrahedron (exact
+        ///     half-space polygon clipping with a small epsilon, early exit);
+        ///   - `firstOffsetCrossing`: the first point along a segment where the
+        ///     distance to the soup drops to `delta`, found by sphere tracing within
+        ///     the delta-inflated bounding box.
+        ///
+        /// An oracle built from an empty (or fully degenerate) soup answers every query
+        /// as "nothing there".
         pub const Oracle = @import("lib/alpha_wrapping/Oracle.zig");
         const shared = @import("lib/alpha_wrapping/shared.zig");
 

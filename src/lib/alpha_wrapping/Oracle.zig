@@ -222,22 +222,28 @@ pub fn build(a: Allocator, tris_in: []const Triangle) Allocator.Error!@This() {
     for (0..self.triangles.items.len) |i|
         self.order.appendAssumeCapacity(i);
 
-    if (self.triangles.items.len > 0) _ = try self.buildNode(a, 0, self.triangles.items.len, 0);
+    const cents = try a.alloc(Vec3, self.triangles.items.len);
+    defer a.free(cents);
+    for (cents, self.triangles.items) |*c, *t| c.* = triCentroid(t);
+
+    if (self.triangles.items.len > 0)
+        _ = try self.buildNode(a, cents, 0, self.triangles.items.len, 0);
 
     return self;
 }
 
 const CentroidSortCtx = struct {
     centroids: []const Vec3,
-    axis: u2,
+    axis: Axis,
 
+    const Axis =
+        enum(u2) { x, y, z };
     fn key(self: @This(), i: usize) f64 {
         const centroid = self.centroids[i];
         return switch (self.axis) {
-            0 => centroid.x,
-            1 => centroid.y,
-            2 => centroid.z,
-            else => unreachable,
+            .x => centroid.x,
+            .y => centroid.y,
+            .z => centroid.z,
         };
     }
 
@@ -246,7 +252,7 @@ const CentroidSortCtx = struct {
     }
 };
 
-pub fn buildNode(self: *@This(), a: Allocator, start: usize, count: usize, depth: usize) Allocator.Error!i32 {
+pub fn buildNode(self: *@This(), a: Allocator, centroids: []const Vec3, start: usize, count: usize, depth: usize) Allocator.Error!i32 {
     const idx = self.nodes.items.len;
     var new_node = Node{
         .aabb = .empty(),
@@ -266,28 +272,20 @@ pub fn buildNode(self: *@This(), a: Allocator, start: usize, count: usize, depth
         return @intCast(idx);
     }
     const ext = new_node.aabb.extents();
-    const axis: u2 = a: {
-        if (ext.y > ext.x) break :a 1;
-        if (ext.z > ext.x) break :a 2;
-        break :a 0;
+    const longest_axis: CentroidSortCtx.Axis = a: {
+        if (ext.y > ext.x) break :a .y;
+        if (ext.z > ext.x) break :a .z;
+        break :a .x;
     };
 
     const mid = start + count / 2;
-
-    const ctx = CentroidSortCtx{ .centroids = blk: {
-        const cents = try a.alloc(Vec3, self.triangles.items.len);
-        for (cents, 0..) |*cent, i| {
-            cent.* = triCentroid(&self.triangles.items[i]);
-        }
-        break :blk cents;
-    }, .axis = axis };
-
-    defer a.free(ctx.centroids);
+    const ctx = CentroidSortCtx{ .centroids = centroids, .axis = longest_axis };
 
     const slice = self.order.items[start .. start + count];
     std.sort.pdq(usize, slice, ctx, CentroidSortCtx.lessThan);
-    const l = try self.buildNode(a, start, mid - start, depth + 1);
-    const r = try self.buildNode(a, mid, start + count - mid, depth + 1);
+
+    const l = try self.buildNode(a, centroids, start, mid - start, depth + 1);
+    const r = try self.buildNode(a, centroids, mid, start + count - mid, depth + 1);
 
     new_node.left = l;
     // right child index stored in `start` for internal nodes
@@ -492,7 +490,6 @@ fn bruteDist2(tris: []const Triangle, p: Vec3) f64 {
 }
 
 fn bruteIntersectTet(
-    alloc: Allocator,
     tris: []const Triangle,
     a: Vec3,
     b: Vec3,
@@ -500,7 +497,7 @@ fn bruteIntersectTet(
     d: Vec3,
 ) bool {
     for (tris) |t| {
-        if (Oracle.triangleIntersectsTet(alloc, t, a, b, c, d) catch @panic("OOM")) return true;
+        if (Oracle.triangleIntersectsTet(t, a, b, c, d)) return true;
     }
     return false;
 }
@@ -586,8 +583,8 @@ test "oracle.tet_intersection_matches_brute_force" {
         const c = a.add(Vec3.make(0, uniform(rng, 0.1, 0.8), 0));
         const d = a.add(Vec3.make(0, 0, uniform(rng, 0.1, 0.8)));
 
-        const via_tree = o.doIntersectTet(a, b, c, d) catch @panic("OOM");
-        const via_brute = bruteIntersectTet(alloc, tris, a, b, c, d);
+        const via_tree = o.doIntersectTet(a, b, c, d);
+        const via_brute = bruteIntersectTet(tris, a, b, c, d);
         total += 1;
         if (via_tree == via_brute) agree += 1;
     }
@@ -595,7 +592,6 @@ test "oracle.tet_intersection_matches_brute_force" {
 }
 
 test "triangle_intersects_tet.known_cases" {
-    const alloc = testing.allocator;
 
     // Unit tet at origin.
     const a = Vec3.make(0, 0, 0);
@@ -605,16 +601,16 @@ test "triangle_intersects_tet.known_cases" {
 
     // Triangle straddling the tet interior.
     const t1: Triangle = .{ Vec3.make(0.2, 0.2, -1), Vec3.make(0.2, 0.2, 1), Vec3.make(0.6, 0.1, 0.1) };
-    try testing.expect(try Oracle.triangleIntersectsTet(alloc, t1, a, b, c, d));
+    try testing.expect(Oracle.triangleIntersectsTet(t1, a, b, c, d));
 
     // Triangle far away.
     const t2: Triangle = .{ Vec3.make(5, 5, 5), Vec3.make(6, 5, 5), Vec3.make(5, 6, 5) };
-    try testing.expect(!try Oracle.triangleIntersectsTet(alloc, t2, a, b, c, d));
+    try testing.expect(!Oracle.triangleIntersectsTet(t2, a, b, c, d));
 
     // Triangle enclosing the tet (tet vertices inside triangle's prism) but
     // coplanar far above -> no intersection.
     const t3: Triangle = .{ Vec3.make(-5, -5, 5), Vec3.make(5, -5, 5), Vec3.make(0, 5, 5) };
-    try testing.expect(!try Oracle.triangleIntersectsTet(alloc, t3, a, b, c, d));
+    try testing.expect(!Oracle.triangleIntersectsTet(t3, a, b, c, d));
 }
 
 test "oracle.offset_crossing_on_single_triangle" {
