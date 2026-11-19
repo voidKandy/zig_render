@@ -2,7 +2,7 @@ const std = @import("std");
 const core = @import("../root.zig");
 const log = std.log.scoped(.MappedBuffers);
 const vma_usage = core.bindings.vma_usage;
-const checkVk = core.bindings.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_usage.checkVk;
 const vk = core.clibs.vk;
 
 pub const CreateInfo = struct {
@@ -107,7 +107,7 @@ pub fn upload(
             .allocation = alloc,
         };
 
-        core.bindings.vulkan_init.checkVk(core.clibs.vma.MapMemory(
+        checkVk(core.clibs.vma.MapMemory(
             allocs.vma,
             alloc.allocation,
             &buf.mapped,

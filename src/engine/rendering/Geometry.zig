@@ -4,11 +4,11 @@ const math_mod = core.lib.math;
 const log = std.log.scoped(.Geometry);
 const imgui = core.clibs.imgui;
 const mesh_mod = core.lib.mesh;
-const vki = core.bindings.vulkan_init;
+const vku = core.bindings.vulkan_usage;
 const vk = core.clibs.vk;
 const vma = core.clibs.vma;
 const vma_usage = core.bindings.vma_usage;
-const checkVk = vki.checkVk;
+const checkVk = vku.checkVk;
 const Mesh = mesh_mod.Mesh3D;
 const Meshes3D = core.resources.Meshes3D;
 

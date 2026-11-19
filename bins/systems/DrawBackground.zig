@@ -5,7 +5,7 @@ const math_mod = engine.lib.math;
 const log = std.log.scoped(.DrawBackground);
 const vk = engine.clibs.vk;
 const imgui = engine.clibs.imgui;
-const checkVk = engine.bindings.vulkan_init.checkVk;
+const checkVk = engine.bindings.vulkan_usage.checkVk;
 
 swapchain_extent: vk.Extent2D,
 
@@ -121,7 +121,7 @@ pub fn recordComputeCommands(
     self.pipeline.bind(cmd);
     const draw_image = allocated_resources.materials.textures.get(BACKGROUND_IMAGE_NAME).?;
     const tex_set = allocated_resources.materials.writable_textures_descriptor_sets.get(BACKGROUND_SET_NAME).?.set;
-    engine.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_usage.transitionImageLayout(
         cmd,
         draw_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -166,7 +166,7 @@ pub fn recordComputeCommands(
     );
     vk.CmdDispatch(cmd, w, h, 1);
 
-    engine.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_usage.transitionImageLayout(
         cmd,
         draw_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
@@ -178,7 +178,7 @@ pub fn recordComputeCommands(
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
-    engine.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_usage.transitionImageLayout(
         cmd,
         swapchain.images[framebuffer_index],
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -190,7 +190,7 @@ pub fn recordComputeCommands(
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
-    engine.bindings.vulkan_util.copyImageToImage(
+    engine.bindings.vulkan_usage.copyImageToImage(
         cmd,
         draw_image.image,
         swapchain.images[framebuffer_index],
@@ -198,7 +198,7 @@ pub fn recordComputeCommands(
         swapchain.extent,
     );
 
-    engine.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_usage.transitionImageLayout(
         cmd,
         swapchain.images[framebuffer_index],
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,

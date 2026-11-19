@@ -7,10 +7,7 @@ pub const bindings = struct {
     pub const sdl_usage = @import("bindings/sdl_usage.zig");
     pub const box3d_usage = @import("bindings/box3d_usage.zig");
 
-    // TODO
-    // pub const vulkan_usage = @import("bingings/vulkan_usage.zig");
-    pub const vulkan_init = @import("bindings/vulkan_init.zig");
-    pub const vulkan_util = @import("bindings/vulkan_util.zig");
+    pub const vulkan_usage = @import("bindings/vulkan_usage.zig");
 
     test {
         std.testing.refAllDecls(@This());

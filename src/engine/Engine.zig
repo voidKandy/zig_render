@@ -1,17 +1,16 @@
 const std = @import("std");
 const core = @import("../root.zig");
 const c = core.clibs;
-const vki = core.bindings.vulkan_init;
+const vku = core.bindings.vulkan_usage;
 const frames_mod = core.engine.frames;
 const Input = core.engine.Input;
 const vma_usage = core.bindings.vma_usage;
 const math_mod = core.lib.math;
-const util = core.bindings.vulkan_util;
 const vk = c.vk;
-const checkVk = vki.checkVk;
+const checkVk = vku.checkVk;
 const sdl = c.sdl;
 const checkSdl = core.bindings.sdl_usage.checkSdl;
-const VkError = vki.VkError;
+const VkError = vku.VkError;
 const log = std.log.scoped(.Engine);
 
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
@@ -314,11 +313,11 @@ io: std.Io,
 input: Input = .{},
 window: *sdl.Window = undefined,
 surface: vk.SurfaceKHR = undefined,
-instance: vki.Instance = undefined,
+instance: vku.Instance = undefined,
 
-physical_device: vki.PhysicalDevice = undefined,
-logical_device: vki.LogicalDevice = undefined,
-upload_context: vki.UploadContext = .{},
+physical_device: vku.PhysicalDevice = undefined,
+logical_device: vku.LogicalDevice = undefined,
+upload_context: vku.UploadContext = .{},
 
 imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
@@ -437,7 +436,7 @@ fn initVulkan(self: *Engine) void {
     const sdl_extensions = sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
     const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
 
-    self.instance = vki.Instance.create(std.heap.page_allocator, .{
+    self.instance = vku.Instance.create(std.heap.page_allocator, .{
         .application_name = "VkGuide",
         .application_version = vk.MAKE_VERSION(0, 1, 0),
         .engine_name = "VkGuide",
@@ -454,7 +453,7 @@ fn initVulkan(self: *Engine) void {
     checkSdl(sdl.Vulkan_CreateSurface(self.window, self.instance.handle, self.alloc_cbs, &self.surface));
 
     // Physical device creation
-    const physical_device = vki.PhysicalDevice.select(self.allocs.std, self.instance.handle, .{
+    const physical_device = vku.PhysicalDevice.select(self.allocs.std, self.instance.handle, .{
         .min_api_version = vk.MAKE_VERSION(1, 1, 0),
         .surface = self.surface,
         .criteria = .PreferDiscrete,
@@ -468,7 +467,7 @@ fn initVulkan(self: *Engine) void {
         .pNext = null,
     };
 
-    var descriptor_indexing_features = vki.LogicalDevice.descriptorIndexingFeatures();
+    var descriptor_indexing_features = vku.LogicalDevice.descriptorIndexingFeatures();
     descriptor_indexing_features.pNext = &shader_draw_parameters_features;
 
     const required_device_extensions: []const [*c]const u8 = &.{
@@ -479,7 +478,7 @@ fn initVulkan(self: *Engine) void {
         vk.KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
         vk.KHR_PORTABILITY_SUBSET_EXTENSION_NAME,
     };
-    const logical_device = vki.LogicalDevice.create(self.allocs.std, .{
+    const logical_device = vku.LogicalDevice.create(self.allocs.std, .{
         .physical_device = self.physical_device,
         .features = vk.PhysicalDeviceFeatures{
             .samplerAnisotropy = vk.TRUE,

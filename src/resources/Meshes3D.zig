@@ -2,7 +2,7 @@ const std = @import("std");
 const core = @import("../root.zig");
 const vma_usage = core.bindings.vma_usage;
 const AllocatedBuffer = vma_usage.AllocatedBuffer;
-const checkVk = core.bindings.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_usage.checkVk;
 const math_mod = core.lib.math;
 const vk = core.clibs.vk;
 const log = std.log.scoped(.Meshes3D);
@@ -327,8 +327,8 @@ pub fn upload(
     self: *@This(),
     allocs: core.engine.Allocators,
     pool: vk.DescriptorPool,
-    upload_ctx: *core.bindings.vulkan_init.UploadContext,
-    device: core.bindings.vulkan_init.LogicalDevice,
+    upload_ctx: *core.bindings.vulkan_usage.UploadContext,
+    device: core.bindings.vulkan_usage.LogicalDevice,
 ) AllocatedData {
     var vertex_buffer: vma_usage.AllocatedBuffer = undefined;
     var index_buffer: vma_usage.AllocatedBuffer = undefined;

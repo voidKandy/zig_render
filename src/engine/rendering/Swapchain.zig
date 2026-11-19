@@ -3,10 +3,9 @@ const Allocator = std.mem.Allocator;
 const core = @import("../../root.zig");
 const log = std.log.scoped(.Swapchain);
 const vma_usage = core.bindings.vma_usage;
-const vki = core.bindings.vulkan_init;
-const vku = core.bindings.vulkan_util;
+const vku = core.bindings.vulkan_usage;
 const vk = core.clibs.vk;
-const checkVk = vki.checkVk;
+const checkVk = vku.checkVk;
 const vma = core.clibs.vma;
 const sdl = core.clibs.sdl;
 
@@ -28,7 +27,7 @@ pub const FrameBufferAttachment = struct {
 };
 
 pub const CreateOpts = struct {
-    physical_device: vki.PhysicalDevice,
+    physical_device: vku.PhysicalDevice,
     logical_device: vk.Device,
     surface: vk.SurfaceKHR,
     old_swapchain: vk.SwapchainKHR = null,

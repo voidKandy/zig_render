@@ -2,7 +2,7 @@ const std = @import("std");
 const core = @import("../root.zig");
 const vma_usage = core.bindings.vma_usage;
 const AllocatedBuffer = vma_usage.AllocatedBuffer;
-const checkVk = core.bindings.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_usage.checkVk;
 const c = core.clibs;
 const math_mod = core.lib.math;
 const vk = c.vk;
@@ -139,8 +139,8 @@ pub fn appendMesh(
 pub fn upload(
     self: *@This(),
     allocs: core.engine.Allocators,
-    upload_ctx: *core.bindings.vulkan_init.UploadContext,
-    device: core.bindings.vulkan_init.LogicalDevice,
+    upload_ctx: *core.bindings.vulkan_usage.UploadContext,
+    device: core.bindings.vulkan_usage.LogicalDevice,
 ) AllocatedData {
     var vertex_buffer: vma_usage.AllocatedBuffer = undefined;
     var index_buffer: vma_usage.AllocatedBuffer = undefined;

@@ -4,8 +4,8 @@ const Allocator = std.mem.Allocator;
 const core = @import("../root.zig");
 const vma = core.clibs.vma;
 const vk = core.clibs.vk;
-const vki = core.bindings.vulkan_init;
-const checkVk = vki.checkVk;
+const vku = core.bindings.vulkan_usage;
+const checkVk = vku.checkVk;
 const vma_usage = core.bindings.vma_usage;
 
 const log = std.log.scoped(.Materials);
@@ -29,10 +29,10 @@ pub const MaterialData = struct {
     pub fn upload(
         self: @This(),
         vma_a: vma.Allocator,
-        upload_ctx: *vki.UploadContext,
-        device: vki.LogicalDevice,
+        upload_ctx: *vku.UploadContext,
+        device: vku.LogicalDevice,
         alloc_cbs: ?*vk.AllocationCallbacks,
-    ) core.bindings.vulkan_init.VkError!vma_usage.AllocatedImage {
+    ) vku.VkError!vma_usage.AllocatedImage {
         const image_size = @as(vk.DeviceSize, @intCast(self.width * self.height * 4));
 
         const staging_buffer = vma_usage.AllocatedBuffer.create(
@@ -195,7 +195,7 @@ pub const WritableTextureCreate = struct {
     format: vk.Format,
     usages: vk.ImageUsageFlags,
     aspect_flags: vk.ImageAspectFlags,
-    initial_transition_function: ?*const fn (vki.LogicalDevice, *vki.UploadContext, vk.Image) void = null,
+    initial_transition_function: ?*const fn (vku.LogicalDevice, *vku.UploadContext, vk.Image) void = null,
 };
 
 material_indices: std.StringHashMapUnmanaged(usize) = .empty,
@@ -433,8 +433,8 @@ pub fn upload(
     self: @This(),
     allocs: core.engine.Allocators,
     pool: vk.DescriptorPool,
-    upload_ctx: *core.bindings.vulkan_init.UploadContext,
-    logical_device: vki.LogicalDevice,
+    upload_ctx: *core.bindings.vulkan_usage.UploadContext,
+    logical_device: vku.LogicalDevice,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!AllocatedData {
     var textures = std.StringHashMapUnmanaged(vma_usage.AllocatedImage).empty;
@@ -461,7 +461,7 @@ pub fn upload(
                     ci.extent,
                     ci.usages,
                 );
-                const view_ci = vki.imageViewCreateInfo(ci.format, image.image, ci.aspect_flags);
+                const view_ci = vku.imageViewCreateInfo(ci.format, image.image, ci.aspect_flags);
 
                 checkVk(vk.CreateImageView(logical_device.handle, &view_ci, alloc_cbs, &image.view)) catch
                     @panic("failed to create maze image view");
@@ -824,9 +824,9 @@ pub const MaterialLibrary = struct {
     fn upload(
         self: @This(),
         allocs: core.engine.Allocators,
-        upload_ctx: *core.bindings.vulkan_init.UploadContext,
-        logical_device: vki.LogicalDevice,
-        physical_device: vki.PhysicalDevice,
+        upload_ctx: *core.bindings.vulkan_usage.UploadContext,
+        logical_device: vku.LogicalDevice,
+        physical_device: vku.PhysicalDevice,
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) @This().AllocatedData {
         var iter = self.metadata.iterator();

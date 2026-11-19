@@ -1,8 +1,8 @@
 const std = @import("std");
 const core = @import("../root.zig");
 const c = core.clibs;
-const vki = core.bindings.vulkan_init;
-const checkVk = vki.checkVk;
+const vku = core.bindings.vulkan_usage;
+const checkVk = vku.checkVk;
 const vk = c.vk;
 
 pub const MappedBuffer = struct {
@@ -69,7 +69,7 @@ pub const AllocatedImage = struct {
         usages: vk.ImageUsageFlags,
     ) @This() {
         var image = @This(){};
-        const ci = vki.imageCreateInfo(format, usages, extent);
+        const ci = vku.imageCreateInfo(format, usages, extent);
 
         const ai = c.vma.AllocationCreateInfo{
             .usage = c.vma.MEMORY_USAGE_GPU_ONLY,

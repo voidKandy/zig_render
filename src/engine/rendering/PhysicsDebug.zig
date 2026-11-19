@@ -5,7 +5,7 @@ const imgui = core.clibs.imgui;
 const vk = core.clibs.vk;
 const box3d = core.clibs.box3d;
 const box3d_usage = core.bindings.box3d_usage;
-const checkVk = core.bindings.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_usage.checkVk;
 
 pub const DebugVertex = extern struct {
     position: core.lib.math.Vec3,

@@ -127,7 +127,7 @@ pub fn Description(comptime opts: DescriptionOptions) type {
                 ci.pPushConstantRanges = &push_constant;
             }
 
-            bindings.vulkan_init.checkVk(clibs.vk.CreatePipelineLayout(
+            bindings.vulkan_usage.checkVk(clibs.vk.CreatePipelineLayout(
                 device,
                 &ci,
                 alloc_cbs,

@@ -3,10 +3,9 @@ const Allocator = std.mem.Allocator;
 const core = @import("../../root.zig");
 const log = std.log.scoped(.Attachments);
 const vma_usage = core.bindings.vma_usage;
-const vki = core.bindings.vulkan_init;
-const vku = core.bindings.vulkan_util;
+const vku = core.bindings.vulkan_usage;
 const vk = core.clibs.vk;
-const checkVk = vki.checkVk;
+const checkVk = vku.checkVk;
 const vma = core.clibs.vma;
 const FrameBufferAttachment = core.engine.Renderer.Swapchain.FrameBufferAttachment;
 
@@ -101,7 +100,7 @@ pub fn CreateManager(comptime INFOS: []const ManagerInfo) type {
             return vals;
         }
 
-        fn findDepthFormat(device: vki.PhysicalDevice) vk.Format {
+        fn findDepthFormat(device: vku.PhysicalDevice) vk.Format {
             if (Depth.format) |f| return f;
             Depth.format = device.findSupportedFormat(
                 &[_]vk.Format{ vk.FORMAT_D32_SFLOAT, vk.FORMAT_D32_SFLOAT_S8_UINT, vk.FORMAT_D24_UNORM_S8_UINT },
@@ -209,7 +208,7 @@ pub fn CreateManager(comptime INFOS: []const ManagerInfo) type {
 
         pub fn init(
             vma_a: vma.Allocator,
-            physical_device: vki.PhysicalDevice,
+            physical_device: vku.PhysicalDevice,
             logical_device: vk.Device,
             swapchain_extent: vk.Extent2D,
             vk_alloc_cbs: ?*vk.AllocationCallbacks,

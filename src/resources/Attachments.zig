@@ -1,7 +1,7 @@
 const std = @import("std");
 const core = @import("../root.zig");
 const vk = core.clibs.vk;
-const checkVk = core.bindings.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_usage.checkVk;
 const Attachments = core.engine.Renderer.Attachments;
 const log = std.log.scoped(.AttachmentResource);
 

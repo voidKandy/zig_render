@@ -1,7 +1,7 @@
 const std = @import("std");
 const core = @import("../root.zig");
 const vk = core.clibs.vk;
-const checkVk = core.bindings.vulkan_init.checkVk;
+const checkVk = core.bindings.vulkan_usage.checkVk;
 const log = std.log.scoped(.ResourceManager);
 const Materials = @import("Materials.zig");
 const Meshes2D = @import("Meshes2D.zig");
@@ -216,8 +216,8 @@ pub fn upload(
     self: *@This(),
     allocs: core.engine.Allocators,
     max_sets: u32,
-    upload_ctx: *core.bindings.vulkan_init.UploadContext,
-    logical_device: core.bindings.vulkan_init.LogicalDevice,
+    upload_ctx: *core.bindings.vulkan_usage.UploadContext,
+    logical_device: core.bindings.vulkan_usage.LogicalDevice,
     alloc_cbs: ?*core.clibs.vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!AllocatedData {
     const pool = self.createDescriptorPool(

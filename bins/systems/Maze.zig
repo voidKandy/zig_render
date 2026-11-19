@@ -4,7 +4,7 @@ const engine = @import("engine");
 const log = std.log.scoped(.MazeSystem);
 const imgui = engine.clibs.imgui;
 const vk = engine.clibs.vk;
-const checkVk = engine.bindings.vulkan_init.checkVk;
+const checkVk = engine.bindings.vulkan_usage.checkVk;
 
 /// the shader needs the camera position
 main_camera_entity: u32,
@@ -110,14 +110,14 @@ pub fn init(
             .aspect_flags = vk.IMAGE_ASPECT_COLOR_BIT,
             .initial_transition_function = &struct {
                 pub fn submit(
-                    device: engine.bindings.vulkan_init.LogicalDevice,
-                    upload_ctx: *engine.bindings.vulkan_init.UploadContext,
+                    device: engine.bindings.vulkan_usage.LogicalDevice,
+                    upload_ctx: *engine.bindings.vulkan_usage.UploadContext,
                     img: vk.Image,
                 ) void {
                     upload_ctx.immediateSubmit(device, struct {
                         img: vk.Image,
                         pub fn submit(this: @This(), cmd_buf: vk.CommandBuffer) void {
-                            engine.bindings.vulkan_util.transitionImageLayout(
+                            engine.bindings.vulkan_usage.transitionImageLayout(
                                 cmd_buf,
                                 this.img,
                                 vk.IMAGE_LAYOUT_UNDEFINED,
@@ -347,7 +347,7 @@ pub fn recordComputeCommands(
     const maze_image = allocated_resources.materials.textures.get(MAZE_RESOURCE_NAME).?;
 
     // transition to GENERAL for compute write
-    engine.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_usage.transitionImageLayout(
         cmd,
         maze_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -362,7 +362,7 @@ pub fn recordComputeCommands(
     vk.CmdDispatch(cmd, w, h, 1);
 
     // transition to SHADER_READ_ONLY so HUD can sample it
-    engine.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_usage.transitionImageLayout(
         cmd,
         maze_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
