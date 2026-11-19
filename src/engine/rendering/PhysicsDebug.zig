@@ -19,6 +19,7 @@ pub const MAX_DEBUG_LINES = 1024 * 32;
 
 pipeline: GraphicsPipeline = undefined,
 debug_ctx_ptr: *const core.engine.Physics.DebugContext,
+camera_set_name: []const u8,
 
 pub fn updateSets(
     device: vk.Device,
@@ -117,7 +118,7 @@ pub fn initPipeline(
     // );
 
     const layouts = GraphicsPipeline.Description.Layouts.init(.{
-        .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+        .camera = resources.mapped_buffers.buffer_set_layouts.get(self.camera_set_name).?.layout,
         .vertex_buffer = resources.mapped_buffers.buffer_set_layouts.get(SET_NAME).?.layout,
     });
 
@@ -137,7 +138,7 @@ pub fn recordCommands(
     self.pipeline.bind(cmd);
 
     const sets = GraphicsPipeline.Description.Sets.init(.{
-        .camera = allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        .camera = allocated_resources.mapped_buffers.buffer_sets.get(self.camera_set_name).?.set,
         .vertex_buffer = allocated_resources.mapped_buffers.buffer_sets.get(SET_NAME).?.set,
     });
 
@@ -155,12 +156,12 @@ pub fn recordCommands(
     vk.CmdDraw(cmd, @intCast(self.debug_ctx_ptr.vertices.items.len), 1, 0, 0);
 }
 
-pub fn drawImgui(_: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
+pub fn drawImgui(_: *@This(), World: type, world: *World, _: core.engine.systems.DrawImguiContext) void {
     var open = true;
     const shown = imgui.Begin("Physics", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     if (!shown) return;
     defer imgui.End();
-    var query = ctx.world.queryEntities(.{ .is = .{ .rule = .at_least, .sig = .initOne(.rigid_body) } });
+    var query = world.queryEntities(.{ .is = .{ .rule = .at_least, .sig = .initOne(.rigid_body) } });
     while (query.next()) |*ent| {
         const transform: ?*core.engine.world.WorldTransform = if (ent.accessComponentPtr(.world_transform) catch null) |trans| trans.world_transform else null;
         const body: *core.engine.world.RigidBody = (ent.accessComponentPtr(.rigid_body) catch unreachable).rigid_body;

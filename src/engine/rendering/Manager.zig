@@ -108,8 +108,13 @@ framebuffer_resized: bool = false,
 pub const MAIN_RENDER_PASS_IMAGE_FORMAT = vk.FORMAT_R16G16B16A16_SFLOAT;
 
 pub const CreateInfo = struct {
-    physics_debug: ?*const core.engine.Physics.DebugContext,
-    meshes3D: bool,
+    physics_debug: ?struct {
+        ptr: *const core.engine.Physics.DebugContext,
+        camera_set_name: []const u8,
+    },
+    geometry: ?struct {
+        camera_set_name: []const u8,
+    },
     meshes2D: bool,
     swapchain: Swapchain.CreateOpts,
 };
@@ -118,20 +123,23 @@ pub fn init(
     allocs: core.engine.Allocators,
     ci: CreateInfo,
 ) Allocator.Error!@This() {
-    const meshes3D =
-        if (ci.meshes3D) Geometry{} else null;
+    const geom =
+        if (ci.geometry) |geoci| Geometry{ .camera_set_name = geoci.camera_set_name } else null;
     const meshes2D =
         if (ci.meshes2D) Meshes2D{} else null;
     const physics_debug =
-        if (ci.physics_debug) |db| PhysicsDebug{ .debug_ctx_ptr = db } else null;
+        if (ci.physics_debug) |db| PhysicsDebug{
+            .debug_ctx_ptr = db.ptr,
+            .camera_set_name = db.camera_set_name,
+        } else null;
 
-    if (meshes2D == null and meshes3D == null)
+    if (meshes2D == null and geom == null)
         @panic("attempted to create empty renderer??");
 
     const swapchain = try core.engine.Renderer.Swapchain.create(allocs, ci.swapchain);
     return .{
         .meshes2D = meshes2D,
-        .geometry = meshes3D,
+        .geometry = geom,
         .physics_debug = physics_debug,
         .swapchain = swapchain,
     };
@@ -177,9 +185,13 @@ pub fn registerSetsAndBuffers(
     if (self.physics_debug != null) try PhysicsDebug.registerSetsAndBuffers(a, device, resources, alloc_cbs);
 }
 
-pub fn instancesFromWorld(self: *@This(), a: Allocator, world: *core.engine.world.GameWorld) Allocator.Error!void {
-    if (self.meshes2D) |*m| try m.instancesFromWorld(a, world);
-    if (self.geometry) |*m| try m.instancesFromWorld(a, world);
+pub fn instancesFromWorld(self: *@This(), World: type, a: Allocator, world: *World) Allocator.Error!void {
+    if (self.meshes2D) |*m| {
+        try m.instancesFromWorld(World, a, world);
+    }
+    if (self.geometry) |*m| {
+        try m.instancesFromWorld(World, a, world);
+    }
 }
 
 pub fn syncResources(self: @This(), alloc_resources: *const core.resources.Manager.AllocatedData) void {
@@ -211,10 +223,10 @@ pub fn recordCommands(
     if (self.meshes2D) |m| m.recordCommands(swapchain, resources, allocated_resources, cmd);
 }
 
-pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
+pub fn drawImgui(self: *@This(), World: type, world: *World, ctx: core.engine.systems.DrawImguiContext) void {
     if (self.meshes2D) |*m| m.drawImgui(ctx);
     if (self.geometry) |*m| m.drawImgui(ctx);
-    if (self.physics_debug) |*p| p.drawImgui(ctx);
+    if (self.physics_debug) |*p| p.drawImgui(World, world, ctx);
 }
 
 pub fn createMainRenderPass(

@@ -1,10 +1,11 @@
 const std = @import("std");
-const core = @import("../../root.zig");
-const math_mod = core.lib.math;
+const shared = @import("../shared.zig");
+const engine = @import("engine");
+const math_mod = engine.lib.math;
 const log = std.log.scoped(.DrawBackground);
-const vk = core.clibs.vk;
-const imgui = core.clibs.imgui;
-const checkVk = core.bindings.vulkan_init.checkVk;
+const vk = engine.clibs.vk;
+const imgui = engine.clibs.imgui;
+const checkVk = engine.bindings.vulkan_init.checkVk;
 
 swapchain_extent: vk.Extent2D,
 
@@ -15,7 +16,7 @@ pub const BACKGROUND_IMAGE_NAME = "background";
 
 pub fn init(
     a: std.mem.Allocator,
-    resources: *core.resources.Manager,
+    resources: *engine.resources.Manager,
     swapchain_extent: vk.Extent2D,
 ) std.mem.Allocator.Error!@This() {
     try resources.materials.appendWritableTexture(
@@ -27,7 +28,7 @@ pub fn init(
                 .height = swapchain_extent.height,
                 .depth = 1,
             },
-            .format = core.engine.Renderer.MAIN_RENDER_PASS_IMAGE_FORMAT,
+            .format = engine.engine.Renderer.MAIN_RENDER_PASS_IMAGE_FORMAT,
             .usages = vk.IMAGE_USAGE_TRANSFER_SRC_BIT |
                 vk.IMAGE_USAGE_TRANSFER_DST_BIT |
                 vk.IMAGE_USAGE_STORAGE_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
@@ -44,7 +45,7 @@ pub fn init(
 pub fn initComputePipelines(
     self: *@This(),
     device: vk.Device,
-    resources: core.resources.Manager,
+    resources: engine.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     const layouts = ComputePipeline.Description.Layouts.init(.{
@@ -55,14 +56,14 @@ pub fn initComputePipelines(
         ComputePipeline.init(device, layouts, alloc_cbs);
 }
 
-pub fn deinit(self: *@This(), _: core.engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: *@This(), _: engine.engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.pipeline.deinit(device, alloc_cbs);
 }
 
 pub fn registerSets(
     a: std.mem.Allocator,
     device: vk.Device,
-    resources: *core.resources.Manager,
+    resources: *engine.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!void {
     try resources.materials.createAndRegisterWritableTextureSetLayout(
@@ -76,7 +77,7 @@ pub fn registerSets(
 
 pub fn updateSets(
     device: vk.Device,
-    allocated_resources: *core.resources.Manager.AllocatedData,
+    allocated_resources: *engine.resources.Manager.AllocatedData,
 ) void {
     allocated_resources.materials.updateWritableTextureSet(
         device,
@@ -84,7 +85,7 @@ pub fn updateSets(
     );
 }
 
-pub fn drawImgui(self: *@This(), _: core.engine.systems.manager.DrawImguiContext) void {
+pub fn drawImgui(self: *@This(), _: *shared.GameWorld, _: engine.engine.systems.DrawImguiContext) void {
     var open = true;
     const shown = imgui.Begin("Draw Background System", &open, 0);
     defer imgui.End();
@@ -112,15 +113,15 @@ pub fn drawImgui(self: *@This(), _: core.engine.systems.manager.DrawImguiContext
 
 pub fn recordComputeCommands(
     self: @This(),
-    allocated_resources: core.resources.Manager.AllocatedData,
-    swapchain: core.engine.Renderer.Swapchain,
+    allocated_resources: engine.resources.Manager.AllocatedData,
+    swapchain: engine.engine.Renderer.Swapchain,
     cmd: vk.CommandBuffer,
     framebuffer_index: u32,
 ) void {
     self.pipeline.bind(cmd);
     const draw_image = allocated_resources.materials.textures.get(BACKGROUND_IMAGE_NAME).?;
     const tex_set = allocated_resources.materials.writable_textures_descriptor_sets.get(BACKGROUND_SET_NAME).?.set;
-    core.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_util.transitionImageLayout(
         cmd,
         draw_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -165,7 +166,7 @@ pub fn recordComputeCommands(
     );
     vk.CmdDispatch(cmd, w, h, 1);
 
-    core.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_util.transitionImageLayout(
         cmd,
         draw_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
@@ -177,7 +178,7 @@ pub fn recordComputeCommands(
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
-    core.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_util.transitionImageLayout(
         cmd,
         swapchain.images[framebuffer_index],
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -189,7 +190,7 @@ pub fn recordComputeCommands(
         vk.PIPELINE_STAGE_ALL_COMMANDS_BIT,
     );
 
-    core.bindings.vulkan_util.copyImageToImage(
+    engine.bindings.vulkan_util.copyImageToImage(
         cmd,
         draw_image.image,
         swapchain.images[framebuffer_index],
@@ -197,7 +198,7 @@ pub fn recordComputeCommands(
         swapchain.extent,
     );
 
-    core.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_util.transitionImageLayout(
         cmd,
         swapchain.images[framebuffer_index],
         vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -211,7 +212,7 @@ pub fn recordComputeCommands(
 }
 
 pub const ComputePipeline = struct {
-    const Description = core.engine.pipelines.Description(.{
+    const Description = engine.engine.pipelines.Description(.{
         .DescriptorSets = enum { texture_buffer },
         .subpass_idx = null,
         .push_constants = .{
@@ -277,7 +278,7 @@ pub const ComputePipeline = struct {
                 \\ added effect: '{s}'
             , .{@tagName(eff)});
 
-            const shader = core.engine.shaders.createShaderModule(
+            const shader = engine.engine.shaders.createShaderModule(
                 "background",
                 device,
                 alloc_cbs,

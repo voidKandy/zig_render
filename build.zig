@@ -73,6 +73,17 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
 
+    const shared_lib = b.addModule("shared", .{
+        .root_source_file = b.path(BINARIES_NAME ++ "/" ++ SHARED_NAME),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "engine",
+                .module = core_lib,
+            },
+        },
+    });
     buildBinaries(
         b,
         io,
@@ -80,6 +91,7 @@ pub fn build(b: *std.Build) !void {
         optimize,
         &[_]struct { []const u8, *std.Build.Module }{
             .{ "core", core_lib },
+            .{ "shared", shared_lib },
         },
     );
 }
@@ -236,7 +248,8 @@ fn buildBox3D(
     return box3d_lib;
 }
 
-const BINARIES_PATH = "bins";
+const SHARED_NAME = "shared.zig";
+const BINARIES_NAME = "bins";
 fn buildBinaries(
     b: *std.Build,
     io: std.Io,
@@ -244,19 +257,22 @@ fn buildBinaries(
     opt: std.lang.Optimize,
     imports: []const struct { []const u8, *std.Build.Module },
 ) void {
-    const dir = std.Io.Dir.cwd().openDir(io, BINARIES_PATH, .{}) catch std.debug.panic("Failed to get directory: {s}", .{BINARIES_PATH});
+    const dir = std.Io.Dir.cwd().openDir(io, BINARIES_NAME, .{}) catch std.debug.panic("Failed to get directory: {s}", .{BINARIES_NAME});
     var buffer: [256]u8 = undefined;
     @memset(&buffer, 0);
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     var iter = dir.iterate();
     while (iter.next(io) catch |e| std.debug.panic("Dir iterator failure: {}\n", .{e})) |f| {
+        if (std.mem.eql(u8, f.name, SHARED_NAME) or
+            f.kind == .directory) continue;
+
         const name = name: {
             var split = std.mem.splitBackwardsScalar(u8, f.name, '.');
             _ = split.first();
-            break :name split.next() orelse @panic("malformed test file name");
+            break :name split.next() orelse @panic("malformed file name");
         };
 
-        const fullpath = fba.allocator().print("{s}/{s}", .{ BINARIES_PATH, f.name }) catch |e| std.debug.panic("Failed to get full path: {}\n", .{e});
+        const fullpath = fba.allocator().print("{s}/{s}", .{ BINARIES_NAME, f.name }) catch |e| std.debug.panic("Failed to get full path: {}\n", .{e});
         const exe = b.addExecutable(.{
             .name = name,
             .root_module = b.createModule(.{

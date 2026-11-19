@@ -1,9 +1,10 @@
 const std = @import("std");
-const core = @import("../../root.zig");
+const engine = @import("engine");
+const shared = @import("../shared.zig");
 const log = std.log.scoped(.DebugSystem);
-const sdl = core.clibs.sdl;
-const vk = core.clibs.vk;
-const imgui = core.clibs.imgui;
+const sdl = engine.clibs.sdl;
+const vk = engine.clibs.vk;
+const imgui = engine.clibs.imgui;
 const Debug = @This();
 
 materials_textures_sets: std.StringHashMapUnmanaged(vk.DescriptorSet) = .empty,
@@ -11,7 +12,7 @@ attachment_sets: std.StringHashMapUnmanaged(vk.DescriptorSet) = .empty,
 
 pub fn deinit(
     self: *@This(),
-    allocs: core.engine.Allocators,
+    allocs: engine.engine.Allocators,
     _: vk.Device,
     _: ?*vk.AllocationCallbacks,
 ) void {
@@ -22,8 +23,8 @@ pub fn deinit(
 pub fn bind(
     self: *@This(),
     a: std.mem.Allocator,
-    resources: *const core.resources.Manager,
-    alloc_resources: *const core.resources.Manager.AllocatedData,
+    resources: *const engine.resources.Manager,
+    alloc_resources: *const engine.resources.Manager.AllocatedData,
 ) std.mem.Allocator.Error!void {
     for (0..resources.materials.material_indices.size) |i| {
         const name = resources.materials.material_names_reverse_lookup.get(i).?;
@@ -31,7 +32,7 @@ pub fn bind(
             u8,
             name,
             // background image will not be in correct layout, so we dont allow it to be added
-            core.engine.systems.DrawBackground.BACKGROUND_IMAGE_NAME,
+            shared.systems.DrawBackground.BACKGROUND_IMAGE_NAME,
         )) continue;
 
         const img = alloc_resources.materials.textures.get(name).?;
@@ -51,11 +52,11 @@ pub fn bind(
 pub fn bindAttachments(
     self: *@This(),
     a: std.mem.Allocator,
-    swapchain: *const core.engine.Renderer.Swapchain,
-    alloc_resources: *const core.resources.Manager.AllocatedData,
+    swapchain: *const engine.engine.Renderer.Swapchain,
+    alloc_resources: *const engine.resources.Manager.AllocatedData,
 ) std.mem.Allocator.Error!void {
     self.attachment_sets.clearRetainingCapacity();
-    const Attachments = core.engine.Renderer.Attachments;
+    const Attachments = engine.engine.Renderer.Attachments;
     inline for (Attachments.ALL_TAGS) |tag| {
         const att = swapchain.attachments.plexe.get(tag);
         const layout = if (tag == .depth)
@@ -72,17 +73,17 @@ pub fn bindAttachments(
     }
 }
 
-pub fn update(_: *@This(), ctx: core.engine.systems.manager.UpdateContext) void {
+pub fn update(_: *@This(), _: *shared.GameWorld, ctx: engine.engine.systems.UpdateContext) void {
     if (ctx.input.isDown(.Escape)) {
         const is_relative_mouse = sdl.GetWindowRelativeMouseMode(ctx.window) == true;
         _ = sdl.SetWindowRelativeMouseMode(ctx.window, !is_relative_mouse);
     }
 }
 
-pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
+pub fn drawImgui(self: *@This(), _: *shared.GameWorld, ctx: engine.engine.systems.DrawImguiContext) void {
     var open = true;
     // const window = engine.window;
-    const shown = imgui.Begin("Debug", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    const shown = imgui.Begin("Debug", &open, engine.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
     if (!shown) return;
 

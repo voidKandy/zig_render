@@ -29,12 +29,8 @@ const InstanceEntry = struct {
 };
 
 pub const INSTANCE_INDICES_BUFFER_NAME = "instanceIndices3D";
-pub const INSTANCES_BUFFER_NAME = "instances3D";
+pub const INSTANCES_BUFFER_NAME = "self.camera_set_name";
 pub const INSTANCE_SET_NAME = "instance3D_set";
-const INSTANCE_SIGNATURE = core.engine.world.GameWorld.Signature.initMany(&.{
-    .world_transform,
-    .mesh3D,
-});
 pub const MAX_INSTANCES = 64;
 
 ranges: std.AutoHashMapUnmanaged(u32, core.lib.mesh.RangeDesc) = .empty,
@@ -45,6 +41,7 @@ instance_indices: std.ArrayListUnmanaged(u32) = .empty,
 // mesh_instances: std.AutoHashMapUnmanaged(u32, std.ArrayListUnmanaged(u32)) = .empty,
 // mesh_ranges: []core.lib.mesh.RangeDesc = undefined,
 pipelines: GraphicsPipelines = undefined,
+camera_set_name: []const u8,
 
 pub fn updateBufferSets(
     device: vk.Device,
@@ -210,7 +207,7 @@ pub fn initPipeline(
     );
 
     const gbuffer_layouts = GraphicsPipelines.GBufferDescription.Layouts.init(.{
-        .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+        .camera = resources.mapped_buffers.buffer_set_layouts.get(self.camera_set_name).?.layout,
         .samplers = resources.materials.samplers_descriptor_set_layout,
         .textures = resources.materials.all_textures_descriptor_set_layout,
         .meshes = resources.meshes3D.descriptor_set_layout,
@@ -229,7 +226,7 @@ pub fn initPipeline(
     );
 
     const ssao_layouts = GraphicsPipelines.SSAODescription.Layouts.init(.{
-        .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+        .camera = resources.mapped_buffers.buffer_set_layouts.get(self.camera_set_name).?.layout,
         .samplers = resources.materials.samplers_descriptor_set_layout,
         .textures = resources.subpass_input_attachments.swapchain_attachment_images_set_layout,
     });
@@ -262,7 +259,7 @@ pub fn recordCommands(
     cmd: vk.CommandBuffer,
 ) void {
     const gbuffer_sets = GraphicsPipelines.GBufferDescription.Sets.init(.{
-        .camera = allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        .camera = allocated_resources.mapped_buffers.buffer_sets.get(self.camera_set_name).?.set,
         .samplers = allocated_resources.materials.sampler_set,
         .meshes = allocated_resources.meshes3D.descriptor_set,
         .instances = allocated_resources.mapped_buffers.buffer_sets.get(INSTANCE_SET_NAME).?.set,
@@ -279,7 +276,7 @@ pub fn recordCommands(
     });
 
     const ssao_sets = GraphicsPipelines.SSAODescription.Sets.init(.{
-        .camera = allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        .camera = allocated_resources.mapped_buffers.buffer_sets.get(self.camera_set_name).?.set,
         .textures = allocated_resources.subpass_input_attachments.swapchain_attachment_images_set,
         .samplers = allocated_resources.materials.sampler_set,
     });
@@ -372,11 +369,7 @@ pub fn recordCommands(
     vk.CmdDraw(cmd, 3, 1, 0, 0);
 }
 
-pub fn instancesFromWorld(
-    self: *@This(),
-    a: std.mem.Allocator,
-    world: *core.engine.world.GameWorld,
-) std.mem.Allocator.Error!void {
+pub fn instancesFromWorld(self: *@This(), World: type, a: std.mem.Allocator, world: *World) std.mem.Allocator.Error!void {
     var buckets = std.AutoHashMap(u32, std.ArrayList(u32)).init(a);
     defer {
         var it = buckets.valueIterator();
@@ -386,7 +379,10 @@ pub fn instancesFromWorld(
 
     var iter = world.queryEntities(.{
         .is = .{
-            .sig = INSTANCE_SIGNATURE,
+            .sig = .initMany(&.{
+                .world_transform,
+                .mesh3D,
+            }),
             .rule = .at_least,
         },
     });
@@ -437,7 +433,7 @@ pub fn instancesFromWorld(
     self.ranges = ranges;
 }
 
-pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
+pub fn drawImgui(self: *@This(), ctx: core.engine.systems.DrawImguiContext) void {
     var open = true;
     const shown = imgui.Begin("Mesh3D Rendering", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     if (!shown) return;

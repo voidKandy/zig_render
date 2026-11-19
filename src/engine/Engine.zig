@@ -17,14 +17,295 @@ const log = std.log.scoped(.Engine);
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 const INITIAL_WINDOW_EXTENT = vk.Extent2D{ .width = 1600, .height = 900 };
 
-const Self = @This();
+const Engine = @This();
 
-const SystemManager = core.engine.systems.manager.SystemManager(&[_]type{
-    core.engine.systems.Maze,
-    core.engine.systems.Camera,
-    core.engine.systems.DrawBackground,
-    core.engine.systems.Debug,
-});
+pub fn EngineType(
+    Systems: type,
+    World: type,
+) type {
+    std.debug.assert(World.IS_ENTITY_STORE);
+    std.debug.assert(Systems.IS_SYSTEM_MANAGER);
+
+    return struct {
+        systems: Systems,
+        world: World,
+
+        /// Expects caller to manage memory of systems and world
+        const _ = @This();
+        pub fn run(
+            self: *@This(),
+            core_engine: *Engine,
+        ) void {
+            var event: c.sdl.Event = undefined;
+            var last_time = std.Io.Timestamp.now(core_engine.io, .real).toNanoseconds();
+            _ = sdl.SetWindowRelativeMouseMode(core_engine.window, false);
+
+            core_engine.renderer.instancesFromWorld(World, core_engine.allocs.std, &self.world) catch
+                @panic("OOM");
+
+            while (!core_engine.input.quit) {
+                core_engine.input = .{};
+                while (c.sdl.PollEvent(&event)) {
+                    _ = c.imgui.impl_sdl3.ProcessEvent(&event);
+                    core_engine.input.update(event);
+                }
+
+                const now = std.Io.Timestamp.now(core_engine.io, .real).toNanoseconds();
+                const dt: f32 = @as(f32, @floatFromInt(now - last_time)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+                last_time = now;
+
+                self.systems.update(&self.world, .fromEngine(core_engine, dt));
+
+                // TODO
+                // the function that take World, world assume World is an ecs.EntityStore
+                core_engine.physics.update(World, &self.world);
+
+                core_engine.renderer.instancesFromWorld(World, core_engine.allocs.std, &self.world) catch
+                    @panic("OOM");
+                core_engine.renderer.syncResources(&core_engine.allocated_resources);
+
+                self.systems.syncResources(core_engine.allocated_resources);
+                self.systems.syncWorld(core_engine.allocs.std, &self.world) catch
+                    @panic("OOM");
+
+                self.drawImgui(core_engine);
+                self.drawFrame(core_engine);
+            }
+
+            _ = vk.DeviceWaitIdle(core_engine.logical_device.handle);
+        }
+
+        pub fn registerSets(
+            self: *@This(),
+            core_engine: *Engine,
+        ) void {
+            core_engine.renderer.registerSetsAndBuffers(
+                core_engine.allocs.std,
+                core_engine.logical_device.handle,
+                &core_engine.resources,
+                core_engine.alloc_cbs,
+            ) catch @panic("OOM");
+            core_engine.resources.createSamplersAndDescriptorSetLayouts(core_engine.logical_device.handle, core_engine.alloc_cbs);
+
+            self.systems.registerSets(
+                core_engine.allocs.std,
+                core_engine.logical_device.handle,
+                &core_engine.resources,
+                core_engine.alloc_cbs,
+            ) catch @panic("OOM");
+        }
+
+        pub fn updateSets(
+            self: *@This(),
+            core_engine: *Engine,
+        ) void {
+            core_engine.allocated_resources.meshes3D.updateDescriptorSet(
+                core_engine.logical_device.handle,
+            ) catch @panic("OOM");
+
+            core_engine.allocated_resources.materials.updateStaticTextureSet(
+                core_engine.resources.materials,
+                core_engine.allocs.std,
+                core_engine.logical_device.handle,
+                core.resources.Materials.DEFAULT_BINDINGS,
+            ) catch @panic("OOM");
+
+            core_engine.renderer.updateSets(core_engine.logical_device.handle, &core_engine.allocated_resources);
+
+            // BAD?
+            self.systems.plexe.Debug.?.bind(
+                core_engine.allocs.std,
+                &core_engine.resources,
+                &core_engine.allocated_resources,
+            ) catch @panic("OOM");
+            self.systems.plexe.Debug.?.bindAttachments(
+                core_engine.allocs.std,
+                &core_engine.renderer.swapchain,
+                &core_engine.allocated_resources,
+            ) catch @panic("OOM");
+
+            self.systems.updateSets(core_engine.logical_device.handle, &core_engine.allocated_resources);
+        }
+
+        pub fn initPipelines(
+            self: *@This(),
+            core_engine: *Engine,
+        ) void {
+            const graphics_common = core.engine.pipelines.Common{
+                .device = core_engine.logical_device.handle,
+                .render_pass = core_engine.renderer.main_render_pass,
+                .window_extent = core_engine.renderer.swapchain.extent,
+            };
+
+            core_engine.renderer.initPipelines(graphics_common, &core_engine.resources, core_engine.alloc_cbs);
+            self.systems.initComputePipelines(core_engine.logical_device.handle, core_engine.resources, core_engine.alloc_cbs);
+        }
+
+        pub fn drawImgui(self: *@This(), core_engine: *Engine) void {
+            c.imgui.impl_vulkan.NewFrame();
+            c.imgui.impl_sdl3.NewFrame();
+            c.imgui.NewFrame();
+            const ctx = core.engine.systems.DrawImguiContext.fromEngine(core_engine);
+            core_engine.renderer.drawImgui(World, &self.world, ctx);
+            self.systems.drawImgui(&self.world, ctx);
+            c.imgui.Render();
+        }
+
+        fn recordCommandBuffer(
+            self: *@This(),
+            core_engine: *Engine,
+            frame: frames_mod.FrameData,
+            image_idx: u32,
+        ) void {
+            var begin_info = vk.CommandBufferBeginInfo{
+                .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            };
+
+            checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
+            defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
+
+            self.systems.recordComputeCommands(
+                core_engine.allocated_resources,
+                core_engine.renderer.swapchain,
+                frame.main_command_buffer,
+                image_idx,
+            );
+
+            const final_clear_value =
+                vk.ClearValue{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } };
+
+            const attachment_clear_values = core.engine.Renderer.Attachments.clearValues().values;
+
+            var all_clear_values: [@typeInfo(core.engine.Renderer.Attachments.Tags).@"enum".field_names.len + 1]vk.ClearValue = undefined;
+            all_clear_values[0] = final_clear_value;
+            @memcpy(all_clear_values[1..], &attachment_clear_values);
+
+            var render_pass_info = vk.RenderPassBeginInfo{
+                .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                .renderPass = core_engine.renderer.main_render_pass,
+                .framebuffer = core_engine.renderer.swapchain.framebuffers[image_idx],
+                .renderArea = .{
+                    .offset = .{
+                        .x = 0,
+                        .y = 0,
+                    },
+                    .extent = vk.Extent2D{
+                        .height = core_engine.renderer.swapchain.extent.height,
+                        .width = core_engine.renderer.swapchain.extent.width,
+                    },
+                },
+                .clearValueCount = all_clear_values.len,
+                .pClearValues = &all_clear_values,
+            };
+
+            core_engine.renderer.swapchain.attachments.transitionAttachments(frame.main_command_buffer);
+            vk.CmdBeginRenderPass(
+                frame.main_command_buffer,
+                &render_pass_info,
+                vk.SUBPASS_CONTENTS_INLINE,
+            );
+            defer vk.CmdEndRenderPass(frame.main_command_buffer);
+
+            const viewport = vk.Viewport{
+                .x = 0,
+                .y = 0,
+                .width = @floatFromInt(core_engine.renderer.swapchain.extent.width),
+                .height = @floatFromInt(core_engine.renderer.swapchain.extent.height),
+                .minDepth = 0.0,
+                .maxDepth = 1.0,
+            };
+            vk.CmdSetViewport(frame.main_command_buffer, 0, 1, &viewport);
+
+            const scissor = vk.Rect2D{
+                .offset = .{ .x = 0, .y = 0 },
+                .extent = core_engine.renderer.swapchain.extent,
+            };
+            vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
+
+            core_engine.renderer.recordCommands(&core_engine.renderer.swapchain, &core_engine.resources, &core_engine.allocated_resources, frame.main_command_buffer);
+            c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
+        }
+
+        fn drawFrame(self: *@This(), core_engine: *Engine) void {
+            var frame = core_engine.frames.currentFrame();
+
+            const present_semaphore = frame.render_semaphore;
+
+            checkVk(vk.WaitForFences(core_engine.logical_device.handle, 1, &frame.render_fence, vk.TRUE, std.math.maxInt(u64))) catch @panic("failed to wait for current fence");
+
+            // this feels like it should be in renderer
+            var image_idx: u32 = undefined;
+            checkVk(vk.AcquireNextImageKHR(core_engine.logical_device.handle, core_engine.renderer.swapchain.handle, std.math.maxInt(u64), present_semaphore, null, &image_idx)) catch |e|
+                switch (e) {
+                    VkError.ErrorOutOfDateKHR => {
+                        core_engine.renderer.framebuffer_resized = true;
+                    },
+                    VkError.SuboptimalKHR => {},
+                    else => @panic("failed to acquire next image"),
+                };
+
+            const submit_semaphore =
+                core_engine.renderer.swapchain.render_semaphores[image_idx];
+
+            checkVk(vk.ResetFences(core_engine.logical_device.handle, 1, &frame.render_fence)) catch @panic("failed to reset fences");
+            checkVk(vk.ResetCommandBuffer(frame.main_command_buffer, 0)) catch @panic("failed to reset command buffers");
+
+            self.recordCommandBuffer(core_engine, frame, image_idx);
+
+            const wait_semaphores = &[_]vk.Semaphore{present_semaphore};
+            const wait_stages = &[_]vk.PipelineStageFlags{vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+            const signal_semaphores = &[_]vk.Semaphore{submit_semaphore};
+
+            var submit_info = vk.SubmitInfo{
+                .sType = vk.STRUCTURE_TYPE_SUBMIT_INFO,
+                .waitSemaphoreCount = 1,
+                .pWaitSemaphores = wait_semaphores,
+                .pWaitDstStageMask = wait_stages,
+                .signalSemaphoreCount = 1,
+                .pSignalSemaphores = signal_semaphores,
+                .commandBufferCount = 1,
+                .pCommandBuffers = &frame.main_command_buffer,
+            };
+
+            checkVk(vk.QueueSubmit(core_engine.logical_device.graphics_queue, 1, &submit_info, frame.render_fence)) catch @panic("failed to submit draw command buffer");
+
+            const present_info = vk.PresentInfoKHR{
+                .sType = vk.STRUCTURE_TYPE_PRESENT_INFO_KHR,
+                .waitSemaphoreCount = 1,
+                .pWaitSemaphores = signal_semaphores,
+                .swapchainCount = 1,
+                .pSwapchains = &[_]vk.SwapchainKHR{core_engine.renderer.swapchain.handle},
+                .pImageIndices = &image_idx,
+            };
+
+            checkVk(vk.QueuePresentKHR(core_engine.logical_device.present_queue, &present_info)) catch |e| {
+                if (e == VkError.ErrorOutOfDateKHR or
+                    e == VkError.SuboptimalKHR or
+                    core_engine.renderer.framebuffer_resized)
+                {
+                    core_engine.renderer.recreateSwapchain(core_engine.allocs, .{
+                        .physical_device = core_engine.physical_device,
+                        .logical_device = core_engine.logical_device.handle,
+                        .surface = core_engine.surface,
+                        .vsync = true,
+                        .window = core_engine.window,
+                        .alloc_cb = core_engine.alloc_cbs,
+                    }, &core_engine.allocated_resources, core_engine.alloc_cbs);
+
+                    self.systems.plexe.Debug.?.bindAttachments(
+                        core_engine.allocs.std,
+                        &core_engine.renderer.swapchain,
+                        &core_engine.allocated_resources,
+                    ) catch @panic("OOM");
+                } else {
+                    @panic("failed to present swapchain image");
+                }
+            };
+
+            core_engine.frames.incrementFrame();
+        }
+    };
+}
 
 allocs: core.engine.Allocators,
 alloc_cbs: ?*vk.AllocationCallbacks,
@@ -43,12 +324,7 @@ imgui_descriptor_pool: vk.DescriptorPool = undefined,
 
 allocated_resources: core.resources.Manager.AllocatedData = undefined,
 resources: core.resources.Manager = undefined,
-
-world: core.engine.world.GameWorld,
-
-system_manager: SystemManager = .{},
 physics: core.engine.Physics = undefined,
-
 renderer: core.engine.Renderer = undefined,
 
 frames: frames_mod.FramesContainer(MAX_FRAMES_IN_FLIGHT) = .{},
@@ -57,13 +333,16 @@ pub fn init(
     a: std.mem.Allocator,
     io: std.Io,
     resources_ci: core.resources.Manager.CreateInfo,
+    /// TODO
+    /// figure out a better pattern for configuring this
+    camera_set_name: []const u8,
     alloc_cbs: ?*vk.AllocationCallbacks,
-) Self {
+) Engine {
     var self = @This(){
         .allocs = .{ .std = a },
         .alloc_cbs = alloc_cbs,
         .io = io,
-        .world = core.engine.world.GameWorld.init(a) catch @panic("OOM"),
+        // .world = core.engine.world.GameWorld.init(a) catch @panic("OOM"),
         .resources = core.resources.Manager.init(
             a,
             resources_ci,
@@ -78,8 +357,16 @@ pub fn init(
     self.initVulkan();
     self.renderer = core.engine.Renderer.init(self.allocs, .{
         .meshes2D = true,
-        .meshes3D = true,
-        .physics_debug = self.physics.debug_ctx,
+        .geometry = .{
+            .camera_set_name = camera_set_name,
+        },
+        .physics_debug = if (self.physics.debug_ctx) |dbg|
+            .{
+                .ptr = dbg,
+                .camera_set_name = camera_set_name,
+            }
+        else
+            null,
         .swapchain = .{
             .physical_device = self.physical_device,
             .logical_device = self.logical_device.handle,
@@ -103,7 +390,7 @@ pub fn init(
     return self;
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Engine) void {
     checkVk(vk.DeviceWaitIdle(self.logical_device.handle)) catch @panic("Failed to wait for device idle");
 
     c.imgui.impl_vulkan.Shutdown();
@@ -114,7 +401,6 @@ pub fn deinit(self: *Self) void {
 
     self.physics.deinit(self.allocs.std);
     self.renderer.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
-    self.system_manager.deinit(self.allocs, self.logical_device.handle, self.alloc_cbs);
 
     self.upload_context.deinit(self.logical_device.handle, self.alloc_cbs);
     self.frames.deinit(self.logical_device.handle, self.alloc_cbs);
@@ -138,45 +424,7 @@ pub fn deinit(self: *Self) void {
     sdl.Quit();
 }
 
-pub fn run(self: *Self) void {
-    var event: c.sdl.Event = undefined;
-    var last_time = std.Io.Timestamp.now(self.io, .real).toNanoseconds();
-    _ = sdl.SetWindowRelativeMouseMode(self.window, false);
-
-    self.renderer.instancesFromWorld(self.allocs.std, &self.world) catch
-        @panic("OOM");
-
-    while (!self.input.quit) {
-        self.input = .{};
-        while (c.sdl.PollEvent(&event)) {
-            _ = c.imgui.impl_sdl3.ProcessEvent(&event);
-            self.input.update(event);
-        }
-
-        const now = std.Io.Timestamp.now(self.io, .real).toNanoseconds();
-        const dt: f32 = @as(f32, @floatFromInt(now - last_time)) / @as(f32, @floatFromInt(std.time.ns_per_s));
-        last_time = now;
-
-        self.system_manager.update(.fromEngine(self, dt));
-
-        self.physics.update(&self.world);
-
-        self.renderer.instancesFromWorld(self.allocs.std, &self.world) catch
-            @panic("OOM");
-        self.renderer.syncResources(&self.allocated_resources);
-
-        self.system_manager.syncResources(self.allocated_resources);
-        self.system_manager.syncWorld(self.allocs.std, &self.world) catch
-            @panic("OOM");
-
-        self.drawImgui();
-        self.drawFrame();
-    }
-
-    _ = vk.DeviceWaitIdle(self.logical_device.handle);
-}
-
-fn initWindow(self: *Self) void {
+fn initWindow(self: *Engine) void {
     checkSdl(sdl.Init(sdl.INIT_VIDEO));
     const window = sdl.CreateWindow("Vulkan", INITIAL_WINDOW_EXTENT.width, INITIAL_WINDOW_EXTENT.height, sdl.WINDOW_VULKAN | sdl.WINDOW_RESIZABLE) orelse @panic("Failed to create SDL window");
     _ = sdl.SetWindowRelativeMouseMode(window, true);
@@ -184,8 +432,7 @@ fn initWindow(self: *Self) void {
     self.window = window;
 }
 
-fn initVulkan(self: *Self) void {
-    // Instance creation and optional debug utilities
+fn initVulkan(self: *Engine) void {
     var sdl_required_extension_count: u32 = undefined;
     const sdl_extensions = sdl.Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
     const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
@@ -259,24 +506,7 @@ fn initVulkan(self: *Self) void {
     self.upload_context.initCommands(self.logical_device.handle, self.physical_device, self.alloc_cbs);
 }
 
-pub fn registerSets(self: *Self) void {
-    self.renderer.registerSetsAndBuffers(
-        self.allocs.std,
-        self.logical_device.handle,
-        &self.resources,
-        self.alloc_cbs,
-    ) catch @panic("OOM");
-    self.resources.createSamplersAndDescriptorSetLayouts(self.logical_device.handle, self.alloc_cbs);
-
-    self.system_manager.registerSets(
-        self.allocs.std,
-        self.logical_device.handle,
-        &self.resources,
-        self.alloc_cbs,
-    ) catch @panic("OOM");
-}
-
-pub fn uploadResources(self: *Self) void {
+pub fn uploadResources(self: *Engine) void {
     // BAD??
     const max_sets = 16;
     self.allocated_resources = self.resources.upload(
@@ -288,205 +518,7 @@ pub fn uploadResources(self: *Self) void {
     ) catch @panic("OOM");
 }
 
-pub fn updateSets(self: *Self) void {
-    self.allocated_resources.meshes3D.updateDescriptorSet(
-        self.logical_device.handle,
-    ) catch @panic("OOM");
-
-    self.allocated_resources.materials.updateStaticTextureSet(
-        self.resources.materials,
-        self.allocs.std,
-        self.logical_device.handle,
-        core.resources.Materials.DEFAULT_BINDINGS,
-    ) catch @panic("OOM");
-
-    self.renderer.updateSets(self.logical_device.handle, &self.allocated_resources);
-
-    self.system_manager.plexe.Debug.?.bind(
-        self.allocs.std,
-        &self.resources,
-        &self.allocated_resources,
-    ) catch @panic("OOM");
-    self.system_manager.plexe.Debug.?.bindAttachments(
-        self.allocs.std,
-        &self.renderer.swapchain,
-        &self.allocated_resources,
-    ) catch @panic("OOM");
-
-    self.system_manager.updateSets(self.logical_device.handle, &self.allocated_resources);
-}
-
-pub fn initPipelines(
-    self: *Self,
-) void {
-    const graphics_common = core.engine.pipelines.Common{
-        .device = self.logical_device.handle,
-        .render_pass = self.renderer.main_render_pass,
-        .window_extent = self.renderer.swapchain.extent,
-    };
-
-    self.renderer.initPipelines(graphics_common, &self.resources, self.alloc_cbs);
-    self.system_manager.initComputePipelines(self.logical_device.handle, self.resources, self.alloc_cbs);
-}
-
-fn drawImgui(self: *Self) void {
-    c.imgui.impl_vulkan.NewFrame();
-    c.imgui.impl_sdl3.NewFrame();
-    c.imgui.NewFrame();
-    const ctx = core.engine.systems.manager.DrawImguiContext.fromEngine(self);
-    self.renderer.drawImgui(ctx);
-    self.system_manager.drawImgui(ctx);
-    c.imgui.Render();
-}
-
-fn drawFrame(self: *Self) void {
-    var frame = self.frames.currentFrame();
-
-    const present_semaphore = frame.render_semaphore;
-
-    checkVk(vk.WaitForFences(self.logical_device.handle, 1, &frame.render_fence, vk.TRUE, std.math.maxInt(u64))) catch @panic("failed to wait for current fence");
-
-    // this feels like it should be in renderer
-    var image_idx: u32 = undefined;
-    checkVk(vk.AcquireNextImageKHR(self.logical_device.handle, self.renderer.swapchain.handle, std.math.maxInt(u64), present_semaphore, null, &image_idx)) catch |e|
-        switch (e) {
-            VkError.ErrorOutOfDateKHR => {
-                self.renderer.framebuffer_resized = true;
-            },
-            VkError.SuboptimalKHR => {},
-            else => @panic("failed to acquire next image"),
-        };
-
-    const submit_semaphore =
-        self.renderer.swapchain.render_semaphores[image_idx];
-
-    checkVk(vk.ResetFences(self.logical_device.handle, 1, &frame.render_fence)) catch @panic("failed to reset fences");
-    checkVk(vk.ResetCommandBuffer(frame.main_command_buffer, 0)) catch @panic("failed to reset command buffers");
-
-    self.recordCommandBuffer(frame, image_idx);
-
-    const wait_semaphores = &[_]vk.Semaphore{present_semaphore};
-    const wait_stages = &[_]vk.PipelineStageFlags{vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    const signal_semaphores = &[_]vk.Semaphore{submit_semaphore};
-
-    var submit_info = vk.SubmitInfo{
-        .sType = vk.STRUCTURE_TYPE_SUBMIT_INFO,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = wait_semaphores,
-        .pWaitDstStageMask = wait_stages,
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = signal_semaphores,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &frame.main_command_buffer,
-    };
-
-    checkVk(vk.QueueSubmit(self.logical_device.graphics_queue, 1, &submit_info, frame.render_fence)) catch @panic("failed to submit draw command buffer");
-
-    const present_info = vk.PresentInfoKHR{
-        .sType = vk.STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = signal_semaphores,
-        .swapchainCount = 1,
-        .pSwapchains = &[_]vk.SwapchainKHR{self.renderer.swapchain.handle},
-        .pImageIndices = &image_idx,
-    };
-
-    checkVk(vk.QueuePresentKHR(self.logical_device.present_queue, &present_info)) catch |e| {
-        if (e == VkError.ErrorOutOfDateKHR or
-            e == VkError.SuboptimalKHR or
-            self.renderer.framebuffer_resized)
-        {
-            self.renderer.recreateSwapchain(self.allocs, .{
-                .physical_device = self.physical_device,
-                .logical_device = self.logical_device.handle,
-                .surface = self.surface,
-                .vsync = true,
-                .window = self.window,
-                .alloc_cb = self.alloc_cbs,
-            }, &self.allocated_resources, self.alloc_cbs);
-        } else {
-            @panic("failed to present swapchain image");
-        }
-    };
-
-    self.frames.incrementFrame();
-}
-
-fn recordCommandBuffer(
-    self: *Self,
-    frame: frames_mod.FrameData,
-    image_idx: u32,
-) void {
-    var begin_info = vk.CommandBufferBeginInfo{
-        .sType = vk.STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-    };
-
-    checkVk(vk.BeginCommandBuffer(frame.main_command_buffer, &begin_info)) catch @panic("failed to begin command buffer");
-    defer checkVk(vk.EndCommandBuffer(frame.main_command_buffer)) catch @panic("failed to record command buffer");
-
-    self.system_manager.recordComputeCommands(
-        self.allocated_resources,
-        self.renderer.swapchain,
-        frame.main_command_buffer,
-        image_idx,
-    );
-
-    const final_clear_value =
-        vk.ClearValue{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } };
-
-    const attachment_clear_values = core.engine.Renderer.Attachments.clearValues().values;
-
-    var all_clear_values: [@typeInfo(core.engine.Renderer.Attachments.Tags).@"enum".field_names.len + 1]vk.ClearValue = undefined;
-    all_clear_values[0] = final_clear_value;
-    @memcpy(all_clear_values[1..], &attachment_clear_values);
-
-    var render_pass_info = vk.RenderPassBeginInfo{
-        .sType = vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = self.renderer.main_render_pass,
-        .framebuffer = self.renderer.swapchain.framebuffers[image_idx],
-        .renderArea = .{
-            .offset = .{
-                .x = 0,
-                .y = 0,
-            },
-            .extent = vk.Extent2D{
-                .height = self.renderer.swapchain.extent.height,
-                .width = self.renderer.swapchain.extent.width,
-            },
-        },
-        .clearValueCount = all_clear_values.len,
-        .pClearValues = &all_clear_values,
-    };
-
-    self.renderer.swapchain.attachments.transitionAttachments(frame.main_command_buffer);
-    vk.CmdBeginRenderPass(
-        frame.main_command_buffer,
-        &render_pass_info,
-        vk.SUBPASS_CONTENTS_INLINE,
-    );
-    defer vk.CmdEndRenderPass(frame.main_command_buffer);
-
-    const viewport = vk.Viewport{
-        .x = 0,
-        .y = 0,
-        .width = @floatFromInt(self.renderer.swapchain.extent.width),
-        .height = @floatFromInt(self.renderer.swapchain.extent.height),
-        .minDepth = 0.0,
-        .maxDepth = 1.0,
-    };
-    vk.CmdSetViewport(frame.main_command_buffer, 0, 1, &viewport);
-
-    const scissor = vk.Rect2D{
-        .offset = .{ .x = 0, .y = 0 },
-        .extent = self.renderer.swapchain.extent,
-    };
-    vk.CmdSetScissor(frame.main_command_buffer, 0, 1, &scissor);
-
-    self.renderer.recordCommands(&self.renderer.swapchain, &self.resources, &self.allocated_resources, frame.main_command_buffer);
-    c.imgui.impl_vulkan.RenderDrawData(c.imgui.GetDrawData(), frame.main_command_buffer);
-}
-
-pub fn initImgui(self: *Self) void {
+pub fn initImgui(self: *Engine) void {
     const pool_sizes = [_]vk.DescriptorPoolSize{
         .{
             .type = vk.DESCRIPTOR_TYPE_SAMPLER,

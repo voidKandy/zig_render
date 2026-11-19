@@ -1,0 +1,92 @@
+## priority ordered list
+
+change files to:
+.
+├── bins
+│   ├── consumer
+│    │   ├── systems <<<<<<<<
+│   └── main.zig
+├── src
+├────├── engine
+│    │   ├── Engine.zig
+│    │   ├── frames.zig
+│    │   ├── Input.zig
+│    │   ├── Physics.zig
+│    │   ├── rendering
+│    │   ├── shaders.zig
+│    │   ├── systems <<<<<<<<
+│    │   └── world.zig
+└────└── root.zig
+└── zig-out
+    └── bin
+
+24 directories, 16 files
+
+
+
+creates wrapper manager plexe to facilitate system management
+
+new main()
+{
+
+	/// Needs to be defined by a consumer of the library
+	const SystemManager = core.engine.systems.manager.SystemManager(&[_]type{
+	    core.engine.systems.Maze,
+	    core.engine.systems.Camera,
+	    core.engine.systems.DrawBackground,
+	    core.engine.systems.Debug,
+	});
+
+	const World = GameWorld(SystemManager)
+	/// This is coupled to the Engine imlementation but that is fine for now because
+	/// As of yet, i have no reason to give access to rendering customization to consumers
+	/// still Defined in engine
+	var engine = init(
+		a,
+		io,
+		resourcesCreateInfo,
+		systems,
+		allocCbs,
+	)
+
+
+	engine.initWorld(World.new);
+		
+}
+
+consumers of GameWorld need to be restructured
+pub fn update(self: *@This(), world: *core.engine.world.GameWorld) void {
+ >>>>>
+/// this function needs to forget the specific Store type
+		pub fn update(self: *@This(), world_query: *Query) void {
+
+
+    const _60hz = 1.0 / 60.0;
+    var debug = if (self.debug_ctx) |ctx| ctx.makeDebugDraw() else null;
+
+    box3d.World_Step(self.world, _60hz, 4);
+    const events = box3d.World_GetBodyEvents(self.world);
+    if (events.moveCount == 0) return;
+
+    for (events.moveEvents[0..@intCast(events.moveCount)]) |e| {
+        const ent_id: *const u32 = @ptrCast(@alignCast(e.userData.?));
+        const physics_transform: box3d.WorldTransform = e.transform;
+
+        const ent  = world.entityHandle(ent_id.*) catch @panic("NO ENTITY??");
+        _ = ent.accessComponent(.rigid_body) catch @panic("No body?");
+        var transform: *core.engine.world.WorldTransform = (ent.accessComponentPtr(.world_transform) catch @panic("No transform?"))
+            .world_transform;
+
+        transform.position = box3d_usage.toCoreVec3(physics_transform.p);
+        transform.rotation = box3d_usage.toCoreVec4(physics_transform.q);
+    }
+
+    if (debug) |*dbg| {
+        box3d.World_Draw(self.world, dbg, std.math.maxInt(u64));
+    }
+}
+
+
+
+
+

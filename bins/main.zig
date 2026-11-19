@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = std.log;
 const core = @import("core");
+const shared = @import("shared");
 const vki = core.bindings.vulkan_init;
 const vma_usage = core.bindings.vma_usage;
 const mesh_mod = core.lib.mesh;
@@ -20,7 +21,10 @@ pub const std_options = std.Options{
     .log_level = .debug,
 };
 
-pub fn main(init: std.process.Init) void {
+const Engine = core.engine.Engine.EngineType(shared.SystemManager, shared.GameWorld);
+const CoreEngine = core.engine.Engine;
+
+pub fn main(init: std.process.Init) std.mem.Allocator.Error!void {
     var a = init.arena.allocator();
 
     var api_version: u32 = undefined;
@@ -49,7 +53,7 @@ pub fn main(init: std.process.Init) void {
     const user_create_meshes = &[_]core.resources.Manager.Mesh3DCreateInfo{
         .{ .create_mesh = .{
             .info = .{
-                .mesh = core.lib.mesh.Mesh3D.box(a, 10.0, 10.0, 1.0) catch @panic("OOM"),
+                .mesh = try core.lib.mesh.Mesh3D.box(a, 10.0, 10.0, 1.0),
                 .name = "large_flat_box",
             },
         } },
@@ -96,32 +100,65 @@ pub fn main(init: std.process.Init) void {
         k += 1;
     }
 
-    var engine = core.engine.Engine.init(
+    const resources_ci = core.resources.Manager.CreateInfo{
+        .materials_files = &[_]core.loaders.mtl.MtlFile{
+            global_mat,
+            debug_mat,
+        },
+        .meshes2D = &[_]core.resources.Manager.Mesh2DCreateInfo{},
+        .meshes3D = meshes_objects,
+    };
+    var core_engine = CoreEngine.init(
         a,
         init.io,
-        core.resources.Manager.CreateInfo{
-            .materials_files = &[_]core.loaders.mtl.MtlFile{
-                global_mat,
-                debug_mat,
-            },
-            .meshes2D = &[_]core.resources.Manager.Mesh2DCreateInfo{},
-            .meshes3D = meshes_objects,
-        },
+        resources_ci,
+        shared.systems.Camera.CAMERA_SET_NAME,
         null,
     );
-    defer engine.deinit();
 
-    const camera = core.engine.systems.Camera.init(a, &engine.resources, engine.renderer.swapchain.extent) catch @panic("OOM");
-    engine.system_manager.addSystem(.Camera, camera);
-    engine.system_manager.initSystemEntities(.Camera, &engine.world, &engine.resources) catch @panic("OOM");
+    var consumer_engine = Engine{
+        .world = try shared.GameWorld.init(core_engine.allocs.std),
+        .systems = shared.SystemManager{},
+    };
+    defer {
+        consumer_engine.world.deinit(core_engine.allocs.std);
+        consumer_engine.systems.deinit(core_engine.allocs, core_engine.logical_device.handle, core_engine.alloc_cbs);
+        core_engine.deinit();
+    }
 
-    const draw_background = core.engine.systems.DrawBackground.init(a, &engine.resources, engine.renderer.swapchain.extent) catch @panic("OOM");
-    engine.system_manager.addSystem(.DrawBackground, draw_background);
-    engine.system_manager.initSystemEntities(.DrawBackground, &engine.world, &engine.resources) catch @panic("OOM");
+    try initSystems(core_engine.allocs.std, &consumer_engine, &core_engine);
 
-    const maze_system_ci = core.engine.systems.Maze.CreateInfo{
-        .main_camera_entity = engine.system_manager.plexe.Camera.?.main_camera_entity.?,
-        .push_constants = core.engine.systems.Maze.PushConstants{
+    core_engine.initImgui();
+    consumer_engine.registerSets(&core_engine);
+    core_engine.uploadResources();
+    consumer_engine.updateSets(&core_engine);
+    consumer_engine.initPipelines(&core_engine);
+
+    core_engine.physics.createMeshColliders(
+        core_engine.allocs.std,
+        &core_engine.resources.meshes3D,
+    ) catch @panic("OOM");
+
+    createEntities(&consumer_engine.world, &core_engine.resources, &core_engine.physics);
+    consumer_engine.run(&core_engine);
+}
+
+fn initSystems(
+    a: std.mem.Allocator,
+    consumer_engine: *Engine,
+    core_engine: *CoreEngine,
+) std.mem.Allocator.Error!void {
+    const camera = try shared.systems.Camera.init(a, &core_engine.resources, core_engine.renderer.swapchain.extent);
+    consumer_engine.systems.addSystem(.Camera, camera);
+    try consumer_engine.systems.initSystemEntities(.Camera, &consumer_engine.world, &core_engine.resources);
+
+    const draw_background = try shared.systems.DrawBackground.init(a, &core_engine.resources, core_engine.renderer.swapchain.extent);
+    consumer_engine.systems.addSystem(.DrawBackground, draw_background);
+    try consumer_engine.systems.initSystemEntities(.DrawBackground, &consumer_engine.world, &core_engine.resources);
+
+    const maze_system_ci = shared.systems.Maze.CreateInfo{
+        .main_camera_entity = consumer_engine.systems.plexe.Camera.?.main_camera_entity.?,
+        .push_constants = shared.systems.Maze.PushConstants{
             .width = 10,
             .height = 10,
             .pixels_per_cell = 9,
@@ -150,35 +187,18 @@ pub fn main(init: std.process.Init) void {
         },
     };
 
-    const maze = core.engine.systems.Maze.init(a, &engine.resources, maze_system_ci) catch @panic("OOM");
-    engine.system_manager.addSystem(.Maze, maze);
-    engine.system_manager.initSystemEntities(.Maze, &engine.world, &engine.resources) catch @panic("OOM");
+    const maze = try shared.systems.Maze.init(a, &core_engine.resources, maze_system_ci);
+    consumer_engine.systems.addSystem(.Maze, maze);
+    try consumer_engine.systems.initSystemEntities(.Maze, &consumer_engine.world, &core_engine.resources);
 
-    const debug = core.engine.systems.Debug{};
-    engine.system_manager.addSystem(.Debug, debug);
-    engine.system_manager.initSystemEntities(.Debug, &engine.world, &engine.resources) catch @panic("OOM");
-
-    // BAD
-    // consumer shouldnt facilitate this?
-    engine.initImgui();
-    engine.registerSets();
-    engine.uploadResources();
-    engine.updateSets();
-    engine.initPipelines();
-
-    engine.physics.createMeshColliders(
-        engine.allocs.std,
-        &engine.world,
-        &engine.resources.meshes3D,
-    ) catch @panic("OOM");
-
-    createEntities(&engine.resources, &engine.world, &engine.physics);
-    engine.run();
+    const debug = shared.systems.Debug{};
+    consumer_engine.systems.addSystem(.Debug, debug);
+    try consumer_engine.systems.initSystemEntities(.Debug, &consumer_engine.world, &core_engine.resources);
 }
 
 fn createEntities(
+    world: *shared.GameWorld,
     resources: *const core.resources.Manager,
-    world: *core.engine.world.GameWorld,
     physics: *const core.engine.Physics,
 ) void {
     for ([_]struct { []const u8, []const u8 }{

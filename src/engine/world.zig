@@ -76,15 +76,23 @@ pub const RigidBody = struct {
     id: core.clibs.box3d.BodyId,
 };
 
-pub const GameWorld =
-    core.lib.ecs.EntityStore(.{
-        .max_entities = 64,
-        .components = struct {
-            camera: core.engine.systems.Camera.Controller,
-            world_transform: WorldTransform,
-            screen_transform: ScreenTransform,
-            mesh3D: MaterialMesh3D,
-            mesh2D: MaterialMesh2D,
-            rigid_body: RigidBody,
-        },
+pub const RenderComponents = struct {
+    world_transform: WorldTransform,
+    screen_transform: ScreenTransform,
+    mesh3D: MaterialMesh3D,
+    mesh2D: MaterialMesh2D,
+    rigid_body: RigidBody,
+};
+
+pub inline fn GameWorldType(options: core.lib.ecs.EcsOptions) type {
+    return core.lib.ecs.EntityStore(.{
+        .max_entities = options.max_entities,
+        .Components = @Struct(
+            .auto,
+            null,
+            @typeInfo(RenderComponents).@"struct".field_names ++ @typeInfo(options.Components).@"struct".field_names,
+            @typeInfo(RenderComponents).@"struct".field_types ++ @typeInfo(options.Components).@"struct".field_types,
+            @typeInfo(RenderComponents).@"struct".field_attrs ++ @typeInfo(options.Components).@"struct".field_attrs,
+        ),
     });
+}

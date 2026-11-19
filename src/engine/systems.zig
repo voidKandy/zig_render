@@ -1,109 +1,39 @@
 const std = @import("std");
-const core = @import("../../root.zig");
-const log = std.log.scoped(.SystemManager);
+const core = @import("../root.zig");
+const log = std.log.scoped(.systems);
 const vk = core.clibs.vk;
-pub const Maze = @import("./Maze.zig");
-pub const Debug = @import("./Debug.zig");
-pub const Camera = @import("./Camera.zig");
-pub const DrawBackground = @import("./DrawBackground.zig");
-
-inline fn fnEql(a: std.lang.Type.Fn, b: std.lang.Type.Fn) bool {
-    if (!std.meta.eql(a.attrs.@"callconv", b.attrs.@"callconv")) return false;
-    if (a.is_generic != b.is_generic) return false;
-    if (a.attrs.varargs != b.attrs.varargs) return false;
-    if (a.return_type != b.return_type) return false;
-    if (a.param_attrs.len != b.param_attrs.len) return false;
-    if (a.param_types.len != b.param_types.len) return false;
-    if (a.is_generic != b.is_generic) return false;
-
-    for (a.param_attrs, b.param_attrs) |pa, pb| {
-        if (pa.@"noalias" != pb.@"noalias") return false;
-    }
-
-    for (a.param_types, b.param_types) |at, bt| {
-        if (at != bt) return false;
-    }
-    return true;
-}
-
-fn formatFnSig(comptime fn_info: std.lang.Type.Fn) []const u8 {
-    comptime var params_str: []const u8 = "";
-    inline for (fn_info.param_types, 0..) |ptype, i| {
-        const type_name = if (ptype) |T| @typeName(T) else "anytype";
-        params_str = params_str ++ (if (i == 0) "" else ", ") ++ type_name;
-    }
-
-    const return_name = if (fn_info.return_type) |R| @typeName(R) else "void";
-
-    return std.fmt.comptimePrint("fn ({s}) {s}", .{ params_str, return_name });
-}
-
-fn shortTypeName(comptime full: []const u8) []const u8 {
-    var it = std.mem.splitBackwardsScalar(u8, full, '.');
-    return it.first();
-}
-
-/// Replaces params[0] (the `self` receiver) with an `anytype`-shaped
-/// param, so signatures from different concrete system types can be
-/// compared for equality without the receiver type getting in the way.
-inline fn normalizeSelf(fn_info: std.lang.Type.Fn) std.lang.Type.Fn {
-    var info = fn_info;
-    if (info.param_attrs.len == 0) return info;
-
-    const normalized_first: std.lang.Type.Fn.ParamAttributes = .{
-        .@"noalias" = info.param_attrs[0].@"noalias",
-    };
-
-    const new_params = [_]std.lang.Type.Fn.ParamAttributes{normalized_first} ++ info.param_attrs[1..];
-    const new_types = [_]?type{null} ++ info.param_types[1..];
-    info.param_attrs = new_params;
-    info.param_types = new_types;
-    info.is_generic = true;
-    return info;
-}
-
-/// completely removes the `self` argument from function type
-/// this is for the register and update sets functions which don't actually
-/// need access to self for each system, but does need access to self in the manager
-inline fn removeSelf(fn_info: std.lang.Type.Fn) std.lang.Type.Fn {
-    var info = fn_info;
-    if (info.param_attrs.len == 0) return info;
-
-    info.param_attrs = info.param_attrs[1..];
-    info.param_types = info.param_types[1..];
-    return info;
-}
 
 pub const UpdateContext = struct {
     dt: f32,
     input: core.engine.Input,
-    world: *core.engine.world.GameWorld,
     window: *core.clibs.sdl.Window,
     pub fn fromEngine(engine: *core.engine.Engine, dt: f32) @This() {
         return .{
             .window = engine.window,
             .input = engine.input,
-            .world = &engine.world,
             .dt = dt,
         };
     }
 };
-
 pub const DrawImguiContext = struct {
     window: *core.clibs.sdl.Window,
-    world: *core.engine.world.GameWorld,
     resources: *const core.resources.Manager,
 
-    pub fn fromEngine(engine: *core.engine.Engine) @This() {
+    pub fn fromEngine(
+        engine: *core.engine.Engine,
+    ) @This() {
         return .{
             .window = engine.window,
-            .world = &engine.world,
             .resources = &engine.resources,
         };
     }
 };
 
+/// Types passed as `Systems` are expected to implement the
+/// functions described in `SystemHook` the signatures of these functions should match the
+/// signatures of these functions as they are declared within the type returned by `SystemManager`
 pub fn SystemManager(
+    World: type,
     Systems: []const type,
 ) type {
     const SystemHook = enum {
@@ -170,6 +100,10 @@ pub fn SystemManager(
     };
 
     const Manager = struct {
+        // TODO improve?
+        /// used by consumers passed a type returned by this function
+        /// to ensure correct types are passed
+        pub const IS_SYSTEM_MANAGER: bool = true;
         pub const SystemPlexe = SystemType.plexe;
         pub const SystemTag = SystemType.tag;
 
@@ -235,7 +169,7 @@ pub fn SystemManager(
                                 @typeName(T),
                                 @tagName(v.key),
                                 formatFnSig(myFunc),
-                                formatFnSig(v.value.*),
+                                if (v.value.*) |f| formatFnSig(f) else "null",
                             }),
                         );
                     }
@@ -250,7 +184,7 @@ pub fn SystemManager(
         pub fn initSystemEntities(
             self: *@This(),
             comptime which: SystemTag,
-            world: *core.engine.world.GameWorld,
+            world: *World,
             resources: *const core.resources.Manager,
         ) std.mem.Allocator.Error!void {
             const T = SYSTEM_TYPES.get(which);
@@ -305,31 +239,19 @@ pub fn SystemManager(
             }
         }
 
-        // pub fn initEntities(
-        //     self: *@This(),
-        //     world: *core.engine.world.GameWorld,
-        //     resources: *const core.resources.Manager,
-        // ) std.mem.Allocator.Error!void {
-        //     inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
-        //         const tag: SystemTag = @fromBackingInt(@intCast(i));
-        //         if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-        //             if (@field(self.plexe, @tagName(tag))) |*f| try f.initEntities(world, resources);
-        //     }
-        // }
-
-        pub fn update(self: *@This(), ctx: UpdateContext) void {
+        pub fn update(self: *@This(), world: *World, ctx: UpdateContext) void {
             inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
                 const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-                    if (@field(self.plexe, @tagName(tag))) |*f| f.update(ctx);
+                    if (@field(self.plexe, @tagName(tag))) |*f| f.update(world, ctx);
             }
         }
 
-        pub fn drawImgui(self: *@This(), ctx: DrawImguiContext) void {
+        pub fn drawImgui(self: *@This(), world: *World, ctx: DrawImguiContext) void {
             inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
                 const tag: SystemTag = @fromBackingInt(@intCast(i));
                 if (@hasDecl(SYSTEM_TYPES.get(tag), @src().fn_name))
-                    if (@field(self.plexe, @tagName(tag))) |*f| f.drawImgui(ctx);
+                    if (@field(self.plexe, @tagName(tag))) |*f| f.drawImgui(world, ctx);
             }
         }
 
@@ -354,7 +276,7 @@ pub fn SystemManager(
         pub fn syncWorld(
             self: *@This(),
             a: std.mem.Allocator,
-            world: *core.engine.world.GameWorld,
+            world: *World,
         ) std.mem.Allocator.Error!void {
             inline for (0..@typeInfo(SystemTag).@"enum".field_names.len) |i| {
                 const tag: SystemTag = @fromBackingInt(@intCast(i));
@@ -397,4 +319,71 @@ pub fn SystemManager(
     };
 
     return Manager;
+}
+
+inline fn fnEql(a: std.lang.Type.Fn, b: std.lang.Type.Fn) bool {
+    if (!std.meta.eql(a.attrs.@"callconv", b.attrs.@"callconv")) return false;
+    if (a.is_generic != b.is_generic) return false;
+    if (a.attrs.varargs != b.attrs.varargs) return false;
+    if (a.return_type != b.return_type) return false;
+    if (a.param_attrs.len != b.param_attrs.len) return false;
+    if (a.param_types.len != b.param_types.len) return false;
+    if (a.is_generic != b.is_generic) return false;
+
+    for (a.param_attrs, b.param_attrs) |pa, pb| {
+        if (pa.@"noalias" != pb.@"noalias") return false;
+    }
+
+    for (a.param_types, b.param_types) |at, bt| {
+        if (at != bt) return false;
+    }
+    return true;
+}
+
+fn formatFnSig(comptime fn_info: std.lang.Type.Fn) []const u8 {
+    comptime var params_str: []const u8 = "";
+    inline for (fn_info.param_types, 0..) |ptype, i| {
+        const type_name = if (ptype) |T| @typeName(T) else "anytype";
+        params_str = params_str ++ (if (i == 0) "" else ", ") ++ type_name;
+    }
+
+    const return_name = if (fn_info.return_type) |R| @typeName(R) else "void";
+
+    return std.fmt.comptimePrint("fn ({s}) {s}", .{ params_str, return_name });
+}
+
+fn shortTypeName(comptime full: []const u8) []const u8 {
+    var it = std.mem.splitBackwardsScalar(u8, full, '.');
+    return it.first();
+}
+
+/// Replaces params[0] (the `self` receiver) with an `anytype`-shaped
+/// param, so signatures from different concrete system types can be
+/// compared for equality without the receiver type getting in the way.
+inline fn normalizeSelf(fn_info: std.lang.Type.Fn) std.lang.Type.Fn {
+    var info = fn_info;
+    if (info.param_attrs.len == 0) return info;
+
+    const normalized_first: std.lang.Type.Fn.ParamAttributes = .{
+        .@"noalias" = info.param_attrs[0].@"noalias",
+    };
+
+    const new_params = [_]std.lang.Type.Fn.ParamAttributes{normalized_first} ++ info.param_attrs[1..];
+    const new_types = [_]?type{null} ++ info.param_types[1..];
+    info.param_attrs = new_params;
+    info.param_types = new_types;
+    info.is_generic = true;
+    return info;
+}
+
+/// completely removes the `self` argument from function type
+/// this is for the register and update sets functions which don't actually
+/// need access to self for each system, but does need access to self in the manager
+inline fn removeSelf(fn_info: std.lang.Type.Fn) std.lang.Type.Fn {
+    var info = fn_info;
+    if (info.param_attrs.len == 0) return info;
+
+    info.param_attrs = info.param_attrs[1..];
+    info.param_types = info.param_types[1..];
+    return info;
 }

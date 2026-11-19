@@ -243,7 +243,7 @@ pub const EcsOptions = struct {
     /// Components are declared by a simple struct
     /// fieldnames and their types define what components
     /// map to which type and what name
-    components: type,
+    Components: type,
 };
 
 /// Does not care about how `System` part of the ECS is implemented
@@ -252,134 +252,24 @@ pub const EcsOptions = struct {
 pub fn EntityStore(
     comptime Options: EcsOptions,
 ) type {
+    std.debug.assert(@typeInfo(Options.Components) == .@"struct");
+
     if (Options.max_entities == 0) {
         @compileError("Set Options.max_entities to at least 1!");
     }
+
+    const N_COMPONENTS: usize =
+        @intCast(@typeInfo(Options.Components).@"struct".field_names.len);
+    if (N_COMPONENTS > @bitSizeOf(u64))
+        @compileError("EntityStoreSignature only supports up to 64 components");
     return struct {
+
+        // TODO improve?
+        /// used by consumers passed a type returned by this function
+        /// to ensure correct types are passed
+        pub const IS_ENTITY_STORE: bool = true;
         const ThisStore = @This();
         pub const Opts = Options;
-        const N_COMPONENTS: usize =
-            @intCast(@typeInfo(Options.components).@"struct".field_names.len);
-        entities: EntityManager,
-        components: ComponentsManager,
-
-        pub fn init(a: Allocator) Allocator.Error!ThisStore {
-            return ThisStore{
-                .entities = EntityManager.init(a),
-                .components = ComponentsManager.init(),
-            };
-        }
-        pub fn deinit(self: *ThisStore, a: Allocator) void {
-            self.entities.manager.deinit(a);
-        }
-
-        /// Archetypes can easily be expressed through signatures:
-        /// ```zig
-        /// var archetype = Signature.initMany(&.{ .mycomponent, .othercomponent });
-        /// ```
-        pub const Signature = std.EnumSet(Meta.ComponentTag);
-
-        pub fn entityHandle(self: *ThisStore, entity_id: u32) error{NoData}!EntityHandle {
-            var sig =
-                self.entities.manager.getData(entity_id) orelse return error.NoData;
-
-            const i = self.entities.manager.index_map.get(entity_id) orelse unreachable;
-
-            const id_node = self.entities.manager.identifier_map.get(i) orelse unreachable;
-
-            return EntityHandle{
-                .ecs = self,
-                .identifier = &id_node.id,
-                .index = i,
-                .signature = &sig,
-            };
-        }
-
-        pub inline fn componentType(variant: Meta.ComponentTag) type {
-            const idx = @backingInt(variant);
-            return @typeInfo(Options.components).@"struct".fields[idx].type;
-        }
-
-        pub fn queryEntities(self: *ThisStore, query: Query) QueryIterator {
-            return .{
-                .ecs = self,
-                .query = query,
-            };
-        }
-
-        pub const QueryRule = enum {
-            /// Signature must match EXACTLY the passed components
-            exact,
-            /// Signature must have AT LEAST the passed components
-            at_least,
-            /// Signature must have ANY of the passed components, fails if NONE match
-            any,
-
-            /// Some function for comparing one signature to another, returns true if the first signature passes the needed requirements
-            const ComparisonFunction = *const fn (Signature, Signature) bool;
-            pub fn cmpFn(rule: QueryRule) ComparisonFunction {
-                return switch (rule) {
-                    .at_least => struct {
-                        fn cmp(sig: Signature, other: Signature) bool {
-                            return sig.supersetOf(other);
-                        }
-                    }.cmp,
-                    .exact => struct {
-                        fn cmp(sig: Signature, other: Signature) bool {
-                            return sig.eql(other);
-                        }
-                    }.cmp,
-                    .any => struct {
-                        fn cmp(sig: Signature, other: Signature) bool {
-                            return !sig.intersectWith(other).eql(Signature.empty);
-                        }
-                    }.cmp,
-                };
-            }
-        };
-
-        pub const QueryStatement = struct {
-            rule: QueryRule,
-            sig: Signature,
-        };
-
-        /// Query can either directly look for an entity by id (id)
-        /// or they can be queried by component signature (query)
-        pub const QueryType = enum { id, query };
-        pub const Query = struct {
-            is: ?QueryStatement = null,
-            is_not: ?QueryStatement = null,
-        };
-
-        pub const QueryIterator = struct {
-            ecs: *ThisStore,
-            query: Query,
-            index: usize = 0,
-
-            pub fn next(self: *@This()) ?EntityHandle {
-                while (self.index < self.ecs.entities.manager.count) {
-                    const idx = self.index;
-                    self.index += 1;
-
-                    const sig = self.ecs.entities.manager.data[idx] orelse continue;
-
-                    if (self.query.is) |is| {
-                        if (!is.rule.cmpFn()(sig, is.sig))
-                            continue;
-                    }
-
-                    if (self.query.is_not) |is_not| {
-                        if (is_not.rule.cmpFn()(sig, is_not.sig))
-                            continue;
-                    }
-
-                    const id = self.ecs.entities.manager.getId(idx) orelse unreachable;
-                    return self.ecs.entityHandle(id) catch unreachable;
-                }
-
-                return null;
-            }
-        };
 
         pub const Meta = struct {
             names: [N_COMPONENTS][]const u8 = undefined,
@@ -394,7 +284,7 @@ pub fn EntityStore(
 
             const STATIC: @This() = blk: {
                 const strct_info =
-                    @typeInfo(Options.components).@"struct";
+                    @typeInfo(Options.Components).@"struct";
                 var meta = @This(){};
                 for (
                     strct_info.field_types,
@@ -442,13 +332,149 @@ pub fn EntityStore(
             pub const ComponentUnion = @Union(.auto, ComponentTag, &STATIC.names, &STATIC.types, &STATIC.un_field_attrs);
             pub const ComponentUnionPtr = @Union(.auto, null, &STATIC.names, &STATIC.un_ptr_types, &STATIC.un_field_attrs);
 
-            const ALL_COMPONENT_TAGS: [N_COMPONENTS]ComponentTag = blk: {
-                var all: [N_COMPONENTS]ComponentTag = undefined;
-                for (0..N_COMPONENTS) |i| {
-                    all[i] = @fromBackingInt(@intCast(i));
-                }
-                break :blk all;
+            const ALL_COMPONENT_TAGS = std.enums.values(ComponentTag);
+        };
+
+        entities: EntityManager,
+        components: ComponentsManager,
+
+        pub fn init(a: Allocator) Allocator.Error!ThisStore {
+            return ThisStore{
+                .entities = EntityManager.init(a),
+                .components = ComponentsManager.init(),
             };
+        }
+        pub fn deinit(self: *ThisStore, a: Allocator) void {
+            self.entities.manager.deinit(a);
+        }
+
+        pub fn destroyEntity(self: ThisStore, idx: usize, identifier: u32) error{NotPresent}!void {
+            // Before removing the entity, we clear it's component data
+            const sig = self.ecs.entities.manager.getData(identifier) orelse @panic("No entity signature?");
+            // unfortunately we need to do this because of the comptime requirements of removeNoReturn
+            inline for (Meta.ALL_COMPONENT_TAGS) |tag|
+                if (sig.contains(tag))
+                    self.ecs.components.removeNoReturn(tag, idx);
+
+            try self.entities.manager.remove(identifier);
+        }
+
+        /// Archetypes can easily be expressed through signatures:
+        /// ```zig
+        /// var archetype = Signature.initMany(&.{ .mycomponent, .othercomponent });
+        /// ```
+        pub const Signature = struct {
+            set: std.EnumSet(Meta.ComponentTag),
+
+            pub fn initMany(many: []const Meta.ComponentTag) @This() {
+                return .{ .set = .initMany(many) };
+            }
+            pub fn initOne(one: Meta.ComponentTag) @This() {
+                return .{ .set = .initOne(one) };
+            }
+        };
+
+        pub fn entityHandle(self: *ThisStore, entity_id: u32) error{NoData}!EntityHandle {
+            var sig =
+                self.entities.manager.getData(entity_id) orelse return error.NoData;
+
+            const i = self.entities.manager.index_map.get(entity_id) orelse unreachable;
+
+            const id_node = self.entities.manager.identifier_map.get(i) orelse unreachable;
+
+            return EntityHandle{
+                .ecs = self,
+                .identifier = &id_node.id,
+                .index = i,
+                .signature_set = &sig,
+            };
+        }
+
+        pub inline fn componentType(variant: Meta.ComponentTag) type {
+            const idx = @backingInt(variant);
+            return @typeInfo(Options.Components).@"struct".fields[idx].type;
+        }
+
+        pub const QueryRule = enum {
+            /// EntityStoreSignature must match EXACTLY the passed components
+            exact,
+            /// EntityStoreSignature must have AT LEAST the passed components
+            at_least,
+            /// EntityStoreSignature must have ANY of the passed components, fails if NONE match
+            any,
+        };
+
+        pub const QueryStatement = struct {
+            rule: QueryRule,
+            sig: Signature,
+        };
+
+        /// Query can either directly look for an entity by id (id)
+        /// or they can be queried by component signature (query)
+        pub const QueryType = enum { id, query };
+        pub const Query = struct {
+            is: ?QueryStatement = null,
+            is_not: ?QueryStatement = null,
+        };
+
+        pub fn queryEntities(self: *ThisStore, query: Query) QueryIterator {
+            return .{
+                .ecs = self,
+                .query = query,
+            };
+        }
+
+        pub const QueryIterator = struct {
+            ecs: *ThisStore,
+            query: Query,
+            index: usize = 0,
+
+            const Set = @FieldType(Signature, "set");
+
+            const ComparisonFunction = *const fn (Set, Set) bool;
+            pub fn cmpFn(rule: QueryRule) ComparisonFunction {
+                return switch (rule) {
+                    .at_least => struct {
+                        fn cmp(set: Set, other: Set) bool {
+                            return set.supersetOf(other);
+                        }
+                    }.cmp,
+                    .exact => struct {
+                        fn cmp(set: Set, other: Set) bool {
+                            return set.eql(other);
+                        }
+                    }.cmp,
+                    .any => struct {
+                        fn cmp(set: Set, other: Set) bool {
+                            return !set.intersectWith(other).eql(.empty);
+                        }
+                    }.cmp,
+                };
+            }
+
+            pub fn next(self: *@This()) ?EntityHandle {
+                while (self.index < self.ecs.entities.manager.count) {
+                    const idx = self.index;
+                    self.index += 1;
+
+                    const sig = self.ecs.entities.manager.data[idx] orelse continue;
+
+                    if (self.query.is) |is| {
+                        if (!cmpFn(is.rule)(sig, is.sig.set))
+                            continue;
+                    }
+
+                    if (self.query.is_not) |is_not| {
+                        if (cmpFn(is_not.rule)(sig, is_not.sig.set))
+                            continue;
+                    }
+
+                    const id = self.ecs.entities.manager.getId(idx) orelse unreachable;
+                    return self.ecs.entityHandle(id) catch unreachable;
+                }
+
+                return null;
+            }
         };
 
         const ComponentsManager = struct {
@@ -519,7 +545,7 @@ pub fn EntityStore(
             ecs: *ThisStore,
             identifier: *const u32,
             index: usize,
-            signature: *Signature,
+            signature_set: *@FieldType(Signature, "set"),
             name: ?[]const u8 = null,
 
             /// Removes this entity from the ecs
@@ -534,34 +560,7 @@ pub fn EntityStore(
                             self.ecs.components.removeNoReturn(tag, idx);
                 }
 
-                // const last_registered_opt = self.ecs.entities.manager.lastRegistered();
-
                 try self.ecs.entities.manager.remove(self.identifier.*);
-
-                // Removing the entity will move the last inserted entity
-                // We need to update the component data for this moved entity
-                // {
-                //     if (last_registered_opt) |last| {
-                //         const prev_idx_of_moved_ent = last.@"1";
-                //         // NOTE:
-                //         // The index we pass here is the *same* index of the removed entity
-                //         // because the `remove` method moves the last inserted entity into the index of the removed entity
-                //         const ent = self.ecs.entities.manager.identifier_map.get(idx) orelse @panic("No identifier at that index?");
-                //         if (last.@"0".* != ent.id) {
-                //             std.debug.panic(
-                //                 \\ Expected last entity inserted to match gotten entity
-                //                 \\ Expected: {}
-                //                 \\ Got: {}
-                //             , .{ last.@"0".*, ent.id });
-                //         }
-                //         const sig = self.ecs.entities.manager.getData(ent.id) orelse @panic("No entity signature?");
-                //         inline for (Meta.ALL_COMPONENT_TAGS) |tag| {
-                //             if (sig.contains(tag)) {
-                //                 self.ecs.components.swap(tag, prev_idx_of_moved_ent, idx);
-                //             }
-                //         }
-                //     }
-                // }
             }
 
             pub fn accessComponent(
@@ -603,15 +602,15 @@ pub fn EntityStore(
         };
 
         const EntityManager = struct {
-            manager: IdentifierManager(Signature, Options.max_entities),
+            manager: IdentifierManager(std.EnumSet(Meta.ComponentTag), Options.max_entities),
 
             fn init(allocator: Allocator) @This() {
-                return .{ .manager = IdentifierManager(Signature, Options.max_entities).init(allocator) catch @panic("Could not create IdentifierManager for Entities") };
+                return .{ .manager = IdentifierManager(std.EnumSet(Meta.ComponentTag), Options.max_entities).init(allocator) catch @panic("Could not create IdentifierManager for Entities") };
             }
 
             /// Creates an empty with an empty `Signature`
             pub fn register(self: *@This(), name: ?[]const u8) Allocator.Error!EntityHandle {
-                const id, const i = try self.manager.register(Signature.empty);
+                const id, const i = try self.manager.register(.empty);
 
                 log.warn(
                     \\ registering {d} at {d}
@@ -625,7 +624,7 @@ pub fn EntityStore(
                     .ecs = parent_ptr,
                     .identifier = id,
                     .index = i,
-                    .signature = &self.manager.data[i].?,
+                    .signature_set = &self.manager.data[i].?,
                     .name = name,
                 };
             }
@@ -645,7 +644,7 @@ test "ECS Entity Management" {
 
     const MyEcs = EntityStore(.{
         .max_entities = 5,
-        .components = struct {
+        .Components = struct {
             somecomponent: bool,
             othercomponent: u8,
             someothercomponent: u32,

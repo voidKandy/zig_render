@@ -1,13 +1,14 @@
 const std = @import("std");
-const core = @import("../../root.zig");
+const shared = @import("../shared.zig");
+const engine = @import("engine");
 const log = std.log.scoped(.MazeSystem);
-const imgui = core.clibs.imgui;
-const vk = core.clibs.vk;
-const checkVk = core.bindings.vulkan_init.checkVk;
+const imgui = engine.clibs.imgui;
+const vk = engine.clibs.vk;
+const checkVk = engine.bindings.vulkan_init.checkVk;
 
 /// the shader needs the camera position
 main_camera_entity: u32,
-maze: core.lib.Maze,
+maze: engine.lib.Maze,
 maze_gpu_cells: []GPUMazeCell,
 push_constants: PushConstants,
 maze_update: bool = false,
@@ -28,10 +29,10 @@ pub const PushConstants = extern struct {
     pixels_per_cell: u32,
     /// size of maze mesh cells in world scale
     cell_size: f32,
-    maze_origin: core.lib.math.Vec3,
+    maze_origin: engine.lib.math.Vec3,
     seed: u32,
     threshold: usize,
-    cam_world_position: core.lib.math.Vec3 = undefined,
+    cam_world_position: engine.lib.math.Vec3 = undefined,
     _: f32 = 0.0,
 };
 
@@ -39,7 +40,7 @@ pub const GPUMazeCell = extern struct {
     walls: u32,
 
     /// mutates a pre-allocated array of gpucells
-    fn convertCells(arr: []core.lib.Maze.Cell, self_arr: *[]@This()) void {
+    fn convertCells(arr: []engine.lib.Maze.Cell, self_arr: *[]@This()) void {
         @memset(self_arr.*, .{
             .walls = 0,
         });
@@ -52,7 +53,7 @@ pub const GPUMazeCell = extern struct {
         }
     }
 
-    fn arrayFromCellArray(a: std.mem.Allocator, arr: []core.lib.Maze.Cell) std.mem.Allocator.Error![]@This() {
+    fn arrayFromCellArray(a: std.mem.Allocator, arr: []engine.lib.Maze.Cell) std.mem.Allocator.Error![]@This() {
         var all = try a.alloc(GPUMazeCell, arr.len);
         for (arr, 0..) |item, i| {
             all[i].walls =
@@ -68,15 +69,15 @@ pub const GPUMazeCell = extern struct {
 pub const CreateInfo = struct {
     push_constants: PushConstants,
     main_camera_entity: u32,
-    mesh_options: core.lib.Maze.MeshOptions,
+    mesh_options: engine.lib.Maze.MeshOptions,
 };
 
 pub fn init(
     a: std.mem.Allocator,
-    resources: *core.resources.Manager,
+    resources: *engine.resources.Manager,
     ci: CreateInfo,
 ) std.mem.Allocator.Error!@This() {
-    var maze = try core.lib.Maze.init(a, ci.push_constants.width, ci.push_constants.height);
+    var maze = try engine.lib.Maze.init(a, ci.push_constants.width, ci.push_constants.height);
     maze.generate(ci.push_constants.threshold, ci.push_constants.seed);
     const cells =
         try GPUMazeCell.arrayFromCellArray(a, maze.cells);
@@ -88,7 +89,7 @@ pub fn init(
         .{
             .alloc_size = @sizeOf(GPUMazeCell) * maze.width * maze.height,
             .buffer_usage = vk.BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .mem_usage = engine.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
             .flags = 0,
         },
     );
@@ -109,14 +110,14 @@ pub fn init(
             .aspect_flags = vk.IMAGE_ASPECT_COLOR_BIT,
             .initial_transition_function = &struct {
                 pub fn submit(
-                    device: core.bindings.vulkan_init.LogicalDevice,
-                    upload_ctx: *core.bindings.vulkan_init.UploadContext,
+                    device: engine.bindings.vulkan_init.LogicalDevice,
+                    upload_ctx: *engine.bindings.vulkan_init.UploadContext,
                     img: vk.Image,
                 ) void {
                     upload_ctx.immediateSubmit(device, struct {
                         img: vk.Image,
                         pub fn submit(this: @This(), cmd_buf: vk.CommandBuffer) void {
-                            core.bindings.vulkan_util.transitionImageLayout(
+                            engine.bindings.vulkan_util.transitionImageLayout(
                                 cmd_buf,
                                 this.img,
                                 vk.IMAGE_LAYOUT_UNDEFINED,
@@ -144,7 +145,7 @@ pub fn init(
     // });
 
     const quad_size = 0.2;
-    const maze_quad = core.lib.mesh.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create maze quad");
+    const maze_quad = engine.lib.mesh.Mesh2D.ndcQuad(a, quad_size, quad_size) catch @panic("failed to create maze quad");
     defer maze_quad.deinit(a);
 
     resources.meshes2D.appendMesh(
@@ -176,17 +177,17 @@ pub fn init(
 
 pub fn initEntities(
     self: *@This(),
-    world: *core.engine.world.GameWorld,
-    resources: *const core.resources.Manager,
+    world: *shared.GameWorld,
+    resources: *const engine.resources.Manager,
 ) std.mem.Allocator.Error!void {
     var mesh3d_entity = try world.entities.register(null);
-    mesh3d_entity.addComponent(.mesh3D, core.engine.world.MaterialMesh3D.fromNames(resources, .{
+    mesh3d_entity.addComponent(.mesh3D, engine.engine.world.MaterialMesh3D.fromNames(resources, .{
         .mesh = MAZE_RESOURCE_NAME,
         .material = MAZE_RESOURCE_NAME,
     }));
 
     var mesh2d_entity = try world.entities.register(null);
-    mesh2d_entity.addComponent(.mesh2D, core.engine.world.MaterialMesh2D.fromNames(resources, .{
+    mesh2d_entity.addComponent(.mesh2D, engine.engine.world.MaterialMesh2D.fromNames(resources, .{
         .material = MAZE_RESOURCE_NAME,
         .mesh = MAZE_RESOURCE_NAME,
     }));
@@ -197,14 +198,14 @@ pub fn initEntities(
     const mesh_height = mesh_bounds.max.y - mesh_bounds.min.y;
 
     const margin: f32 = 0.05;
-    const coordinates = core.lib.math.Vec2.make(
+    const coordinates = engine.lib.math.Vec2.make(
         1.0 - (mesh_width / 2.0) - margin,
         1.0 - margin - mesh_height,
     );
 
     mesh2d_entity.addComponent(
         .screen_transform,
-        core.engine.world.ScreenTransform{ .coords = coordinates },
+        engine.engine.world.ScreenTransform{ .coords = coordinates },
     );
 
     self.mesh2D_id = mesh2d_entity.identifier.*;
@@ -213,7 +214,7 @@ pub fn initEntities(
 
 pub fn updateSets(
     device: vk.Device,
-    allocated_resources: *core.resources.Manager.AllocatedData,
+    allocated_resources: *engine.resources.Manager.AllocatedData,
 ) void {
     allocated_resources.mapped_buffers.updateBufferSet(
         device,
@@ -226,7 +227,7 @@ pub fn updateSets(
     );
 }
 
-pub fn deinit(self: *@This(), allocs: core.engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
+pub fn deinit(self: *@This(), allocs: engine.engine.Allocators, device: vk.Device, alloc_cbs: ?*vk.AllocationCallbacks) void {
     self.maze.deinit(allocs.std);
     allocs.std.free(self.maze_gpu_cells);
     self.pipeline.deinit(device, alloc_cbs);
@@ -235,11 +236,11 @@ pub fn deinit(self: *@This(), allocs: core.engine.Allocators, device: vk.Device,
 pub fn initComputePipelines(
     self: *@This(),
     device: vk.Device,
-    resources: core.resources.Manager,
+    resources: engine.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) void {
     const layouts = ComputePipeline.Description.Layouts.init(.{
-        .camera = resources.mapped_buffers.buffer_set_layouts.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.layout,
+        .camera = resources.mapped_buffers.buffer_set_layouts.get(shared.systems.Camera.CAMERA_SET_NAME).?.layout,
         .maze_texture = resources.materials.writable_textures_descriptor_set_layouts.get(COMPUTE_MAZE_SET_NAME).?.layout,
         .maze_buffer = resources.mapped_buffers.buffer_set_layouts.get(COMPUTE_MAZE_SET_NAME).?.layout,
     });
@@ -247,7 +248,7 @@ pub fn initComputePipelines(
     self.pipeline = ComputePipeline.init(device, layouts, alloc_cbs);
 }
 
-pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
+pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *engine.resources.Manager, alloc_cbs: ?*vk.AllocationCallbacks) std.mem.Allocator.Error!void {
     try resources.materials.createAndRegisterWritableTextureSetLayout(
         a,
         COMPUTE_MAZE_SET_NAME,
@@ -259,7 +260,7 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
     try resources.mapped_buffers.createAndRegisterBufferSetLayout(
         a,
         COMPUTE_MAZE_SET_NAME,
-        &[_]core.resources.MappedBuffers.CreateBufferInfo{
+        &[_]engine.resources.MappedBuffers.CreateBufferInfo{
             .{
                 .name = MAZE_RESOURCE_NAME,
                 .descriptor_type = vk.DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -272,7 +273,7 @@ pub fn registerSets(a: std.mem.Allocator, device: vk.Device, resources: *core.re
     );
 }
 
-pub fn syncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
+pub fn syncResources(self: *@This(), alloc_resources: engine.resources.Manager.AllocatedData) void {
     if (self.needs_gpu_sync) {
         const aligned_maze: [*]GPUMazeCell = @ptrCast(
             @alignCast(alloc_resources.mapped_buffers.buffers.get(MAZE_RESOURCE_NAME).?.mapped),
@@ -286,9 +287,9 @@ pub fn syncResources(self: *@This(), alloc_resources: core.resources.Manager.All
     }
 }
 
-pub fn update(self: *@This(), ctx: core.engine.systems.manager.UpdateContext) void {
-    var camera_ent = ctx.world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
-    const trans: *core.engine.world.WorldTransform =
+pub fn update(self: *@This(), world: *shared.GameWorld, _: engine.engine.systems.UpdateContext) void {
+    var camera_ent = world.entityHandle(self.main_camera_entity) catch @panic("No entity??");
+    const trans: *engine.engine.world.WorldTransform =
         (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
 
     self.push_constants.cam_world_position = trans.position;
@@ -312,14 +313,14 @@ pub fn update(self: *@This(), ctx: core.engine.systems.manager.UpdateContext) vo
 
 pub fn recordComputeCommands(
     self: @This(),
-    allocated_resources: core.resources.Manager.AllocatedData,
-    _: core.engine.Renderer.Swapchain,
+    allocated_resources: engine.resources.Manager.AllocatedData,
+    _: engine.engine.Renderer.Swapchain,
     cmd: vk.CommandBuffer,
     _: u32,
 ) void {
     self.pipeline.bind(cmd);
     const sets = [_]vk.DescriptorSet{
-        allocated_resources.mapped_buffers.buffer_sets.get(core.engine.systems.Camera.CAMERA_SET_NAME).?.set,
+        allocated_resources.mapped_buffers.buffer_sets.get(shared.systems.Camera.CAMERA_SET_NAME).?.set,
         allocated_resources.materials.writable_textures_descriptor_sets.get(COMPUTE_MAZE_SET_NAME).?.set,
         allocated_resources.mapped_buffers.buffer_sets.get(COMPUTE_MAZE_SET_NAME).?.set,
     };
@@ -346,7 +347,7 @@ pub fn recordComputeCommands(
     const maze_image = allocated_resources.materials.textures.get(MAZE_RESOURCE_NAME).?;
 
     // transition to GENERAL for compute write
-    core.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_util.transitionImageLayout(
         cmd,
         maze_image.image,
         vk.IMAGE_LAYOUT_UNDEFINED,
@@ -361,7 +362,7 @@ pub fn recordComputeCommands(
     vk.CmdDispatch(cmd, w, h, 1);
 
     // transition to SHADER_READ_ONLY so HUD can sample it
-    core.bindings.vulkan_util.transitionImageLayout(
+    engine.bindings.vulkan_util.transitionImageLayout(
         cmd,
         maze_image.image,
         vk.IMAGE_LAYOUT_GENERAL,
@@ -373,9 +374,9 @@ pub fn recordComputeCommands(
     );
 }
 
-pub fn drawImgui(self: *@This(), _: core.engine.systems.manager.DrawImguiContext) void {
+pub fn drawImgui(self: *@This(), _: *shared.GameWorld, _: engine.engine.systems.DrawImguiContext) void {
     var open = true;
-    const shown = imgui.Begin("Maze", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    const shown = imgui.Begin("Maze", &open, engine.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     var seed: c_int = @intCast(self.maze.seed.?);
     if (imgui.InputInt("seed", &seed)) {
         self.maze.seed = @as(u64, @intCast(seed));
@@ -401,7 +402,7 @@ const ComputePipeline = struct {
     pipeline: vk.Pipeline = undefined,
     layout: vk.PipelineLayout = undefined,
 
-    const Description = core.engine.pipelines.Description(
+    const Description = engine.engine.pipelines.Description(
         .{
             .DescriptorSets = enum {
                 camera,
@@ -427,7 +428,7 @@ const ComputePipeline = struct {
         alloc_cbs: ?*vk.AllocationCallbacks,
     ) @This() {
         var self = @This(){};
-        const maze_shader = core.engine.shaders.createShaderModule(
+        const maze_shader = engine.engine.shaders.createShaderModule(
             "maze",
             device,
             alloc_cbs,

@@ -53,7 +53,6 @@ pub fn deinit(self: *@This(), a: std.mem.Allocator) void {
 pub fn createMeshColliders(
     self: *@This(),
     a: std.mem.Allocator,
-    _: *core.engine.world.GameWorld,
     meshes: *const core.resources.Meshes3D,
 ) std.mem.Allocator.Error!void {
     var iter = meshes.mesh_indices.iterator();
@@ -70,7 +69,7 @@ pub fn createMeshColliders(
     }
 }
 
-pub fn update(self: *@This(), world: *core.engine.world.GameWorld) void {
+pub fn update(self: *@This(), World: type, world: *World) void {
     const _60hz = 1.0 / 60.0;
     var debug = if (self.debug_ctx) |ctx| ctx.makeDebugDraw() else null;
 

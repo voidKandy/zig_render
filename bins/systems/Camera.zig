@@ -1,11 +1,12 @@
 const std = @import("std");
-const core = @import("../../root.zig");
+const engine = @import("engine");
+const shared = @import("../shared.zig");
 const log = std.log.scoped(.Camera);
-const vk = core.clibs.vk;
-const imgui = core.clibs.imgui;
-const Vec3 = core.lib.math.Vec3;
-const Vec4 = core.lib.math.Vec4;
-const Mat4 = core.lib.math.Mat4;
+const vk = engine.clibs.vk;
+const imgui = engine.clibs.imgui;
+const Vec3 = engine.lib.math.Vec3;
+const Vec4 = engine.lib.math.Vec4;
+const Mat4 = engine.lib.math.Mat4;
 
 screen_extent: vk.Extent2D,
 main_camera_entity: ?u32 = null,
@@ -21,7 +22,7 @@ pub const CAMERA_RESOURCE_NAME = "camera";
 
 pub fn init(
     a: std.mem.Allocator,
-    resources: *core.resources.Manager,
+    resources: *engine.resources.Manager,
     swapchain_extent: vk.Extent2D,
 ) std.mem.Allocator.Error!@This() {
     try resources.mapped_buffers.creates.put(
@@ -30,7 +31,7 @@ pub fn init(
         .{
             .alloc_size = @sizeOf(GPUData),
             .buffer_usage = vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            .mem_usage = core.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
+            .mem_usage = engine.clibs.vma.MEMORY_USAGE_CPU_TO_GPU,
             .flags = 0,
         },
     );
@@ -42,16 +43,16 @@ pub fn init(
 
 pub fn initEntities(
     self: *@This(),
-    world: *core.engine.world.GameWorld,
-    _: *const core.resources.Manager,
+    world: *shared.GameWorld,
+    _: *const engine.resources.Manager,
 ) std.mem.Allocator.Error!void {
     const camera = Controller{
         .screen_extent = self.screen_extent,
     };
     const start_pos =
-        core.lib.math.Vec3.ONE.mul(4.0);
+        engine.lib.math.Vec3.ONE.mul(4.0);
 
-    const transform = core.engine.world.WorldTransform{
+    const transform = engine.engine.world.WorldTransform{
         .position = start_pos,
         .rotation = .lookAt(start_pos, .ZERO),
     };
@@ -67,13 +68,13 @@ pub fn initEntities(
 pub fn registerSets(
     a: std.mem.Allocator,
     device: vk.Device,
-    resources: *core.resources.Manager,
+    resources: *engine.resources.Manager,
     alloc_cbs: ?*vk.AllocationCallbacks,
 ) std.mem.Allocator.Error!void {
     try resources.mapped_buffers.createAndRegisterBufferSetLayout(
         a,
         CAMERA_SET_NAME,
-        &[_]core.resources.MappedBuffers.CreateBufferInfo{
+        &[_]engine.resources.MappedBuffers.CreateBufferInfo{
             .{
                 .name = CAMERA_RESOURCE_NAME,
                 .descriptor_type = vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -88,7 +89,7 @@ pub fn registerSets(
 
 pub fn updateSets(
     device: vk.Device,
-    allocated_resources: *core.resources.Manager.AllocatedData,
+    allocated_resources: *engine.resources.Manager.AllocatedData,
 ) void {
     allocated_resources.mapped_buffers.updateBufferSet(
         device,
@@ -96,17 +97,17 @@ pub fn updateSets(
     );
 }
 
-pub fn syncResources(self: *@This(), alloc_resources: core.resources.Manager.AllocatedData) void {
+pub fn syncResources(self: *@This(), alloc_resources: engine.resources.Manager.AllocatedData) void {
     const aligned: *GPUData = @ptrCast(
         @alignCast(alloc_resources.mapped_buffers.buffers.get(CAMERA_RESOURCE_NAME).?.mapped),
     );
     aligned.* = self.gpu_camera.?;
 }
 
-pub fn update(self: *@This(), ctx: core.engine.systems.manager.UpdateContext) void {
-    var camera_ent = ctx.world.entityHandle(self.main_camera_entity.?) catch @panic("No entity??");
+pub fn update(self: *@This(), world: *shared.GameWorld, ctx: engine.engine.systems.UpdateContext) void {
+    var camera_ent = world.entityHandle(self.main_camera_entity.?) catch @panic("No entity??");
     var controller: *Controller = (camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?")).camera;
-    const trans: *core.engine.world.WorldTransform = (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
+    const trans: *engine.engine.world.WorldTransform = (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
 
     if (ctx.input.isDown(.@"/")) {
         const mode_count = std.enums.values(Controller.Mode).len;
@@ -120,17 +121,17 @@ pub fn update(self: *@This(), ctx: core.engine.systems.manager.UpdateContext) vo
     }
 }
 
-pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
+pub fn drawImgui(self: *@This(), world: *shared.GameWorld, _: engine.engine.systems.DrawImguiContext) void {
     var open = true;
-    const shown = imgui.Begin("Camera System", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
+    const shown = imgui.Begin("Camera System", &open, engine.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     defer imgui.End();
 
     if (!shown) return;
 
-    var camera_ent = ctx.world.entityHandle(self.main_camera_entity.?) catch @panic("No entity??");
+    var camera_ent = world.entityHandle(self.main_camera_entity.?) catch @panic("No entity??");
     var cam: *Controller =
         (camera_ent.accessComponentPtr(.camera) catch @panic("No camera component?")).camera;
-    const trans: *core.engine.world.WorldTransform =
+    const trans: *engine.engine.world.WorldTransform =
         (camera_ent.accessComponentPtr(.world_transform) catch @panic("No transform component?")).world_transform;
 
     _ = imgui.DragFloat("FOV", &cam.fov);
@@ -228,7 +229,7 @@ pub const Controller = struct {
 
     pub fn processKeyboard(
         self: Controller,
-        transform: *core.engine.world.WorldTransform,
+        transform: *engine.engine.world.WorldTransform,
         direction: Movement,
         dt: f32,
     ) void {
@@ -270,9 +271,9 @@ pub const Controller = struct {
     pub fn control(
         self: *@This(),
         gpu_data: *GPUData,
-        transform: *core.engine.world.WorldTransform,
+        transform: *engine.engine.world.WorldTransform,
         dt: f32,
-        input: core.engine.Input,
+        input: engine.engine.Input,
     ) void {
         if (input.isDown(.W)) self.processKeyboard(transform, .forward, dt);
         if (input.isDown(.S)) self.processKeyboard(transform, .backward, dt);
@@ -297,7 +298,7 @@ pub const Controller = struct {
         return proj;
     }
 
-    pub fn viewMatrix(transform: *const core.engine.world.WorldTransform) Mat4 {
+    pub fn viewMatrix(transform: *const engine.engine.world.WorldTransform) Mat4 {
         const fwd = transform.rotation.forwardVec3();
         const target = Vec3{
             .x = transform.position.x + fwd.x,
@@ -308,7 +309,7 @@ pub const Controller = struct {
         return Mat4.lookAt(transform.position, target);
     }
 
-    pub fn gpuData(self: Controller, transform: *const core.engine.world.WorldTransform) GPUData {
+    pub fn gpuData(self: Controller, transform: *const engine.engine.world.WorldTransform) GPUData {
         return .{
             .view = viewMatrix(transform),
             .proj = self.projectionMatrix(),

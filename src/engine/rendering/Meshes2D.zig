@@ -29,10 +29,6 @@ const InstanceEntry = struct {
 
 pub const INSTANCES_BUFFER_NAME = "instances2D";
 pub const INSTANCE_SET_NAME = "instance2D_set";
-const INSTANCE_SIGNATURE = core.engine.world.GameWorld.Signature.initMany(&.{
-    .screen_transform,
-    .mesh2D,
-});
 
 pub const MAX_INSTANCES = 64;
 
@@ -198,7 +194,7 @@ pub fn recordCommands(
     }
 }
 
-pub fn instancesFromWorld(self: *@This(), a: std.mem.Allocator, world: *core.engine.world.GameWorld) std.mem.Allocator.Error!void {
+pub fn instancesFromWorld(self: *@This(), World: type, a: std.mem.Allocator, world: *World) std.mem.Allocator.Error!void {
     var buckets = std.AutoHashMap(usize, std.ArrayList(InstanceEntry)).init(a);
     defer {
         var it = buckets.valueIterator();
@@ -210,15 +206,18 @@ pub fn instancesFromWorld(self: *@This(), a: std.mem.Allocator, world: *core.eng
 
     var iter = world.queryEntities(.{
         .is = .{
-            .sig = INSTANCE_SIGNATURE,
+            .sig = .initMany(&.{
+                .screen_transform,
+                .mesh2D,
+            }),
             .rule = .at_least,
         },
     });
 
     while (iter.next()) |*entity| {
-        const mesh =
+        const mesh: *core.engine.world.MaterialMesh2D =
             (entity.accessComponentPtr(.mesh2D) catch @panic("NO MESH?")).mesh2D;
-        const transform =
+        const transform: *core.engine.world.ScreenTransform =
             (entity.accessComponentPtr(.screen_transform) catch @panic("NO TRANSFORM?")).screen_transform;
 
         const result = try buckets.getOrPut(mesh.mesh_index);
@@ -273,7 +272,7 @@ pub fn instancesFromWorld(self: *@This(), a: std.mem.Allocator, world: *core.eng
     self.instances = instances;
 }
 
-pub fn drawImgui(self: *@This(), ctx: core.engine.systems.manager.DrawImguiContext) void {
+pub fn drawImgui(self: *@This(), ctx: core.engine.systems.DrawImguiContext) void {
     var open = true;
     const shown = imgui.Begin("Mesh2D Rendering", &open, core.clibs.imgui.WINDOW_ALWAYS_AUTO_RESIZE);
     if (!shown) return;
